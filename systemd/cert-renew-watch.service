@@ -1,0 +1,16 @@
+[Unit]
+Description=Cert-renew watcher (idle-triggered AP→client flip)
+After=hostapd.service dnsmasq.service network.target
+Wants=hostapd.service dnsmasq.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/mytesla
+ExecStart=/opt/mytesla/scripts/cert-renew-watch.sh
+Restart=always
+RestartSec=30
+
+# Needs root for hostapd_cli, ip, wpa_supplicant, certbot, nginx -s reload.
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,51 @@
+#!/bin/bash
+# mytesla-retroarch — privileged helper for the on-demand native RetroArch stack.
+#
+# Installed to /usr/local/sbin/mytesla-retroarch (mode 0755, root-owned) by
+# scripts/install-retroarch-addon.sh. Invoked by mytesla.service (the service user)
+# via `sudo -n /usr/local/sbin/mytesla-retroarch <verb>` — sudoers grants
+# NOPASSWD on this exact path only.
+#
+# Far simpler than mytesla-android: RetroArch is a native app, so there is no
+# LXC container, no NAT, and no warm-keep. `start` brings up the headless cage
+# session that runs RetroArch; `stop` tears it down fully (RetroArch burns a core
+# at 60 fps even unwatched, so we never keep it warm). The bridge writes the
+# optional core/ROM to $XDG_RUNTIME_DIR/mytesla-retroarch.cmd before `start`, and
+# waits for the new Wayland socket itself.
+
+set -euo pipefail
+
+UNIT=cage-retroarch.service
+VERB="${1:-}"
+
+usage() {
+    cat >&2 <<EOF
+usage: mytesla-retroarch <verb>
+  start    # load the audio loopback + start the headless RetroArch compositor
+  stop     # stop the compositor (frees the emulation CPU)
+  status   # key=value lines: unit
+EOF
+    exit 2
+}
+
+case "$VERB" in
+    start)
+        # snd-aloop is the capture path for game audio (RetroArch ALSA out →
+        # hw:Loopback,0,0 → the bridge's arecord reads hw:Loopback,1,0). It is
+        # persisted in /etc/modules-load.d by the installer; re-assert here so a
+        # fresh session never starts mute.
+        modprobe snd-aloop 2>/dev/null || true
+        systemctl start "$UNIT"
+        echo "unit=started"
+        ;;
+    stop)
+        systemctl stop "$UNIT" 2>/dev/null || true
+        echo "unit=stopped"
+        ;;
+    status)
+        echo "unit=$(systemctl is-active "$UNIT" 2>/dev/null || echo inactive)"
+        ;;
+    *)
+        usage
+        ;;
+esac

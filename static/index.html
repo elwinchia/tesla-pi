@@ -1,0 +1,3347 @@
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <link rel="icon" type="image/png" href="./image.png">
+    <title>Carplay</title>
+    <script>
+      // Restore last-known night state before stylesheets parse so the initial
+      // paint is in the right theme (no day→night flash on cold load). JS below
+      // re-evaluates against GPS / clock and updates both the class and storage.
+      // Key kept in sync with evaluateNightMode() below.
+      try { if (localStorage.getItem('night-mode-last') === 'night') document.documentElement.classList.add('night'); } catch (e) {}
+    </script>
+  </head>
+  <style>
+  /* ─────────────────────────  TOKENS  ───────────────────────── */
+  :root {
+    --mcu-bg: #f4f4f1;
+    --mcu-surface: #fbfbf9;
+    --mcu-surface-hi: #ffffff;
+    --mcu-stroke: rgba(0,0,0,0.07);
+    --mcu-stroke-hi: rgba(0,0,0,0.16);
+    --mcu-text: #16171a;
+    --mcu-text-dim: #5b5f66;
+    --mcu-text-faint: #8c9099;
+    --mcu-accent: #8e9bff;
+    --mcu-accent-soft: rgba(142,155,255,0.10);
+    --mcu-ok: #46a758;
+    --mcu-warn: #e8a13a;
+    --mcu-danger: #e5484d;
+    --mcu-radius-lg: 14px;
+    --mcu-radius-md: 10px;
+    --mcu-radius-sm: 7px;
+    /* Subtle surface washes that don't fit the surface/stroke pair —
+       they flip from black-on-light (day) to white-on-dark (night). */
+    --mcu-wash-pill: rgba(0,0,0,0.02);
+    --mcu-wash-tile: rgba(0,0,0,0.02);
+    --mcu-wash-seg:  rgba(0,0,0,0.03);
+    --mcu-wash-seg-hover: rgba(0,0,0,0.04);
+    --mcu-scrim: rgba(244,244,241,0.7);
+  }
+  html.night {
+    --mcu-bg: #0b0c0e;
+    --mcu-surface: #16181c;
+    --mcu-surface-hi: #1d2026;
+    --mcu-stroke: rgba(255,255,255,0.07);
+    --mcu-stroke-hi: rgba(255,255,255,0.14);
+    --mcu-text: #f2f3f5;
+    --mcu-text-dim: #8a8f97;
+    --mcu-text-faint: #565b62;
+    --mcu-wash-pill: rgba(255,255,255,0.02);
+    --mcu-wash-tile: rgba(255,255,255,0.015);
+    --mcu-wash-seg:  rgba(255,255,255,0.025);
+    --mcu-wash-seg-hover: rgba(255,255,255,0.03);
+    --mcu-scrim: rgba(0,0,0,0.55);
+  }
+  * { box-sizing: border-box; }
+  html {
+    overscroll-behavior: none;
+    background: #fff;
+    transition: background 0.2s ease;
+  }
+  /* CarPlay route shows the device's native background around the video
+     canvas — white in day, black in night (matches iOS to hide the corner
+     halo on rounded edges). Other routes inherit the themed MCU surface. */
+  html.night[data-route="carplay"] { background: #000; }
+  html:not([data-route="carplay"]) { background: var(--mcu-bg); }
+  body {
+    width: 100%;
+    margin: 0;
+    overscroll-behavior: none;
+    color: var(--mcu-text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+                 system-ui, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  code {
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    padding: 1px 5px;
+    background: var(--mcu-bg);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: 4px;
+    color: var(--mcu-text);
+  }
+
+  /* ─────────────────────────  CARPLAY VIDEO  ───────────────────────── */
+  /* Two layouts, driven by <html data-aspect> (Settings › CarPlay › Display):
+       wide (default) — CarPlay is a top band; the leftover height below is an
+                        empty black band (#carplay-dock).
+       full           — CarPlay fills the viewport, no dock (original layout).
+     The dongle is told the matching height (see index.js) so iOS lays its own
+     UI out for that shape. */
+  #route-carplay {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #route-carplay[hidden] { display: none !important; }
+  /* Full-screen mode: revert to the original fill-the-viewport block layout. */
+  html[data-aspect="full"] #route-carplay { display: block; height: auto; }
+  html[data-aspect="full"] #carplay-dock { display: none; }
+  #carplay {
+    flex: 0 0 auto;        /* exactly the video's height; dock takes the rest */
+    width: 100%;
+    margin: 0;
+    touch-action: none; /* Tesla browser otherwise pinch-zooms two-finger touches. */
+  }
+  /* The leftover height below CarPlay in wide mode. Currently an empty black
+     band (it previously hosted the streamed ABRP panel, now removed). System
+     routes are reached via the 4-finger gestures (swipe up → launcher), same
+     as full-screen mode — no on-screen rail. */
+  #carplay-dock {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    max-width: 100vw;
+    max-height: 100vh;
+    aspect-ratio: 1920 / 1496;
+    margin: 0 auto;
+    border-radius: 42px;
+  }
+  /* iOS bakes squircle corners into the video; a circular border-radius leaves
+     dark wedges at the corner shoulders on the white day background. Clip with
+     a true squircle instead — path set by squirclePathD() at load, in
+     objectBoundingBox units so it scales with the canvas. border-radius: 0
+     cancels the generic canvas rounding above (clip-path and border-radius
+     would intersect); #android-player keeps it. */
+  #player {
+    /* aspect-ratio is set inline by JS from the active mode's dims; #android-player keeps 1.28:1 */
+    border-radius: 0;
+    clip-path: url(#squircle-clip);
+  }
+  /* iOS's dark-corner pixels are lighter than #000 — any clip exposes the gap. */
+  html.night canvas { border-radius: 0; }
+  html.night #player { clip-path: none; }
+
+  /* ─────────────────────────  CERT BANNER (fixed top)  ───────────────────────── */
+  #cert-banner {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 1000;
+    display: none;
+    padding: 14px 56px 14px 20px;
+    background: rgba(232, 161, 58, 0.08);
+    border-bottom: 1px solid rgba(232, 161, 58, 0.32);
+    color: var(--mcu-warn);
+    font: 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    letter-spacing: 0.005em;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  #cert-banner.show { display: flex; align-items: center; gap: 12px; }
+  #cert-banner::before {
+    content: "";
+    width: 18px; height: 18px;
+    flex-shrink: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e8a13a'><path d='M12.86 3.6 22 19.4a1 1 0 0 1-.86 1.5H2.86a1 1 0 0 1-.86-1.5L11.14 3.6a1 1 0 0 1 1.72 0Z'/><rect x='11.1' y='9.2' width='1.8' height='6.2' rx='.9' fill='rgba(0,0,0,.55)'/><circle cx='12' cy='17.6' r='1' fill='rgba(0,0,0,.55)'/></svg>");
+  }
+  #cert-banner #cert-banner-text { flex: 1; color: var(--mcu-text); font-weight: 500; }
+  #cert-banner button {
+    background: transparent;
+    color: var(--mcu-warn);
+    border: 1px solid rgba(232, 161, 58, 0.32);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font: 500 13px inherit;
+    cursor: pointer;
+  }
+  #cert-banner button:active { background: rgba(232, 161, 58, 0.16); }
+
+  /* ─────────────────────────  STATUS OVERLAY  ───────────────────────── */
+  #status-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: var(--mcu-scrim);
+    transition: background 0.2s ease;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    box-sizing: border-box;
+  }
+  #status-overlay.hidden { display: none; }
+  /* In 16:8 mode the dock band sits ABOVE the full-screen status overlay (which
+     stays inset:0), so the overlay only fronts the CarPlay band. The band is
+     opaque, so the overlay's scrim/blur behind it doesn't bleed through. */
+  html[data-aspect="wide"] #carplay-dock { position: relative; z-index: 600; }
+  .status-overlay-card {
+    width: 100%;
+    max-width: 820px;
+    background: var(--mcu-surface);
+    border: 1px solid var(--mcu-stroke-hi);
+    border-radius: var(--mcu-radius-lg);
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.6);
+    color: var(--mcu-text);
+  }
+  .overlay-headline { display: flex; align-items: flex-start; gap: 14px; }
+  .overlay-spinner {
+    display: inline-flex;
+    color: var(--mcu-accent);
+    animation: ovspin 1.4s linear infinite;
+    margin-top: 4px;
+  }
+  @keyframes ovspin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+  #status-headline {
+    margin: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    font: 500 22px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    letter-spacing: -0.005em;
+    color: var(--mcu-text);
+  }
+  #status-headline.ok    .overlay-spinner { color: var(--mcu-ok); }
+  #status-headline.warn  .overlay-spinner { color: var(--mcu-warn); }
+  #status-headline.err   .overlay-spinner { color: var(--mcu-danger); }
+  #status-headline.ok    .overlay-spinner { animation: none; }
+  .headline-body { display: flex; flex-direction: column; gap: 4px; }
+  #status-headline-text { font: inherit; }
+  .overlay-headline-sub {
+    font: 400 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--mcu-text-dim);
+    line-height: 1.5;
+  }
+  .overlay-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+  }
+  .overlay-col-h {
+    font: 500 11px -apple-system, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--mcu-text-faint);
+    margin-bottom: 8px;
+  }
+  .overlay-actions {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--mcu-stroke);
+  }
+  .overlay-hint {
+    font: 400 12px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-faint);
+  }
+  #overlay-exit {
+    appearance: none;
+    background: transparent;
+    color: var(--mcu-text-dim);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-md);
+    padding: 10px 16px;
+    font: 500 14px -apple-system, system-ui, sans-serif;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  #overlay-exit:hover { color: var(--mcu-text); border-color: var(--mcu-stroke-hi); }
+  #overlay-exit:active { background: var(--mcu-surface-hi); }
+  @media (max-width: 720px) {
+    .overlay-cols { grid-template-columns: 1fr; gap: 20px; }
+    .status-overlay-card { padding: 22px 22px; }
+  }
+
+  /* ─────────────────────────  ROUTES  ───────────────────────── */
+  #route-launcher, #route-settings, #route-monitor {
+    min-height: 100vh;
+    background: var(--mcu-bg);
+    color: var(--mcu-text);
+    padding: 28px clamp(20px, 4vw, 56px) 40px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  /* Beats UA `[hidden]` losing to ID-level `display:flex`. */
+  #route-launcher[hidden], #route-settings[hidden], #route-monitor[hidden] { display: none; }
+
+  /* ─────────────────────────  ANDROID (WAYDROID)  ───────────────────────── */
+  #route-android {
+    min-height: 100vh;
+    background: #000;
+    display: flex;
+    align-items: stretch;
+  }
+  #route-android[hidden] { display: none; }
+  #android-stage {
+    position: relative;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #android-player { max-width: 100%; max-height: 100vh; object-fit: contain; }
+  #android-bar {
+    width: 72px;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: var(--mcu-bg);
+    border-left: 1px solid var(--mcu-stroke);
+  }
+  #android-bar button {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    border: 1px solid var(--mcu-stroke);
+    background: var(--mcu-surface);
+    color: var(--mcu-text);
+    font-size: 19px;
+  }
+  #android-bar button:active { background: var(--mcu-surface-hi); }
+  #android-status-chip {
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: rgba(20, 22, 26, .85);
+    color: #fff;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  #android-status-chip[hidden] { display: none; }
+
+  /* ─────────────────────────  ROUTE HEADER  ───────────────────────── */
+  .settings-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--mcu-stroke);
+  }
+  .settings-header h2 {
+    margin: 0;
+    font: 500 22px -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.005em;
+    color: var(--mcu-text);
+  }
+  .settings-header .crumb {
+    color: var(--mcu-text-dim);
+    font: 500 12px -apple-system, system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .back-btn {
+    appearance: none;
+    background: var(--mcu-surface);
+    border: 1px solid var(--mcu-stroke);
+    color: var(--mcu-text);
+    border-radius: var(--mcu-radius-md);
+    padding: 0 18px 0 14px;
+    height: 44px;
+    font: 500 14px -apple-system, system-ui, sans-serif;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .back-btn:hover { background: var(--mcu-surface-hi); border-color: var(--mcu-stroke-hi); }
+  .back-btn:active { transform: translateY(1px); }
+  .push-right { margin-left: auto; }
+
+  /* ─────────────────────────  CARD + SECTION  ───────────────────────── */
+  .card {
+    background: var(--mcu-surface);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-lg);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .card h3 {
+    margin: 0;
+    font: 500 12px -apple-system, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--mcu-text-dim);
+  }
+  .card .card-aside {
+    font: 400 12px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-faint);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+  }
+
+  /* ─────────────────────────  STATUS GRID  ───────────────────────── */
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .status-grid > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px 12px 0;
+    border-bottom: 1px dashed var(--mcu-stroke);
+    border-left: 0;
+  }
+  .status-grid > div:nth-child(odd)  { padding-right: 18px; padding-left: 2px; }
+  .status-grid > div:nth-child(even) { padding-left: 18px; border-left: 1px dashed var(--mcu-stroke); }
+  .status-grid > div:nth-last-child(-n+2) { border-bottom: 0; }
+  .status-grid .k {
+    font: 500 11px -apple-system, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--mcu-text-faint);
+  }
+  .status-grid .v {
+    font: 500 16px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text);
+    letter-spacing: 0.005em;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-grid .v.warn   { color: var(--mcu-warn); }
+  .status-grid .v.danger { color: var(--mcu-danger); }
+
+  /* Compact variant for the overlay. */
+  .status-grid.is-compact > div { padding-top: 8px; padding-bottom: 8px; }
+  .status-grid.is-compact .v { font-size: 14px; }
+
+  /* ─────────────────────────  LOG PANE  ───────────────────────── */
+  #log-pane, .log-pane {
+    flex: 1 1 auto;
+    min-height: 120px;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    overflow-y: auto;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--mcu-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #log-pane .info, #log-pane .debug, #log-pane .warn, #log-pane .error,
+  .log-pane .info, .log-pane .debug, .log-pane .warn, .log-pane .error { display: block; }
+  #log-pane .ts, .log-pane .ts { color: var(--mcu-text-faint); }
+  #log-pane .evt, .log-pane .evt { color: var(--mcu-text); font-weight: 500; }
+  /* Each log line takes its semantic colour from the row class. */
+  #log-pane .info,  .log-pane .info  { color: var(--mcu-text-dim); }
+  #log-pane .debug, .log-pane .debug { color: var(--mcu-text-faint); }
+  #log-pane .warn,  .log-pane .warn  { color: var(--mcu-warn); }
+  #log-pane .error, .log-pane .error { color: var(--mcu-danger); }
+  #log-pane .info .evt  { color: var(--mcu-accent); }
+  #log-pane .debug .evt { color: var(--mcu-text-dim); }
+
+  /* ─────────────────────────  LAUNCHER  ───────────────────────── */
+  #route-launcher { gap: 14px; }
+  .launcher-top {
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .pill-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--mcu-stroke);
+    background: var(--mcu-wash-pill);
+    border-radius: 999px;
+    font: 400 12px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text);
+    font-variant-numeric: tabular-nums;
+  }
+  .pill .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--mcu-ok);
+    box-shadow: 0 0 0 3px rgba(70,167,88,0.18);
+  }
+  .pill .lbl { color: var(--mcu-text-dim); }
+  .pill.warn { color: var(--mcu-warn); border-color: rgba(232,161,58,0.34); }
+  .pill.warn .dot { background: var(--mcu-warn); box-shadow: 0 0 0 3px rgba(232,161,58,0.18); }
+  .pill.warn .lbl { color: rgba(232,161,58,0.7); }
+
+  /* Tile grid: 3-col with featured (CarPlay) spanning 2 cols. */
+  #tile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: minmax(180px, 1fr);
+    gap: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 12px 0 0;
+  }
+  #tile-grid > .tile.featured { grid-column: span 2; }
+  #tile-grid > .tile.featured .tile-name { font-size: 26px; }
+  @media (max-width: 880px) {
+    #tile-grid { grid-template-columns: repeat(2, 1fr); }
+    #tile-grid > .tile.featured { grid-column: span 2; }
+  }
+  @media (max-width: 560px) {
+    #tile-grid { grid-template-columns: 1fr; }
+    #tile-grid > .tile.featured { grid-column: span 1; }
+  }
+  .tile {
+    appearance: none;
+    text-align: left;
+    color: var(--mcu-text);
+    background: var(--mcu-surface);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-lg);
+    padding: 24px 26px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    min-height: 160px;
+    transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+    font: inherit;
+  }
+  /* `.tile[hidden]` (0,2,0) beats `.tile`'s display:flex (0,1,0) — without this
+     the UA [hidden] rule loses and a hidden tile (e.g. Android off) still shows. */
+  .tile[hidden] { display: none; }
+  .tile:hover:not(:disabled) { background: var(--mcu-surface-hi); border-color: var(--mcu-stroke-hi); }
+  .tile:active:not(:disabled) { transform: translateY(1px); }
+  .tile:focus-visible { outline: 2px solid var(--mcu-accent); outline-offset: 2px; }
+  .tile.disabled { cursor: not-allowed; color: var(--mcu-text-dim); }
+  .tile.disabled .tile-icon { color: var(--mcu-text-faint); border-style: dashed; }
+  .tile.disabled .tile-name { color: var(--mcu-text-dim); }
+  .tile.featured { border-color: var(--mcu-stroke-hi); }
+  .tile.featured::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(60% 50% at 80% 0%, var(--mcu-accent-soft), transparent 70%);
+  }
+  .tile-icon {
+    width: 56px; height: 56px;
+    border-radius: var(--mcu-radius-md);
+    border: 1px solid var(--mcu-stroke);
+    background: var(--mcu-wash-tile);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--mcu-text);
+    flex-shrink: 0;
+  }
+  .tile.featured .tile-icon { width: 64px; height: 64px; }
+  .tile-icon img { width: 60%; height: 60%; object-fit: contain; display: block; }
+  .tile-meta { margin-top: 14px; }
+  .tile-name {
+    font: 500 22px -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.005em;
+  }
+  .tile-sub {
+    margin-top: 6px;
+    font: 400 13px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-dim);
+    letter-spacing: 0.01em;
+  }
+  .tile-corner {
+    position: absolute;
+    top: 18px; right: 18px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 11px -apple-system, system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mcu-text-dim);
+  }
+  .tile-corner .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--mcu-ok);
+    box-shadow: 0 0 0 3px rgba(70,167,88,0.18);
+  }
+  .tile-corner.muted { color: var(--mcu-text-faint); }
+  .tile-corner.muted .dot { background: var(--mcu-text-faint); box-shadow: none; }
+
+  /* ─────────────────────────  SETTINGS  ───────────────────────── */
+  .settings-tabs {
+    display: flex;
+    gap: 6px;
+    margin-top: 18px;
+    padding: 6px;
+    background: var(--mcu-wash-seg);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-md);
+    width: max-content;
+  }
+  .settings-tabs button {
+    appearance: none;
+    background: transparent;
+    color: var(--mcu-text-dim);
+    border: 0;
+    padding: 10px 22px;
+    border-radius: var(--mcu-radius-sm);
+    font: 500 14px -apple-system, system-ui, sans-serif;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .settings-tabs button:hover { color: var(--mcu-text); background: var(--mcu-wash-seg-hover); }
+  .settings-tabs button.active {
+    background: var(--mcu-surface-hi);
+    color: var(--mcu-text);
+    box-shadow: inset 0 0 0 1px var(--mcu-stroke-hi);
+  }
+  .settings-body { margin-top: 14px; }
+  .settings-pane { display: none; }
+  .settings-pane.active {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 880px) {
+    .settings-pane.active { grid-template-columns: 1fr; }
+  }
+
+  /* Settings → WiFi pane: status, scan list, saved list. Reuses .card so
+     the pane sits inside the existing two-column grid (cards stack on
+     narrow screens via the media query above). */
+  .wifi-card { grid-column: 1 / -1; }
+  .wifi-status-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; margin-top: 6px;
+  }
+  .wifi-status-main { min-width: 0; }
+  .wifi-status-label { font: 500 16px -apple-system, system-ui, sans-serif; color: var(--mcu-text); }
+  .wifi-status-sub { color: var(--mcu-text-faint); font-size: 12px; margin-top: 2px; }
+  .wifi-status-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .wifi-status-actions button {
+    appearance: none; border: 1px solid var(--mcu-stroke);
+    background: var(--mcu-surface-hi); color: var(--mcu-text);
+    border-radius: var(--mcu-radius-sm); padding: 8px 14px; cursor: pointer;
+    font: 500 13px -apple-system, system-ui, sans-serif;
+  }
+  .wifi-status-actions button:hover:not(:disabled) { background: var(--mcu-wash-seg-hover); }
+  .wifi-status-actions button:disabled { opacity: 0.5; cursor: default; }
+
+  .wifi-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .wifi-list li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 8px; border-top: 1px solid var(--mcu-stroke);
+  }
+  .wifi-list li:first-child { border-top: 0; }
+  .wifi-list .signal {
+    width: 22px; height: 22px; display: inline-flex; align-items: end; gap: 2px;
+    color: var(--mcu-text-faint);
+  }
+  .wifi-list .signal span {
+    display: block; width: 4px; background: currentColor; border-radius: 1px;
+    opacity: 0.25;
+  }
+  .wifi-list .signal span.on { opacity: 1; color: var(--mcu-text); }
+  .wifi-list .signal span:nth-child(1) { height: 6px; }
+  .wifi-list .signal span:nth-child(2) { height: 11px; }
+  .wifi-list .signal span:nth-child(3) { height: 16px; }
+  .wifi-list .signal span:nth-child(4) { height: 22px; }
+  .wifi-list .ssid {
+    flex: 1; min-width: 0; color: var(--mcu-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wifi-list .secure { color: var(--mcu-text-faint); font-size: 12px; }
+  .wifi-list .chip {
+    font-size: 11px; color: var(--mcu-text-dim);
+    padding: 2px 8px; border: 1px solid var(--mcu-stroke); border-radius: 999px;
+  }
+  .wifi-list .actions { display: flex; gap: 6px; }
+  .wifi-list .actions button {
+    appearance: none; border: 1px solid var(--mcu-stroke);
+    background: transparent; color: var(--mcu-text-dim);
+    border-radius: var(--mcu-radius-sm); padding: 6px 12px; cursor: pointer;
+    font: 500 12px -apple-system, system-ui, sans-serif;
+  }
+  .wifi-list .actions button:hover { color: var(--mcu-text); background: var(--mcu-wash-seg-hover); }
+  .wifi-list .actions button.danger:hover { color: #e0a64a; }
+
+  .wifi-pw-row {
+    display: flex; gap: 8px; flex-basis: 100%; margin-top: 8px;
+    padding-left: 34px;  /* line up under the SSID column */
+  }
+  .wifi-pw-row input {
+    flex: 1; padding: 8px 10px;
+    background: var(--mcu-surface-hi); color: var(--mcu-text);
+    border: 1px solid var(--mcu-stroke); border-radius: var(--mcu-radius-sm);
+    font: 400 13px -apple-system, system-ui, sans-serif;
+  }
+  .wifi-error {
+    color: #e0a64a; font-size: 12px; margin-top: 6px;
+    font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap;
+  }
+  .wifi-empty { color: var(--mcu-text-faint); font-size: 13px; padding: 16px 0; text-align: center; }
+  /* Segmented control: large tap targets, hairline-divided buttons. */
+  .seg {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    padding: 6px;
+    background: var(--mcu-wash-seg);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-md);
+    overflow: visible;
+  }
+  .seg button {
+    appearance: none;
+    color: var(--mcu-text-dim);
+    background: transparent;
+    border: 0;
+    border-radius: var(--mcu-radius-sm);
+    height: 56px;
+    padding: 0;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px;
+    font: 500 15px -apple-system, system-ui, sans-serif;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .seg button:hover { color: var(--mcu-text); background: var(--mcu-wash-seg-hover); }
+  .seg button.active {
+    background: var(--mcu-surface-hi);
+    color: var(--mcu-text);
+    box-shadow: inset 0 0 0 1px var(--mcu-stroke-hi);
+  }
+  .seg button + button { border-left: none; }
+  .seg.seg-2 { grid-template-columns: repeat(2, 1fr); }
+  .seg-caption {
+    margin-top: 12px;
+    font: 400 12px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-faint);
+    line-height: 1.55;
+  }
+
+  #fps-pill {
+    position: fixed;
+    top: 10px;
+    right: 12px;
+    z-index: 50;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    color: rgba(255,255,255,0.92);
+    border: 1px solid rgba(255,255,255,0.12);
+    font: 500 12px -apple-system, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Cert card: big numeric + meta + paragraph + actions. */
+  .cert-row { display: flex; align-items: flex-start; gap: 28px; }
+  .cert-numeric {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 22px 14px 0;
+    border-right: 1px dashed var(--mcu-stroke);
+  }
+  .cert-numeric-v {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cert-numeric-v > #s-cert-settings {
+    font: 500 56px -apple-system, system-ui, sans-serif;
+    letter-spacing: -0.015em;
+    line-height: 1;
+    color: var(--mcu-text);
+  }
+  .cert-numeric-v.warn > #s-cert-settings { color: var(--mcu-warn); }
+  .cert-numeric-v .unit {
+    font: 500 16px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-dim);
+  }
+  .cert-numeric-k {
+    margin-top: 6px;
+    font: 500 11px -apple-system, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--mcu-text-faint);
+  }
+  .cert-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 4px;
+    min-width: 0;
+  }
+  .cert-meta-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    font: 400 13px -apple-system, system-ui, sans-serif;
+  }
+  .cert-meta-row .k {
+    width: 76px; flex-shrink: 0;
+    color: var(--mcu-text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px; font-weight: 500;
+  }
+  .cert-meta-row .v { color: var(--mcu-text); }
+  .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+  .cert-paragraph {
+    margin: 18px 0 0;
+    font: 400 13.5px -apple-system, system-ui, sans-serif;
+    line-height: 1.6;
+    color: var(--mcu-text-dim);
+    max-width: 64ch;
+  }
+  .cert-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--mcu-stroke);
+    flex-wrap: wrap;
+  }
+  #cert-renew-btn {
+    appearance: none;
+    background: var(--mcu-text);
+    color: var(--mcu-bg);
+    border: 1px solid transparent;
+    border-radius: var(--mcu-radius-md);
+    padding: 0 18px;
+    height: 44px;
+    font: 500 14px -apple-system, system-ui, sans-serif;
+    letter-spacing: 0.005em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: opacity 120ms ease;
+  }
+  #cert-renew-btn:hover:not(:disabled) { opacity: 0.92; }
+  #cert-renew-btn:active:not(:disabled) { transform: translateY(1px); }
+  #cert-renew-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .renew-note, #cert-renew-not-due {
+    margin: 0;
+    font: 400 12px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-faint);
+  }
+  .renew-status, #cert-renew-status {
+    margin: 0;
+    padding: 10px 14px;
+    border-radius: var(--mcu-radius-md);
+    background: var(--mcu-bg);
+    border: 1px solid var(--mcu-stroke);
+    font: 500 13px -apple-system, system-ui, sans-serif;
+    color: var(--mcu-text-dim);
+    max-width: 64ch;
+    flex-basis: 100%;
+  }
+  .renew-status.err, #cert-renew-status.err {
+    border-color: rgba(229, 72, 77, 0.32);
+    background: rgba(229, 72, 77, 0.06);
+    color: var(--mcu-warn);
+  }
+
+  /* ─────────────────────────  MONITOR  ───────────────────────── */
+  .monitor-body {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .monitor-body .logs-card { min-height: 280px; }
+
+  .graphs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+  }
+  @media (max-width: 880px) {
+    .graphs { grid-template-columns: 1fr; }
+  }
+  .graph { display: flex; flex-direction: column; min-width: 0; }
+  .graph-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .graph-label .k {
+    font: 500 11px -apple-system, system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--mcu-text-dim);
+  }
+  .graph-label .k .hint {
+    color: var(--mcu-text-faint);
+    letter-spacing: 0.04em;
+  }
+  .graph-label .v {
+    font: 600 16px -apple-system, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: var(--mcu-text);
+  }
+  .graph-canvas {
+    width: 100%;
+    height: 72px;
+    display: block;
+    background: var(--mcu-wash-tile);
+    border: 1px solid var(--mcu-stroke);
+    border-radius: var(--mcu-radius-sm);
+  }
+
+  /* ─────────────────────────  NIGHT TOAST  ───────────────────────── */
+  #gesture-toast {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 700;
+    background: rgba(0,0,0,0.85);
+    color: rgba(255,255,255,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    font: 600 28px -apple-system, system-ui, sans-serif;
+    padding: 14px 28px;
+    border-radius: 14px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+  }
+  #gesture-toast.show { opacity: 1; }
+
+  /* Status overlay is a CarPlay-specific diagnostic. When the user navigates
+     to another route, suppress it regardless of its .hidden class state. */
+  [data-route="launcher"] #status-overlay,
+  [data-route="settings"] #status-overlay,
+  [data-route="monitor"]  #status-overlay,
+  [data-route="android"]  #status-overlay { display: none; }
+  </style>
+  <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-chev-left" viewBox="0 0 24 24">
+        <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <defs>
+        <!-- d is set at load from squirclePathD() (objectBoundingBox units). -->
+        <clipPath id="squircle-clip" clipPathUnits="objectBoundingBox">
+          <path id="squircle-clip-path" d=""/>
+        </clipPath>
+      </defs>
+    </svg>
+    <div id="cert-banner">
+      <span id="cert-banner-text"></span>
+      <button onclick="dismissCertBanner()">Dismiss</button>
+    </div>
+    <div id="gesture-toast"></div>
+
+    <!-- Fronts the CarPlay video until the first frame arrives, and re-shows on WS
+         disconnect / USB unplug. Overlay mirrors Monitor's status via `-ov` IDs. -->
+    <div id="status-overlay" role="dialog" aria-labelledby="status-headline-text">
+      <div class="status-overlay-card">
+        <h1 id="status-headline">
+          <span class="overlay-spinner" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round" stroke-dasharray="14 40" />
+            </svg>
+          </span>
+          <span class="headline-body">
+            <span id="status-headline-text">Connecting…</span>
+            <span class="overlay-headline-sub" id="status-headline-sub">
+              First frame usually arrives within a few seconds.
+            </span>
+          </span>
+        </h1>
+
+        <div class="overlay-cols">
+          <div class="overlay-col">
+            <div class="overlay-col-h">System</div>
+            <div class="status-grid is-compact">
+              <div><span class="k">Host</span><span class="v" id="s-host-ov">—</span></div>
+              <div><span class="k">CarPlay</span><span class="v" id="s-carplay-ov">—</span></div>
+              <div><span class="k">Uptime</span><span class="v" id="s-uptime-ov">—</span></div>
+              <div><span class="k">Cert days</span><span class="v" id="s-cert-ov">—</span></div>
+            </div>
+          </div>
+          <div class="overlay-col">
+            <div class="overlay-col-h">Recent activity</div>
+            <pre id="log-pane-ov" class="log-pane" style="max-height: 168px; font-size: 11.5px; line-height: 1.6;">waiting for /logs…</pre>
+          </div>
+        </div>
+
+        <div class="overlay-actions">
+          <button id="overlay-exit" onclick="goRoute('launcher')">
+            <svg width="16" height="16" aria-hidden="true"><use href="#i-chev-left"/></svg>
+            Launcher
+          </button>
+          <div class="overlay-hint">
+            The overlay clears automatically when the first video frame arrives.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───────────────────────  CARPLAY VIDEO  ─────────────────────── -->
+    <div id="route-carplay">
+      <div id="carplay"
+           ontouchstart="handleTouchStart(event)"
+           ontouchend="handleTouchEnd(event)"
+           ontouchmove="handleTouchMove(event)"
+           ontouchcancel="handleTouchCancel(event)">
+            <canvas id="player" />
+      </div>
+      <!-- 16:8 "wide" mode leaves this band below CarPlay empty (black). It
+           previously streamed the ABRP Android app from Waydroid; that has been
+           removed. -->
+      <div id="carplay-dock"></div>
+      <div id="fps-pill" hidden>— fps</div>
+    </div>
+
+    <!-- ───────────────────────  ANDROID (WAYDROID)  ─────────────────────── -->
+    <div id="route-android" hidden>
+      <div id="android-stage"
+           ontouchstart="androidTouchStart(event)"
+           ontouchend="androidTouchEnd(event)"
+           ontouchcancel="androidTouchEnd(event)">
+        <canvas id="android-player"></canvas>
+        <div id="android-status-chip" hidden>Starting Android…</div>
+      </div>
+      <div id="android-bar">
+        <button onclick="androidNavKey('back')" aria-label="Back">◀</button>
+        <button onclick="androidNavKey('home')" aria-label="Home">●</button>
+        <button onclick="androidNavKey('recents')" aria-label="Recents">▢</button>
+        <button onclick="stopAndroid()" aria-label="Stop Android" style="margin-top: 26px">✕</button>
+      </div>
+    </div>
+
+    <!-- ───────────────────────  RETROARCH (native)  ─────────────────────── -->
+    <style>
+      /* touch-action:none everywhere on this route so the Tesla/Chromium browser
+         never double-tap-zooms or pans on a tap (preventDefault alone doesn't stop
+         double-tap zoom for pointer events — touch-action does). */
+      #route-retroarch, #route-retroarch * { touch-action:none; }
+      #route-retroarch { position:absolute; inset:0; background:#000; }
+      #ra-stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                  overflow:hidden; touch-action:none; }
+      /* The worker's WebGL renderer locks the canvas backing store to the video's
+         native size (720x480), so sizing is done in CSS: fill the stage and
+         object-fit:contain scales the 3:2 image up to the largest box that fits,
+         centered, with black bars on the wider (16:10) Tesla screen. Pure CSS =
+         auto-responsive to resize/orientation, no JS re-fit needed. */
+      #ra-player { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
+      #ra-dbg { position:absolute; left:8px; top:8px; z-index:8; font:12px/1.4 monospace; color:#0f0;
+                background:rgba(0,0,0,.7); padding:6px 8px; border-radius:6px; white-space:pre; pointer-events:none; }
+      #ra-chip { position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:6;
+                 background:rgba(0,0,0,.7); color:#fff; padding:8px 16px; border-radius:999px; font-size:15px; }
+      #ra-top { position:absolute; top:10px; right:12px; z-index:7; display:flex; gap:8px; }
+      #ra-top button { background:rgba(20,22,28,.72); color:#fff; border:1px solid rgba(255,255,255,.18);
+                       border-radius:10px; padding:8px 12px; font-size:14px; }
+      .ra-pad { position:absolute; z-index:6; -webkit-user-select:none; user-select:none; touch-action:none; }
+      .ra-btn { position:absolute; display:flex; align-items:center; justify-content:center; color:#fff;
+                font-weight:700; background:rgba(40,44,54,.5); border:1px solid rgba(255,255,255,.22);
+                box-shadow:0 2px 10px rgba(0,0,0,.35); }
+      .ra-btn.pressed { background:rgba(90,150,255,.78); border-color:rgba(150,190,255,.9); }
+      #ra-dpad { left:3.5%; bottom:6%; width:190px; height:190px; }
+      #ra-dpad .ra-btn { width:60px; height:60px; border-radius:12px; font-size:22px; }
+      #ra-dpad .d-up{ left:65px; top:0; } #ra-dpad .d-down{ left:65px; top:130px; }
+      #ra-dpad .d-left{ left:0; top:65px; } #ra-dpad .d-right{ left:130px; top:65px; }
+      #ra-dpad .d-center{ position:absolute; left:65px; top:65px; width:60px; height:60px;
+                          background:rgba(40,44,54,.3); border-radius:12px; }
+      #ra-face { right:3.5%; bottom:6%; width:200px; height:200px; }
+      #ra-face .ra-btn { width:62px; height:62px; border-radius:50%; font-size:22px; }
+      #ra-face .f-x{ left:69px; top:0; } #ra-face .f-y{ left:0; top:69px; }
+      #ra-face .f-a{ left:138px; top:69px; } #ra-face .f-b{ left:69px; top:138px; }
+      #ra-l { left:3.5%; top:13%; } #ra-r { right:3.5%; top:13%; }
+      #ra-l .ra-btn, #ra-r .ra-btn { position:relative; width:112px; height:50px; border-radius:12px; font-size:18px; }
+      #ra-meta { left:50%; bottom:4.5%; transform:translateX(-50%); display:flex; gap:18px; }
+      #ra-meta .ra-btn { position:relative; width:108px; height:42px; border-radius:21px; font-size:13px; }
+      #ra-picker { position:absolute; inset:0; z-index:9; background:rgba(8,10,14,.93); display:flex;
+                   flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; }
+      /* `display:flex` above overrides the UA [hidden] rule — restore it so the
+         picker actually closes (and stops covering the gamepad). */
+      #ra-picker[hidden] { display:none !important; }
+      #ra-picker h2 { color:#fff; margin:0; font-size:22px; }
+      #ra-list { width:min(560px,92%); max-height:56vh; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+      #ra-list button { width:100%; text-align:left; background:rgba(30,34,42,.92); color:#fff;
+                        border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:14px 16px; font-size:16px; }
+      #ra-empty { color:#9aa3b2; font-size:14px; text-align:center; max-width:460px; }
+      .ra-picker-actions { display:flex; gap:10px; }
+      .ra-picker-actions button { background:rgba(40,44,54,.92); color:#fff; border:1px solid rgba(255,255,255,.18);
+                                  border-radius:10px; padding:10px 16px; font-size:15px; }
+      /* The CarPlay "Reconnecting to Pi" status overlay is carplay-only — it must
+         never cover the RetroArch (or Android) route when the dongle is flapping. */
+      html:not([data-route="carplay"]) #status-overlay { display:none !important; }
+    </style>
+    <div id="route-retroarch" hidden>
+      <div id="ra-stage">
+        <canvas id="ra-player"></canvas>
+        <div id="ra-dbg" hidden></div>
+        <div id="ra-chip" hidden>Starting…</div>
+        <div id="ra-top">
+          <button onclick="raOpenPicker()">Games</button>
+          <button onclick="raTapButton('menu')">Menu</button>
+          <button onclick="raTestTone()" aria-label="Test sound">♪</button>
+          <button onclick="raExit()">Exit</button>
+        </div>
+
+        <div id="ra-l" class="ra-pad"><div class="ra-btn" data-btn="l">L</div></div>
+        <div id="ra-r" class="ra-pad"><div class="ra-btn" data-btn="r">R</div></div>
+        <div id="ra-dpad" class="ra-pad">
+          <div class="d-center"></div>
+          <div class="ra-btn d-up" data-dir="up">▲</div>
+          <div class="ra-btn d-down" data-dir="down">▼</div>
+          <div class="ra-btn d-left" data-dir="left">◀</div>
+          <div class="ra-btn d-right" data-dir="right">▶</div>
+        </div>
+        <div id="ra-face" class="ra-pad">
+          <div class="ra-btn f-x" data-btn="x">X</div>
+          <div class="ra-btn f-y" data-btn="y">Y</div>
+          <div class="ra-btn f-a" data-btn="a">A</div>
+          <div class="ra-btn f-b" data-btn="b">B</div>
+        </div>
+        <div id="ra-meta" class="ra-pad">
+          <div class="ra-btn" data-btn="select">SELECT</div>
+          <div class="ra-btn" data-btn="start">START</div>
+        </div>
+
+        <div id="ra-picker" hidden>
+          <h2>Choose a game</h2>
+          <div id="ra-list"></div>
+          <div id="ra-empty" hidden>No ROMs found in <code>~/retroarch/roms</code>. Copy
+            <code>.gba</code>/<code>.gb</code>/<code>.gbc</code> files there, then reopen.</div>
+          <div class="ra-picker-actions">
+            <button onclick="raLaunchMenu()">Open RetroArch menu</button>
+            <button onclick="raClosePicker()">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───────────────────────  LAUNCHER  ─────────────────────── -->
+    <div id="route-launcher" hidden>
+      <div class="launcher-top">
+        <div class="pill-row">
+          <span class="pill" id="pill-phone">
+            <span class="dot"></span><span class="lbl">Phone</span><span id="pill-phone-state">Unplugged</span>
+          </span>
+          <span class="pill" id="pill-host">
+            <span class="dot"></span><span class="lbl">Pi</span><span id="pill-host-name">—</span>
+          </span>
+          <span class="pill" id="pill-cert">
+            <span class="dot"></span><span class="lbl">Cert</span><span id="pill-cert-days">—</span>
+          </span>
+        </div>
+      </div>
+
+      <div id="tile-grid">
+        <button class="tile featured" onclick="goRoute('carplay')">
+          <div class="tile-corner"><span class="dot"></span>Ready</div>
+          <span class="tile-icon">
+            <img src="./image.png" alt="CarPlay" decoding="async" fetchpriority="high" draggable="false">
+          </span>
+          <div class="tile-meta">
+            <div class="tile-name">CarPlay</div>
+            <div class="tile-sub">Tap to return to the iPhone surface</div>
+          </div>
+        </button>
+        <button class="tile" id="tile-android" hidden onclick="launchAndroid()">
+          <div class="tile-corner muted"><span class="dot"></span><span id="tile-android-state">Off</span></div>
+          <span class="tile-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 11a6 6 0 0 1 12 0v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 17Z" />
+              <path d="M7.8 6.2 6.5 4.2M16.2 6.2l1.3-2" />
+              <circle cx="9.6" cy="10" r="0.7" fill="currentColor" />
+              <circle cx="14.4" cy="10" r="0.7" fill="currentColor" />
+            </svg>
+          </span>
+          <div class="tile-meta">
+            <div class="tile-name">Android</div>
+            <div class="tile-sub">Waydroid · streaming &amp; maps</div>
+          </div>
+        </button>
+        <button class="tile" id="tile-retroarch" hidden onclick="launchRetroarch()">
+          <div class="tile-corner muted"><span class="dot"></span><span id="tile-retroarch-state">Off</span></div>
+          <span class="tile-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M7.5 7h9a4.5 4.5 0 0 1 4.4 5.4l-.7 3.4A2.6 2.6 0 0 1 17.7 18a2.6 2.6 0 0 1-2.4-1.6L14.7 15H9.3l-.6 1.4A2.6 2.6 0 0 1 6.3 18a2.6 2.6 0 0 1-2.5-2.2l-.7-3.4A4.5 4.5 0 0 1 7.5 7Z" />
+              <path d="M7.5 11v2.4M6.3 12.2h2.4" />
+              <circle cx="15.4" cy="11.6" r="0.9" />
+              <circle cx="17.4" cy="13.2" r="0.9" />
+            </svg>
+          </span>
+          <div class="tile-meta">
+            <div class="tile-name">RetroArch</div>
+            <div class="tile-sub">Retro games · native</div>
+          </div>
+        </button>
+        <button class="tile" onclick="goRoute('monitor')">
+          <div class="tile-corner"><span class="dot"></span>Live</div>
+          <span class="tile-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12h2.8l2-5 3.4 9 2.4-6 1.6 3.2h3.6" />
+              <circle cx="20.3" cy="13.2" r="1.1" fill="currentColor" />
+            </svg>
+          </span>
+          <div class="tile-meta">
+            <div class="tile-name">Monitor &amp; Log</div>
+            <div class="tile-sub">Live metrics &amp; events</div>
+          </div>
+        </button>
+        <button class="tile" onclick="goRoute('settings')">
+          <div class="tile-corner muted"><span class="dot"></span>System</div>
+          <span class="tile-icon">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h10" /><path d="M18 7h2" />
+              <circle cx="16" cy="7" r="2" />
+              <path d="M4 12h4" /><path d="M12 12h8" />
+              <circle cx="10" cy="12" r="2" />
+              <path d="M4 17h12" />
+              <circle cx="18" cy="17" r="2" />
+            </svg>
+          </span>
+          <div class="tile-meta">
+            <div class="tile-name">Settings</div>
+            <div class="tile-sub">Display · TLS certificate</div>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- ───────────────────────  SETTINGS  ─────────────────────── -->
+    <div id="route-settings" hidden>
+      <header class="settings-header">
+        <button class="back-btn" onclick="goRoute('launcher')">
+          <svg width="16" height="16" aria-hidden="true"><use href="#i-chev-left"/></svg>
+          Launcher
+        </button>
+        <h2>Settings</h2>
+        <span class="crumb" id="settings-crumb">/ general</span>
+      </header>
+
+      <div class="settings-tabs" role="tablist" id="settings-tabs">
+        <button type="button" data-settings-tab="general" role="tab">General</button>
+        <button type="button" data-settings-tab="carplay" role="tab">CarPlay</button>
+        <button type="button" data-settings-tab="wifi" role="tab" id="settings-tab-wifi-btn" hidden>WiFi</button>
+      </div>
+
+      <div class="settings-body">
+        <div class="settings-pane" id="settings-pane-general" role="tabpanel">
+        <section class="card">
+          <div class="card-head">
+            <h3>Display mode</h3>
+            <span class="card-aside">manual override</span>
+          </div>
+          <div class="seg" id="night-seg" role="tablist">
+            <button data-night="day">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3.5" />
+                <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" />
+              </svg>
+              Day
+            </button>
+            <button data-night="auto">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 4a8 8 0 1 0 0 16 6 6 0 0 1 0-12 4 4 0 0 0 0-4Z" />
+              </svg>
+              Auto
+            </button>
+            <button data-night="night">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" />
+              </svg>
+              Night
+            </button>
+          </div>
+          <div class="seg-caption">
+            Auto follows the vehicle's day/night signal (GPS sun-elevation if granted,
+            clock fallback otherwise). Day / Night override that until you tap Auto again.
+          </div>
+        </section>
+
+        <section class="card cert-card">
+          <div class="card-head">
+            <h3>TLS certificate</h3>
+            <span class="card-aside mono" id="cert-host">—</span>
+          </div>
+          <div class="cert-row">
+            <div class="cert-numeric">
+              <div class="cert-numeric-v" id="cert-numeric-v">
+                <span id="s-cert-settings">—</span>
+                <span class="unit">days</span>
+              </div>
+              <div class="cert-numeric-k">remaining</div>
+            </div>
+            <div class="cert-meta">
+              <div class="cert-meta-row">
+                <span class="k">Status</span>
+                <span class="v" id="cert-status-label">—</span>
+              </div>
+              <div class="cert-meta-row">
+                <span class="k">Path</span>
+                <span class="v mono">CERT_PATH</span>
+              </div>
+            </div>
+          </div>
+
+          <p class="cert-paragraph">
+            Renewing the certificate restarts the configuration access point for
+            approximately 5&nbsp;minutes. Your CarPlay session won't be interrupted —
+            only the on-board admin Wi-Fi briefly drops
+            while the new cert is installed. Only useful when the Pi is parked within
+            range of the home Wi-Fi configured in
+            <code>wpa_supplicant-wlan0-home.conf</code>.
+          </p>
+
+          <div class="cert-actions">
+            <button id="cert-renew-btn" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 12a8 8 0 0 1 14.4-4.8" />
+                <path d="M20 4v4h-4" />
+                <path d="M20 12a8 8 0 0 1-14.4 4.8" />
+                <path d="M4 20v-4h4" />
+              </svg>
+              Renew now
+            </button>
+            <p id="cert-renew-not-due" class="renew-note" hidden></p>
+            <div id="cert-renew-status" class="renew-status" hidden></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Android (Waydroid)</h3>
+            <span class="card-aside">experimental</span>
+          </div>
+          <div class="seg seg-2" id="exp-android-seg" role="tablist">
+            <button data-exp-android="off">Off</button>
+            <button data-exp-android="on">On</button>
+          </div>
+          <div class="seg-caption">
+            Experimental. Adds an Android tile to the launcher that streams
+            Waydroid (Waze &amp; maps) to the Tesla browser over H.264. Off by
+            default; saved per-browser.
+          </div>
+        </section>
+        </div><!-- /settings-pane-general -->
+
+        <div class="settings-pane" id="settings-pane-carplay" role="tabpanel">
+        <section class="card">
+          <div class="card-head">
+            <h3>Display</h3>
+            <span class="card-aside">screen layout</span>
+          </div>
+          <div class="seg seg-2" id="aspect-seg" role="tablist">
+            <button data-aspect="full">Full screen</button>
+            <button data-aspect="wide">16:8 + dock</button>
+          </div>
+          <div class="seg-caption">
+            Full screen fills the Tesla browser with CarPlay. 16:8 shrinks CarPlay
+            to a top band and frees a control dock below it. Changing this restarts
+            the CarPlay session and reloads the page. Saved on the Pi.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Frame rate</h3>
+            <span class="card-aside">CarPlay stream</span>
+          </div>
+          <div class="seg seg-2" id="frame-rate-seg" role="tablist">
+            <button data-frame-rate="30">30 fps</button>
+            <button data-frame-rate="60">60 fps</button>
+          </div>
+          <div class="seg-caption">
+            Changing this restarts the CarPlay session — the screen will briefly
+            show the reconnecting overlay. 30 fps cuts dongle load and bandwidth
+            roughly in half; 60 fps is smoother. Saved on the Pi.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Hand</h3>
+            <span class="card-aside">driver position</span>
+          </div>
+          <div class="seg seg-2" id="hand-seg" role="tablist">
+            <button data-hand="0">Left-hand drive</button>
+            <button data-hand="1">Right-hand drive</button>
+          </div>
+          <div class="seg-caption">
+            Tells the dongle which side you're sitting on so CarPlay puts lane
+            guidance and key UI on the correct side. Changing this restarts the
+            CarPlay session. Saved on the Pi.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>Show FPS</h3>
+            <span class="card-aside">on the CarPlay screen</span>
+          </div>
+          <div class="seg seg-2" id="show-fps-seg" role="tablist">
+            <button data-show-fps="off">Off</button>
+            <button data-show-fps="on">On</button>
+          </div>
+          <div class="seg-caption">
+            Counts video frames arriving from the dongle, refreshed once a
+            second. Drawn as a small pill in the corner. Saved per-browser.
+          </div>
+        </section>
+        </div><!-- /settings-pane-carplay -->
+
+        <div class="settings-pane" id="settings-pane-wifi" role="tabpanel">
+        <section class="card wifi-card">
+          <div class="card-head">
+            <h3>Status</h3>
+            <span class="card-aside mono" id="wifi-iface-label">wlan1</span>
+          </div>
+          <div class="wifi-status-row">
+            <div class="wifi-status-main">
+              <div class="wifi-status-label" id="wifi-status-label">—</div>
+              <div class="wifi-status-sub mono" id="wifi-status-sub"></div>
+            </div>
+            <div class="wifi-status-actions">
+              <button id="wifi-disconnect-btn" hidden>Disconnect</button>
+              <button id="wifi-rescan-btn">Rescan</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card wifi-card">
+          <div class="card-head">
+            <h3>Nearby networks</h3>
+            <span class="card-aside" id="wifi-scan-aside">—</span>
+          </div>
+          <ul class="wifi-list" id="wifi-scan-list"></ul>
+        </section>
+
+        <section class="card wifi-card">
+          <div class="card-head">
+            <h3>Saved networks</h3>
+            <span class="card-aside" id="wifi-saved-aside">—</span>
+          </div>
+          <ul class="wifi-list" id="wifi-saved-list"></ul>
+        </section>
+        </div><!-- /settings-pane-wifi -->
+      </div>
+    </div>
+
+    <!-- ───────────────────────  MONITOR  ─────────────────────── -->
+    <div id="route-monitor" hidden>
+      <header class="settings-header">
+        <button class="back-btn" onclick="goRoute('launcher')">
+          <svg width="16" height="16" aria-hidden="true"><use href="#i-chev-left"/></svg>
+          Launcher
+        </button>
+        <h2>Monitor &amp; Log</h2>
+        <span class="crumb">/ live</span>
+      </header>
+
+      <div class="monitor-body">
+        <section class="card">
+          <div class="card-head">
+            <h3>System</h3>
+            <span class="card-aside">refreshed every 2s</span>
+          </div>
+          <div class="status-grid" id="status-grid">
+            <div><span class="k">Uptime</span><span class="v" id="s-uptime">—</span></div>
+          </div>
+        </section>
+
+        <section class="card graphs-card">
+          <div class="card-head">
+            <h3>History</h3>
+            <span class="card-aside" id="graph-span">last —</span>
+          </div>
+          <div class="graphs">
+            <div class="graph">
+              <div class="graph-label">
+                <span class="k">CPU load <span class="hint">1m avg</span></span>
+                <span class="v" id="g-load-val">—</span>
+              </div>
+              <canvas class="graph-canvas" id="g-load" data-accent="#8e9bff"></canvas>
+            </div>
+            <div class="graph">
+              <div class="graph-label">
+                <span class="k">Memory</span>
+                <span class="v" id="g-mem-val">—</span>
+              </div>
+              <canvas class="graph-canvas" id="g-mem" data-accent="#46a758"></canvas>
+            </div>
+            <div class="graph">
+              <div class="graph-label">
+                <span class="k">CPU temp</span>
+                <span class="v" id="g-temp-val">—</span>
+              </div>
+              <canvas class="graph-canvas" id="g-temp" data-accent="#e8a13a"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <section class="card logs-card">
+          <div class="card-head">
+            <h3>Logs</h3>
+            <span class="card-aside mono">/var/log/chia/server.log</span>
+          </div>
+          <pre id="log-pane">waiting for /logs…</pre>
+        </section>
+      </div>
+    </div>
+
+  </body>
+  <script>
+  // Display aspect (Settings › CarPlay › Display). Dongle width is always 1920;
+  // the mode picks the height. The server is authoritative, but the canvas and
+  // layout must be built synchronously at load — before the control WS connects —
+  // so we cache the last-known mode in localStorage and reconcile on the server
+  // push (applyServerAspect reloads once on a mismatch). Default 'wide'.
+  const ASPECTS = { full: { w: 1920, h: 1496 }, wide: { w: 1920, h: 840 } }; // wide = 16:7
+  const renderedAspect = localStorage.getItem('carplayAspect') === 'full' ? 'full' : 'wide';
+  document.documentElement.dataset.aspect = renderedAspect;
+  const carplayWidth = ASPECTS[renderedAspect].w;
+  const carplayHeight = ASPECTS[renderedAspect].h;
+
+  // ── iOS squircle clip for the CarPlay canvas (day mode) ──────────────────
+  // Figma-style squircle (algorithm from the figma-squircle package / Figma's
+  // "Desperately Seeking Squircles") emitted in objectBoundingBox units so the
+  // clip scales with the displayed canvas. Radius is in video px, derived from
+  // the empirically-tuned 42 CSS px at the ~1180px Tesla viewport so it tracks
+  // resolution changes (docs/resolution-tuning.md). Tune in-car via URL
+  // (?sqr=72&sqs=0.6 — sqr in video px), then bake winners into these.
+  const SQUIRCLE_RADIUS = Math.round(42 * carplayWidth / 1180);  // ≈ 68 at 1920
+  const SQUIRCLE_SMOOTHING = 0.6;
+
+  function squirclePathD(w, h, radius, smoothing) {
+    const rad = (deg) => (deg * Math.PI) / 180;
+    const budget = Math.min(w, h) / 2;
+    const r = Math.min(radius, budget);
+    const s = Math.min(smoothing, budget / r - 1);
+    const p = Math.min((1 + s) * r, budget);          // corner extent along edge
+    const arcMeasure = 90 * (1 - s);                  // remaining circular sweep (deg)
+    const arc = Math.sin(rad(arcMeasure / 2)) * r * Math.SQRT2; // arc dx = dy
+    const alpha = (90 - arcMeasure) / 2;
+    const p34 = r * Math.tan(rad(alpha / 2));
+    const beta = 45 * s;
+    const c = p34 * Math.cos(rad(beta));
+    const d = c * Math.tan(rad(beta));
+    const b = (p - arc - c - d) / 3;
+    const a = 2 * b;
+    // toFixed(6) avoids exponent notation; +() collapses -0.000000 → 0.
+    const X = (v) => +(v / w).toFixed(6);
+    const Y = (v) => +(v / h).toFixed(6);
+    const A = (dx, dy) => `a ${X(r)} ${Y(r)} 0 0 1 ${X(dx)} ${Y(dy)}`;
+    return [
+      `M ${X(w - p)} 0`,
+      `c ${X(a)} 0 ${X(a + b)} 0 ${X(a + b + c)} ${Y(d)}`,            // top-right
+      A(arc, arc),
+      `c ${X(d)} ${Y(c)} ${X(d)} ${Y(b + c)} ${X(d)} ${Y(a + b + c)}`,
+      `L 1 ${Y(h - p)}`,
+      `c 0 ${Y(a)} 0 ${Y(a + b)} ${X(-d)} ${Y(a + b + c)}`,           // bottom-right
+      A(-arc, arc),
+      `c ${X(-c)} ${Y(d)} ${X(-(b + c))} ${Y(d)} ${X(-(a + b + c))} ${Y(d)}`,
+      `L ${X(p)} 1`,
+      `c ${X(-a)} 0 ${X(-(a + b))} 0 ${X(-(a + b + c))} ${Y(-d)}`,    // bottom-left
+      A(-arc, -arc),
+      `c ${X(-d)} ${Y(-c)} ${X(-d)} ${Y(-(b + c))} ${X(-d)} ${Y(-(a + b + c))}`,
+      `L 0 ${Y(p)}`,
+      `c 0 ${Y(-a)} 0 ${Y(-(a + b))} ${X(d)} ${Y(-(a + b + c))}`,     // top-left
+      A(arc, -arc),
+      `c ${X(c)} ${Y(-d)} ${X(b + c)} ${Y(-d)} ${X(a + b + c)} ${Y(-d)}`,
+      'Z',
+    ].join(' ');
+  }
+
+  {
+    const q = new URLSearchParams(location.search);
+    const qr = parseFloat(q.get('sqr'));
+    const qs = parseFloat(q.get('sqs'));
+    document.getElementById('squircle-clip-path').setAttribute(
+      'd', squirclePathD(carplayWidth, carplayHeight,
+                         Number.isFinite(qr) ? qr : SQUIRCLE_RADIUS,
+                         Number.isFinite(qs) ? qs : SQUIRCLE_SMOOTHING));
+  }
+
+  const host = window.location.hostname + ':' + window.location.port;
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
+  const player = document.getElementById('player');
+  player.width = window.innerWidth;
+  player.height = player.width * carplayHeight / carplayWidth;
+  player.style.aspectRatio = carplayWidth + ' / ' + carplayHeight;
+  let canvas = player.transferControlToOffscreen();
+  const worker = new Worker("./worker.js");
+  worker.addEventListener("message", console.log);
+
+  function connect(path, opts) {
+    let delay = 250;
+    let ws = null;
+    let stopped = false;
+    const open = () => {
+      if (stopped) return;
+      ws = new WebSocket(proto + '://' + host + path);
+      if (opts.binary) ws.binaryType = 'arraybuffer';
+      ws.onopen = () => {
+        delay = 250;
+        console.log('ws open ' + path);
+        if (opts.onOpen) opts.onOpen(ws);
+      };
+      ws.onmessage = (ev) => opts.onMessage(ev, ws);
+      ws.onclose = () => {
+        ws = null;
+        if (opts.onClose) opts.onClose();
+        if (stopped) { console.log('ws close ' + path + ' (stopped)'); return; }
+        console.log('ws close ' + path + ', retry in ' + delay + 'ms');
+        setTimeout(open, delay);
+        delay = Math.min(delay * 2, 5000);
+      };
+      ws.onerror = () => { try { ws && ws.close(); } catch (e) {} };
+    };
+    open();
+    return {
+      send: (m) => { if (ws && ws.readyState === 1) ws.send(m); },
+      stop: () => { stopped = true; if (ws) { try { ws.close(); } catch {} } },
+      start: () => { if (!stopped) return; stopped = false; delay = 250; open(); },
+    };
+  }
+
+  // ---- Status overlay (visible until first video frame; restored on disconnect/unplug) ----
+  const overlay = document.getElementById('status-overlay');
+  const wsState = { control: 'connecting', video: 'connecting' };
+  let carplayState = 'starting';
+  let pollTimer = null;
+
+  function showOverlay(reason) {
+    if (overlay.classList.contains('hidden')) console.log('overlay show: ' + reason);
+    overlay.classList.remove('hidden');
+    if (!pollTimer) {
+      pollStatus();
+      pollTimer = setInterval(pollStatus, 2000);
+    }
+  }
+  function hideOverlay() {
+    overlay.classList.add('hidden');
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  function setHeadline() {
+    const h = document.getElementById('status-headline');
+    const t = document.getElementById('status-headline-text');
+    const s = document.getElementById('status-headline-sub');
+    h.classList.remove('ok', 'warn', 'err');
+    if (wsState.control !== 'open' || wsState.video !== 'open') {
+      h.classList.add('err');
+      t.textContent = 'Reconnecting to Pi…';
+      s.textContent = 'The dongle stopped responding. Trying to reach the Pi.';
+    } else if (carplayState === 'starting') {
+      h.classList.add('warn');
+      t.textContent = 'Starting CarPlay…';
+      s.textContent = 'Waiting for the dongle to initialise. This takes a few seconds.';
+    } else if (carplayState === 'unplugged') {
+      h.classList.add('warn');
+      t.textContent = 'iPhone disconnected';
+      s.textContent = 'Plug your phone back in to resume CarPlay.';
+    } else if (carplayState === 'plugged') {
+      h.classList.add('ok');
+      t.textContent = 'CarPlay connected';
+      s.textContent = 'Waiting for the first video frame from your phone.';
+    } else {
+      t.textContent = 'Connecting…';
+      s.textContent = '';
+    }
+  }
+  function fmtUptime(s) {
+    if (s == null) return '—';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + sec + 's';
+  }
+  function setText(id, v) {
+    const el = document.getElementById(id);
+    if (!el) return; // some ids only exist on certain routes
+    el.textContent = v == null ? '—' : v;
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // Single source of truth for cert thresholds. `warn` is the launcher-pill /
+  // banner threshold, matched verbatim by maybeShowCertBanner's bucket below.
+  const CERT_EXPIRING_DAYS = 10;
+  function certBucket(d) {
+    if (d == null) return { tone: null,    label: 'unavailable', warn: false, days: null };
+    if (d <= 0)    return { tone: 'warn',  label: 'expired',     warn: true,  days: d };
+    if (d <= CERT_EXPIRING_DAYS) return { tone: 'warn', label: 'expiring', warn: true, days: d };
+    return { tone: null, label: 'healthy', warn: false, days: d };
+  }
+  const PHONE_LABELS = { plugged: 'Plugged', unplugged: 'Unplugged' };
+  function applyPhonePill(state) {
+    const pill = document.getElementById('pill-phone');
+    const txt  = document.getElementById('pill-phone-state');
+    if (!pill || !txt) return;
+    pill.classList.toggle('warn', state !== 'plugged');
+    txt.textContent = PHONE_LABELS[state] || 'Pending';
+  }
+  function applyCertChrome(d) {
+    const b = certBucket(d);
+    const certPill   = document.getElementById('pill-cert');
+    const certDaysEl = document.getElementById('pill-cert-days');
+    const numeric    = document.getElementById('cert-numeric-v');
+    const certLabel  = document.getElementById('cert-status-label');
+    if (certDaysEl) certDaysEl.textContent = d == null ? '—' : d + 'd';
+    if (certPill)   certPill.classList.toggle('warn', b.warn);
+    if (numeric)    numeric.classList.toggle('warn', b.warn);
+    if (certLabel)  certLabel.textContent = b.label;
+  }
+  function applyLauncherChrome(h) {
+    applyPhonePill(h.carplay);
+    setText('pill-host-name', h.hostname || '—');
+    applyCertChrome(h.cert_days_remaining);
+  }
+
+  // Skip the DOM repaint when /healthz + the log tail are byte-identical to
+  // the previous tick. Monitor/overlay polls fire at 2 s — without this we
+  // rebuild 50 log entries 30 times/min for nothing.
+  let lastStatusSig = null;
+  // ── Monitor history graphs ──────────────────────────────────────────────
+  // Client-side ring buffer of recent /healthz samples, rendered as sparklines
+  // on the Monitor page. Nothing is persisted server-side; the window resets on
+  // reload. ~180 samples × 2 s poll ≈ 6 min of history.
+  const GRAPH_CAP = 180;
+  const graphHist = [];            // [{ load, memPct, temp }] — values may be null
+  let graphRaf = 0;
+
+  function pushGraphSample(h) {
+    const memPct = (h.mem_total_mb && h.mem_used_mb != null)
+      ? (h.mem_used_mb / h.mem_total_mb) * 100 : null;
+    // CPU load as % of total capacity: 1m load average ÷ core count × 100.
+    const loadPct = (h.load_avg != null && h.cpu_count)
+      ? (h.load_avg / h.cpu_count) * 100 : null;
+    graphHist.push({
+      load:   loadPct,
+      memPct: memPct,
+      temp:   h.cpu_temp_c == null ? null : h.cpu_temp_c,
+    });
+    if (graphHist.length > GRAPH_CAP) graphHist.shift();
+    const last = graphHist[graphHist.length - 1];
+    setText('g-load-val', last.load   == null ? '—' : Math.round(last.load) + '%');
+    setText('g-mem-val',  last.memPct == null ? '—' : Math.round(last.memPct) + '%');
+    setText('g-temp-val', last.temp   == null ? '—' : last.temp.toFixed(1) + ' °C');
+    const span = graphHist.length * 2;   // seconds (2 s poll interval)
+    setText('graph-span', span < 60 ? `last ${span}s`
+      : `last ${Math.floor(span / 60)}m ${span % 60 ? (span % 60) + 's' : ''}`.trim());
+    // Only paint when the Monitor route is visible; cheap and avoids layout
+    // thrash on hidden canvases (clientWidth would be 0 anyway).
+    if (document.documentElement.getAttribute('data-route') !== 'monitor') return;
+    if (graphRaf) return;
+    graphRaf = requestAnimationFrame(() => { graphRaf = 0; renderGraphs(); });
+  }
+
+  function renderGraphs() {
+    drawSpark('g-load', graphHist.map(s => s.load), { min: 0, max: 100 });
+    drawSpark('g-mem',  graphHist.map(s => s.memPct), { min: 0, max: 100 });
+    drawSpark('g-temp', graphHist.map(s => s.temp), { min: 30, max: 85 });
+  }
+
+  function drawSpark(id, series, opts) {
+    const cv = document.getElementById(id);
+    if (!cv) return;
+    const cssW = cv.clientWidth, cssH = cv.clientHeight;
+    if (!cssW || !cssH) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(cssW * dpr) || cv.height !== Math.round(cssH * dpr)) {
+      cv.width = Math.round(cssW * dpr);
+      cv.height = Math.round(cssH * dpr);
+    }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const vals = series.filter(v => v != null);
+    const accent = cv.dataset.accent || '#8e9bff';
+    if (!vals.length) return;
+
+    // Range: respect fixed bounds when given, else autoscale with padding.
+    let lo = opts.min != null ? opts.min : Math.min(...vals);
+    let hi = opts.max != null ? opts.max : Math.max(...vals);
+    if (opts.min == null || opts.max == null) {
+      const dataLo = Math.min(...vals), dataHi = Math.max(...vals);
+      if (opts.min == null) lo = Math.min(lo, dataLo);
+      if (opts.max == null) hi = Math.max(hi, dataHi);
+    }
+    if (hi - lo < 1e-6) hi = lo + 1;       // flat line → avoid /0
+    const pad = 4;
+    const x = i => pad + (cssW - 2 * pad) * (series.length <= 1 ? 0.5 : i / (series.length - 1));
+    const y = v => pad + (cssH - 2 * pad) * (1 - (v - lo) / (hi - lo));
+
+    // First/last defined index for the path.
+    const pts = [];
+    for (let i = 0; i < series.length; i++) {
+      if (series[i] == null) continue;
+      pts.push([x(i), y(series[i])]);
+    }
+    if (!pts.length) return;
+
+    // Filled area under the line.
+    const grad = ctx.createLinearGradient(0, 0, 0, cssH);
+    grad.addColorStop(0, accent + '40');   // ~25% alpha
+    grad.addColorStop(1, accent + '00');
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], cssH - pad);
+    for (const [px, py] of pts) ctx.lineTo(px, py);
+    ctx.lineTo(pts[pts.length - 1][0], cssH - pad);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line.
+    ctx.beginPath();
+    pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py));
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Current-value dot.
+    const [lx, ly] = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+  }
+
+  async function pollStatus() {
+    try {
+      const [hRes, lRes] = await Promise.all([
+        fetch('/healthz', { cache: 'no-store' }),
+        fetch('/logs',    { cache: 'no-store' }),
+      ]);
+      const [h, l] = await Promise.all([hRes.json(), lRes.json()]);
+      carplayState = h.carplay;
+      pushGraphSample(h);
+      const tail = (l.entries || []).slice(-50);
+      const sig = JSON.stringify([h, tail.length, tail[tail.length - 1]?.ts]);
+      if (sig === lastStatusSig) { setHeadline(); return; }
+      lastStatusSig = sig;
+      setText('s-host', h.hostname);
+      setText('s-carplay', h.carplay);
+      setText('s-ws-ctrl',  wsState.control);
+      setText('s-ws-video', wsState.video);
+      setText('s-uptime', fmtUptime(h.uptime_s));
+      setText('s-temp', h.cpu_temp_c == null ? '—' : h.cpu_temp_c.toFixed(1) + ' °C');
+      setText('s-mem',  h.mem_total_mb == null ? '—' : h.mem_used_mb + ' / ' + h.mem_total_mb + ' MB');
+      setText('s-load', h.load_avg == null ? '—' : h.load_avg.toFixed(2));
+      const certStr = h.cert_days_remaining == null ? '—' : h.cert_days_remaining + ' d';
+      setText('s-cert', certStr);
+      setText('s-cert-settings', h.cert_days_remaining == null ? '—' : h.cert_days_remaining);
+      setText('cert-host', h.hostname);
+      setText('s-host-ov',    h.hostname);
+      setText('s-carplay-ov', h.carplay);
+      setText('s-uptime-ov',  fmtUptime(h.uptime_s));
+      setText('s-cert-ov',    certStr);
+      applyLauncherChrome(h);
+      maybeShowCertBanner(h.cert_days_remaining);
+      const html = tail.map(e => {
+        const lvl = (e.level || 'info').replace(/[^a-z]/gi, '');
+        const ts = (e.ts || '').slice(11, 19); // HH:MM:SS
+        const rest = Object.entries(e)
+          .filter(([k]) => k !== 'ts' && k !== 'level' && k !== 'evt')
+          .map(([k, v]) => k + '=' + (typeof v === 'object' ? JSON.stringify(v) : v))
+          .join(' ');
+        return `<span class="${lvl}"><span class="ts">${esc(ts)}</span> ${lvl.toUpperCase().padEnd(5)} <span class="evt">${esc(e.evt || '')}</span> ${esc(rest)}</span>`;
+      }).join('\n');
+      for (const paneId of ['log-pane', 'log-pane-ov']) {
+        const pane = document.getElementById(paneId);
+        if (!pane) continue;
+        pane.innerHTML = html;
+        pane.scrollTop = pane.scrollHeight;
+      }
+      setHeadline();
+    } catch (e) {
+      setHeadline();
+    }
+  }
+
+  // Night-mode mirroring to CarPlay.
+  // Tesla's MCU browser does NOT propagate the car's Day/Night theme to web
+  // content (prefers-color-scheme is always light, see project memory). What
+  // *does* work offline on Tesla is navigator.geolocation: Tesla wires the
+  // car's GPS into Chromium's geolocation provider, no internet required
+  // (proven by tesla-android's gps-controller.js, same Pi-AP setup as ours).
+  // Strategy: getCurrentPosition once → sun elevation → night flag, re-eval
+  // every 5 min, fall back to clock (19:00–06:00) on permission denial.
+  const NIGHT_OVERRIDE_KEY = 'night-mode-override';
+  const NIGHT_COORDS_KEY   = 'night-mode-coords';
+  const OVERRIDE_LABELS = { day: 'Day', night: 'Night' };
+
+  function lsGet(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+  }
+  function lsSet(key, v) {
+    try {
+      if (v == null || v === '') localStorage.removeItem(key);
+      else localStorage.setItem(key, v);
+    } catch {}
+  }
+  function loadCoords() {
+    try { return JSON.parse(lsGet(NIGHT_COORDS_KEY) || 'null'); } catch { return null; }
+  }
+  function saveCoords(c) { lsSet(NIGHT_COORDS_KEY, JSON.stringify(c)); }
+  function loadOverride() {
+    const v = lsGet(NIGHT_OVERRIDE_KEY);
+    return (v === 'day' || v === 'night') ? v : null;
+  }
+  function saveOverride(v) { lsSet(NIGHT_OVERRIDE_KEY, v); }
+
+  function bindSeg(el, attr, onPick) {
+    el.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-' + attr + ']');
+      if (btn) onPick(btn.getAttribute('data-' + attr), btn);
+    });
+  }
+  function setSegActive(el, attr, value) {
+    const want = value == null ? '' : String(value);
+    for (const b of el.querySelectorAll('button[data-' + attr + ']')) {
+      b.classList.toggle('active', b.getAttribute('data-' + attr) === want);
+    }
+  }
+
+  // Direct sun-elevation test — simpler and timezone-safe than computing
+  // "today's" sunrise/sunset and comparing (cross-day comparisons get fuzzy
+  // when the user's local day differs from UTC day at the coords). Treats
+  // the sun as up if its geometric elevation exceeds -0.83° (atmospheric
+  // refraction at the horizon, same threshold as official sunrise/sunset).
+  // Accurate to within a couple of minutes — fine for a binary night flag.
+  function isSunDownAt(date, lat, lng) {
+    const rad = Math.PI / 180;
+    const dayOfYear = Math.floor(
+      (date - Date.UTC(date.getUTCFullYear(), 0, 0)) / 86400000
+    );
+    const decl = -23.44 * rad * Math.cos(rad * (360 / 365) * (dayOfYear + 10));
+    const B = rad * (360 / 365) * (dayOfYear - 81);
+    const eqTime = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B); // minutes
+    const solarNoonUTCh = 12 - lng / 15 - eqTime / 60;
+    const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+    const hourAngle = (utcHours - solarNoonUTCh) * 15 * rad;
+    const sinElev = Math.sin(lat * rad) * Math.sin(decl)
+                  + Math.cos(lat * rad) * Math.cos(decl) * Math.cos(hourAngle);
+    return sinElev < Math.sin(-0.83 * rad);
+  }
+
+  function isNightAt(date, c) {
+    if (!c) {
+      const h = date.getHours();
+      return h < 6 || h >= 19;
+    }
+    return isSunDownAt(date, c.lat, c.lng);
+  }
+
+  let nightOverride = loadOverride();
+  let nightCoords = loadCoords();
+  let nightCurrent = false;
+
+  function evaluateNightMode() {
+    let next;
+    if      (nightOverride === 'day')   next = false;
+    else if (nightOverride === 'night') next = true;
+    else                                next = isNightAt(new Date(), nightCoords);
+    document.documentElement.classList.toggle('night', next);
+    updateNightSeg();
+    if (next === nightCurrent) return;
+    nightCurrent = next;
+    // Key + value scheme must match the inline <head> bootstrap script.
+    try { localStorage.setItem('night-mode-last', next ? 'night' : 'day'); } catch {}
+    const src = nightOverride || (nightCoords ? 'auto-geo' : 'auto-clock');
+    console.log('night mode → ' + (next ? 'on' : 'off') + ' (' + src + ')');
+    control.send(JSON.stringify({ type: 'nightMode', value: next }));
+  }
+  function updateNightSeg() {
+    const seg = document.getElementById('night-seg');
+    if (seg) setSegActive(seg, 'night', nightOverride || 'auto');
+  }
+
+  function requestGeo() {
+    if (!('geolocation' in navigator)) { evaluateNightMode(); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        nightCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        saveCoords(nightCoords);
+        evaluateNightMode();
+      },
+      (err) => {
+        console.log('geolocation unavailable (' + (err && err.message) + ') — using clock fallback');
+        evaluateNightMode();
+      },
+      { timeout: 15000, maximumAge: 24 * 3600 * 1000 }
+    );
+  }
+
+  async function initNightMode() {
+    evaluateNightMode();
+    try {
+      const p = await navigator.permissions.query({ name: 'geolocation' });
+      if (p.state === 'denied') return;
+      requestGeo();
+    } catch {
+      requestGeo();
+    }
+    setInterval(evaluateNightMode, 5 * 60 * 1000);
+  }
+
+  // ---- Show-FPS overlay (client-only; counts /video WS frames over 1s) ----
+  const SHOW_FPS_KEY = 'show-fps';
+  const fpsPillEl = document.getElementById('fps-pill');
+  const showFpsSegEl = document.getElementById('show-fps-seg');
+  let fpsFrameCount = 0;
+  let showFps = false;
+  let fpsTickerTimer = null;
+
+  function startFpsTicker() {
+    if (fpsTickerTimer) return;
+    fpsFrameCount = 0;
+    fpsTickerTimer = setInterval(() => {
+      fpsPillEl.textContent = fpsFrameCount + ' fps';
+      fpsFrameCount = 0;
+    }, 1000);
+  }
+  function stopFpsTicker() {
+    if (!fpsTickerTimer) return;
+    clearInterval(fpsTickerTimer);
+    fpsTickerTimer = null;
+  }
+  // Ticker only runs when the toggle is on AND the carplay route is visible
+  // — applyRoute() calls this on every route change.
+  function syncFpsTicker() {
+    const onCarplay = currentRoute() === 'carplay';
+    if (showFps && onCarplay) startFpsTicker();
+    else stopFpsTicker();
+  }
+  function applyShowFps() {
+    fpsPillEl.hidden = !showFps;
+    if (showFps) fpsPillEl.textContent = '— fps';
+    setSegActive(showFpsSegEl, 'show-fps', showFps ? 'on' : 'off');
+    syncFpsTicker();
+  }
+  function initShowFps() {
+    showFps = lsGet(SHOW_FPS_KEY) === '1';
+    applyShowFps();
+  }
+
+  // ---- Frame-rate (server-side; broadcast on /control connect drives UI) --
+  const ALLOWED_FPS_CLIENT = new Set([30, 60]);
+  const frameRateSegEl = document.getElementById('frame-rate-seg');
+
+  function applyServerFrameRate(value) {
+    if (!ALLOWED_FPS_CLIENT.has(value)) return;
+    setSegActive(frameRateSegEl, 'frame-rate', value);
+    try { worker.postMessage({ type: 'setFps', fps: value }); } catch {}
+  }
+
+  // ---- Hand / driver position (server-side; same pattern as frame rate) ----
+  // HandDriveType: 0 = LHD, 1 = RHD. Server is authoritative; UI just mirrors.
+  const ALLOWED_HAND_CLIENT = new Set([0, 1]);
+  const handSegEl = document.getElementById('hand-seg');
+
+  function applyServerHand(value) {
+    const v = Number(value);
+    if (!ALLOWED_HAND_CLIENT.has(v)) return;
+    setSegActive(handSegEl, 'hand', v);
+  }
+
+  // ---- Display aspect (server-side; full-screen vs 16:8 top-band + dock) ----
+  // Canvas dims + layout are built at load from localStorage (see ASPECTS up
+  // top). The server push is authoritative: mirror it into localStorage and, if
+  // it differs from what we actually rendered, reload once to rebuild. The
+  // dongle restarts on an aspect change anyway, so the reload costs nothing.
+  const ALLOWED_ASPECT_CLIENT = new Set(['full', 'wide']);
+  const aspectSegEl = document.getElementById('aspect-seg');
+
+  function applyServerAspect(value) {
+    if (!ALLOWED_ASPECT_CLIENT.has(value)) return;
+    setSegActive(aspectSegEl, 'aspect', value);
+    localStorage.setItem('carplayAspect', value);
+    if (value !== renderedAspect) location.reload();
+  }
+
+  // ---- Settings tabs (General / CarPlay / WiFi) ---------------------------
+  const SETTINGS_TAB_KEY = 'settings-tab';
+  const SETTINGS_TABS = ['general', 'carplay', 'wifi'];
+  const settingsTabsEl = document.getElementById('settings-tabs');
+  const settingsCrumbEl = document.getElementById('settings-crumb');
+  function setSettingsTab(name) {
+    const tab = SETTINGS_TABS.includes(name) ? name : 'general';
+    for (const b of settingsTabsEl.querySelectorAll('button[data-settings-tab]')) {
+      b.classList.toggle('active', b.getAttribute('data-settings-tab') === tab);
+    }
+    for (const t of SETTINGS_TABS) {
+      const pane = document.getElementById('settings-pane-' + t);
+      if (pane) pane.classList.toggle('active', t === tab);
+    }
+    if (settingsCrumbEl) settingsCrumbEl.textContent = '/ ' + tab;
+    lsSet(SETTINGS_TAB_KEY, tab);
+    if (typeof onSettingsTabShown === 'function') onSettingsTabShown(tab);
+  }
+  settingsTabsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-settings-tab]');
+    if (btn) setSettingsTab(btn.getAttribute('data-settings-tab'));
+  });
+  // Deferred: setSettingsTab → onSettingsTabShown reads `wifiState` (TDZ).
+
+  // ---- Settings → WiFi pane (manages wlan1 as a client adapter) -----------
+  const wifiState = { available: false, lastStatus: null, lastStatusSig: null, lastScan: null, busy: false, error: null, scanError: null, expanded: null, pollTimer: null };
+  const $w = (id) => document.getElementById(id);
+  const wifiPaneEl = $w('settings-pane-wifi');
+  const pwInput = (bssid) => wifiPaneEl.querySelector('[data-wifi-pw="' + CSS.escape(bssid) + '"]');
+
+  // NM SIGNAL is a 0–100 quality value (not dBm) — relative scale only.
+  function wifiSignalBars(signal) {
+    const lit = signal >= 76 ? 4 : signal >= 51 ? 3 : signal >= 26 ? 2 : 1;
+    let html = '<span class="signal" aria-label="signal ' + signal + '">';
+    for (let i = 1; i <= 4; i++) html += '<span class="' + (i <= lit ? 'on' : '') + '"></span>';
+    return html + '</span>';
+  }
+
+  async function wifiFetchStatus() {
+    try {
+      const r = await fetch('/wifi/status', { cache: 'no-store' });
+      if (r.status === 404) return { _absent: true };
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  }
+
+  function wifiRenderStatus(j) {
+    const label = $w('wifi-status-label');
+    const sub = $w('wifi-status-sub');
+    const disc = $w('wifi-disconnect-btn');
+    const rescan = $w('wifi-rescan-btn');
+    $w('wifi-iface-label').textContent = (j && j.iface) || 'wlan1';
+    if (!j || j._absent) {
+      label.textContent = 'Adapter not detected';
+      sub.textContent = '';
+      disc.hidden = true;
+      rescan.disabled = true;
+      return;
+    }
+    rescan.disabled = false;
+    if (j.connected) {
+      label.textContent = 'Connected to ' + j.connected.ssid;
+      sub.textContent = j.connected.ip || '';
+      disc.hidden = false;
+    } else {
+      label.textContent = 'Not connected';
+      sub.textContent = '';
+      disc.hidden = true;
+    }
+  }
+
+  function wifiScanPhase() {
+    if (wifiState.busy === 'scan') return 'scanning';
+    if (wifiState.scanError) return 'error';
+    if (wifiState.lastScan) return 'ready';
+    return 'idle';
+  }
+  const WIFI_SCAN_ASIDE = { scanning: 'scanning…', error: 'scan failed', idle: '—' };
+
+  function renderScanRow(n) {
+    const secured = !!n.security;
+    const expanded = wifiState.expanded === n.bssid;
+    const ssidAttrs = 'data-ssid="' + esc(n.ssid) + '"';
+    const bssidAttr = (k) => 'data-wifi-' + k + '="' + esc(n.bssid) + '"';
+    let action;
+    if (n.in_use) action = '<button disabled>Connected</button>';
+    else if (secured) action = '<button ' + bssidAttr('row') + ' ' + ssidAttrs + ' data-secured="1">' + (expanded ? 'Cancel' : 'Connect') + '</button>';
+    else action = '<button ' + bssidAttr('go') + ' ' + ssidAttrs + '>Connect</button>';
+    const err = (expanded && wifiState.error)
+      ? '<div class="wifi-error">' + esc(wifiState.error) + '</div>' : '';
+    const pwRow = (expanded && secured)
+      ? '<div class="wifi-pw-row">' +
+          '<input type="password" placeholder="Password" ' + bssidAttr('pw') + ' autocomplete="off">' +
+          '<button ' + bssidAttr('go') + ' ' + ssidAttrs + ' data-secured="1">Connect</button>' +
+          '<button ' + bssidAttr('cancel') + '>Cancel</button>' +
+        '</div>' + err
+      : err;
+    return '<li>' +
+      wifiSignalBars(n.signal) +
+      '<span class="ssid">' + esc(n.ssid) + '</span>' +
+      (secured ? '<span class="secure" aria-label="secured">🔒</span>' : '') +
+      (n.in_use ? '<span class="chip">In use</span>' : '') +
+      '<div class="actions">' + action + '</div>' +
+      pwRow +
+    '</li>';
+  }
+
+  function wifiRenderScan() {
+    const host = $w('wifi-scan-list');
+    const aside = $w('wifi-scan-aside');
+    const phase = wifiScanPhase();
+    aside.textContent = phase === 'ready' ? wifiState.lastScan.length + ' found' : WIFI_SCAN_ASIDE[phase];
+    const list = wifiState.lastScan || [];
+    if (!list.length) {
+      if (phase === 'error') host.innerHTML = '<li class="wifi-empty wifi-error">' + esc(wifiState.scanError) + '</li>';
+      else if (phase === 'scanning') host.innerHTML = '<li class="wifi-empty">Scanning…</li>';
+      else host.innerHTML = '<li class="wifi-empty">No networks found. Tap Rescan.</li>';
+      return;
+    }
+    host.innerHTML = list.map(renderScanRow).join('');
+  }
+
+  function wifiRenderSaved(profiles) {
+    const host = $w('wifi-saved-list');
+    const aside = $w('wifi-saved-aside');
+    const list = profiles || [];
+    aside.textContent = list.length ? (list.length + ' saved') : '—';
+    if (!list.length) { host.innerHTML = '<li class="wifi-empty">No saved networks.</li>'; return; }
+    host.innerHTML = list.map((p) => (
+      '<li>' +
+        '<span class="ssid">' + esc(p.name) + '</span>' +
+        (p.active_on ? '<span class="chip">Active · ' + esc(p.active_on) + '</span>' : '') +
+        '<div class="actions">' +
+          '<button class="danger" data-wifi-forget="' + esc(p.name) + '">Forget</button>' +
+        '</div>' +
+      '</li>'
+    )).join('');
+  }
+
+  async function wifiRefreshStatus() {
+    const j = await wifiFetchStatus();
+    // Drop volatile fields before signing — stderr can flip between calls.
+    const sig = JSON.stringify(j, (k, v) => k === 'stderr' || k === 'helper_ok' ? undefined : v);
+    if (sig === wifiState.lastStatusSig) return;
+    wifiState.lastStatusSig = sig;
+    wifiState.lastStatus = j;
+    wifiRenderStatus(j);
+  }
+  async function wifiRefreshSaved() {
+    try {
+      const r = await fetch('/wifi/saved', { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j && j.ok) wifiRenderSaved(j.profiles);
+    } catch {}
+  }
+  async function wifiRefreshScan() {
+    if (wifiState.busy) return;
+    wifiState.busy = 'scan';
+    wifiState.scanError = null;
+    wifiRenderScan();
+    try {
+      const r = await fetch('/wifi/scan', { cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) wifiState.lastScan = j.networks;
+      else wifiState.scanError = (j.stderr || j.error || 'scan failed').toString().trim();
+    } catch (e) {
+      wifiState.scanError = String(e && e.message || e);
+    } finally {
+      wifiState.busy = false;
+      wifiRenderScan();
+    }
+  }
+  async function wifiDoConnect(ssid, password) {
+    wifiState.busy = 'connect';
+    wifiState.error = null;
+    try {
+      const r = await fetch('/wifi/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid, password: password || undefined }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) wifiState.error = (j.stderr || j.error || 'connect failed').toString().trim();
+      else wifiState.expanded = null;
+    } catch (e) {
+      wifiState.error = String(e && e.message || e);
+    } finally {
+      wifiState.busy = false;
+      // Force-refresh status (bypass sig cache) and saved (new NM profile).
+      wifiState.lastStatusSig = null;
+      await Promise.all([wifiRefreshStatus(), wifiRefreshSaved()]);
+      wifiRenderScan();
+    }
+  }
+  async function wifiDoDisconnect() {
+    wifiState.busy = 'disconnect';
+    try { await fetch('/wifi/disconnect', { method: 'POST' }); }
+    catch {} finally {
+      wifiState.busy = false;
+      wifiState.lastStatusSig = null;
+      await wifiRefreshStatus();
+    }
+  }
+  async function wifiDoForget(name) {
+    if (!confirm('Forget "' + name + '"?')) return;
+    wifiState.busy = 'forget';
+    try {
+      await fetch('/wifi/forget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+    } catch {} finally {
+      wifiState.busy = false;
+      await wifiRefreshSaved();
+    }
+  }
+
+  wifiPaneEl.addEventListener('click', (ev) => {
+    const t = ev.target.closest('button');
+    if (!t) return;
+    if (t.hasAttribute('data-wifi-row')) {
+      const bssid = t.getAttribute('data-wifi-row');
+      wifiState.expanded = wifiState.expanded === bssid ? null : bssid;
+      wifiState.error = null;
+      wifiRenderScan();
+      if (wifiState.expanded) { const pw = pwInput(bssid); if (pw) pw.focus(); }
+      return;
+    }
+    if (t.hasAttribute('data-wifi-cancel')) {
+      wifiState.expanded = null; wifiState.error = null; wifiRenderScan(); return;
+    }
+    if (t.hasAttribute('data-wifi-go')) {
+      const ssid = t.getAttribute('data-ssid');
+      const bssid = t.getAttribute('data-wifi-go');
+      const secured = t.hasAttribute('data-secured');
+      let pw = '';
+      if (secured) {
+        const input = pwInput(bssid);
+        pw = input ? input.value : '';
+        if (pw.length < 8 || pw.length > 63) {
+          wifiState.error = 'Password must be 8–63 characters.';
+          wifiRenderScan();
+          return;
+        }
+      }
+      wifiDoConnect(ssid, pw);
+      return;
+    }
+    if (t.hasAttribute('data-wifi-forget')) { wifiDoForget(t.getAttribute('data-wifi-forget')); return; }
+    if (t.id === 'wifi-rescan-btn') { wifiRefreshScan(); return; }
+    if (t.id === 'wifi-disconnect-btn') { wifiDoDisconnect(); return; }
+  });
+  wifiPaneEl.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement) || !t.hasAttribute('data-wifi-pw')) return;
+    const go = wifiPaneEl.querySelector('[data-wifi-go="' + CSS.escape(t.getAttribute('data-wifi-pw')) + '"]');
+    if (go) go.click();
+  });
+
+  // Poll status only while the pane is the active settings tab.
+  function onSettingsTabShown(tab) {
+    if (tab !== 'wifi' || !wifiState.available) {
+      if (wifiState.pollTimer) { clearInterval(wifiState.pollTimer); wifiState.pollTimer = null; }
+      return;
+    }
+    (async () => {
+      await Promise.all([wifiRefreshStatus(), wifiRefreshSaved()]);
+      if (!wifiState.lastScan) {
+        wifiRefreshScan();
+      }
+    })();
+    if (!wifiState.pollTimer) wifiState.pollTimer = setInterval(wifiRefreshStatus, 5000);
+  }
+
+  setSettingsTab(lsGet(SETTINGS_TAB_KEY) || 'general');
+
+  // Tab visibility tracks wlan1 presence on the backend — hidden on dev boxes.
+  (async () => {
+    const j = await wifiFetchStatus();
+    if (j && !j._absent && j.ok) {
+      wifiState.available = true;
+      const btn = document.getElementById('settings-tab-wifi-btn');
+      if (btn) btn.hidden = false;
+      if (lsGet(SETTINGS_TAB_KEY) === 'wifi') onSettingsTabShown('wifi');
+    } else if (lsGet(SETTINGS_TAB_KEY) === 'wifi') {
+      setSettingsTab('general');
+    }
+  })();
+
+  const gestureToastEl = document.getElementById('gesture-toast');
+  let gestureToastTimer = null;
+  function showGestureToast(text) {
+    gestureToastEl.textContent = text;
+    gestureToastEl.classList.add('show');
+    clearTimeout(gestureToastTimer);
+    gestureToastTimer = setTimeout(() => gestureToastEl.classList.remove('show'), 1200);
+  }
+  function cycleNightOverride() {
+    if (nightOverride === null) nightOverride = nightCurrent ? 'day' : 'night';
+    else                        nightOverride = null;
+    saveOverride(nightOverride);
+    showGestureToast(OVERRIDE_LABELS[nightOverride] || 'Auto');
+    evaluateNightMode();
+  }
+
+  const control = connect('/control', {
+    onOpen: (ws) => {
+      wsState.control = 'open';
+      setHeadline();
+      ws.send(JSON.stringify({ type: 'statusReq' }));
+      ws.send(JSON.stringify({ type: 'nightMode', value: nightCurrent }));
+    },
+    onClose: () => { wsState.control = 'closed'; carplayState = 'starting'; showOverlay('control-ws-close'); },
+    onMessage: (ev) => {
+      const msg = JSON.parse(ev.data);
+      switch (msg.type) {
+        case 'statusReq':
+          switch (msg.data) {
+            case 'plugged':   console.log('IPhone plugged'); carplayState = 'plugged'; applyPhonePill('plugged'); setHeadline(); break;
+            case 'unplugged': console.log('IPhone unplugged'); carplayState = 'unplugged'; applyPhonePill('unplugged'); showOverlay('unplugged'); break;
+            default: console.log('Unknown statusReq data: ' + msg.data);
+          }
+          break;
+        case 'goRoute':
+          goRoute(msg.route);
+          break;
+        case 'frameRate':
+          applyServerFrameRate(msg.value);
+          break;
+        case 'hand':
+          applyServerHand(msg.value);
+          break;
+        case 'aspect':
+          applyServerAspect(msg.value);
+          break;
+        default:
+          console.log('Unknown message type: ' + msg.type);
+      }
+    }
+  });
+  const ROUTES = ['carplay', 'launcher', 'settings', 'monitor', 'android', 'retroarch'];
+  const routeEls = Object.fromEntries(ROUTES.map(r => [r, document.getElementById('route-' + r)]));
+  function currentRoute() {
+    const h = (location.hash || '').replace(/^#\/?/, '');
+    return ROUTES.includes(h) ? h : 'carplay';
+  }
+
+  initNightMode();
+  initShowFps();
+
+  const video = connect('/video', {
+    binary: true,
+    onOpen: () => { wsState.video = 'open'; setHeadline(); },
+    onClose: () => { wsState.video = 'closed'; showOverlay('video-ws-close'); },
+    onMessage: (ev) => {
+      const data = new Uint8Array(ev.data);
+      if (canvas) {
+        worker.postMessage({ canvas, data }, [canvas, data.buffer]);
+        canvas = null;
+      } else {
+        worker.postMessage({ data }, [data.buffer]);
+      }
+      fpsFrameCount++;
+      // First (and every subsequent) video frame means CarPlay is streaming —
+      // hide the overlay. showOverlay() restores it on disconnect / unplug.
+      if (!overlay.classList.contains('hidden')) hideOverlay();
+    }
+  });
+
+  // Canvas size is locked at startup (Tesla MCU never resizes), so cache the
+  // rect — getBoundingClientRect forces a layout flush and touchmove fires 60+/s.
+  let playerRect = player.getBoundingClientRect();
+  window.addEventListener('resize', () => { playerRect = player.getBoundingClientRect(); });
+  function normalize(t) {
+    return [(t.clientX - playerRect.left) / playerRect.width,
+            (t.clientY - playerRect.top)  / playerRect.height];
+  }
+
+  // USB msg 0x17 binds id := wire-array-index, so packTouches() emits a dense
+  // slot-0-first array; sending only slot 1 makes iOS see id=0 teleport.
+  // Wire format and clean-break design in docs/carlink-protocol-notes.md.
+  const SLOT_MAX = 2;
+  const T_UP = 0, T_DOWN = 1, T_MOVE = 2;
+  // Fingers land sequentially, so the leading 1-2 fingers of a 3-finger
+  // gesture would otherwise be forwarded as Down and then flushed as Up when
+  // the gesture engages — iOS sees a completed tap (e.g. opens the Maps
+  // widget). The protocol has no touch-cancel, so new touches are held
+  // uncommitted for a short window; gesture start discards them unsent.
+  const PENDING_COMMIT_MS = 75;     // 3-finger taps land within ~40 ms
+  const PENDING_MOVE_COMMIT = 0.01; // normalized movement that means "drag, send now"
+  const slots = new Map();   // Touch.identifier -> { slot, x, y, x0, y0, action, committed }
+  let pendingTimer = null;
+
+  function commitPending(sync) {
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    let had = false;
+    for (const s of slots.values()) if (!s.committed) { s.committed = true; had = true; }
+    if (!had) return;
+    if (sync) sendMultiNow(); else scheduleMulti();
+  }
+  function dropPending() {
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    for (const [id, s] of slots) if (!s.committed) slots.delete(id);
+  }
+
+  function allocSlot() {
+    const used = new Set();
+    for (const s of slots.values()) used.add(s.slot);
+    for (let i = 0; i < SLOT_MAX; i++) if (!used.has(i)) return i;
+    return -1;
+  }
+  function packTouches() {
+    const bySlot = new Array(SLOT_MAX).fill(null);
+    for (const s of slots.values()) if (s.committed && s.slot >= 0 && s.slot < SLOT_MAX) bySlot[s.slot] = s;
+    const out = [];
+    for (let i = 0; i < SLOT_MAX; i++) {
+      if (bySlot[i]) out.push({ slot: i, action: bySlot[i].action, x: bySlot[i].x, y: bySlot[i].y });
+    }
+    return out;
+  }
+  function sendMultiNow() {
+    const data = packTouches();
+    if (!data.length) return;
+    control.send(JSON.stringify({ type: 'multitouch', data }));
+    // Demote any Down → Move so subsequent idle frames don't re-trigger Down.
+    // Uncommitted slots keep their pending Down — it hasn't been sent yet.
+    for (const s of slots.values()) if (s.committed && s.action === T_DOWN) s.action = T_MOVE;
+  }
+  let multiScheduled = false;
+  function scheduleMulti() {
+    if (multiScheduled) return;
+    multiScheduled = true;
+    requestAnimationFrame(() => { multiScheduled = false; sendMultiNow(); });
+  }
+
+  // 3-finger gestures = media controls; 4-finger gestures = system controls.
+  // 1-2 finger touches are forwarded to iOS unchanged.
+  const GESTURE_MIN_FINGERS = 3;
+  const GESTURE_MIN_PX = 80;
+  const MEDIA_KEY_LABELS = { next: '⏭', prev: '⏮', playOrPause: '⏯', siri: 'Siri', home: '⌂' };
+  const APP_ROUTES = ROUTES.slice(0, 2);
+  const ROUTE_LABELS = { carplay: 'CarPlay', launcher: 'Home' };
+  let gestureActive = false;
+  let gestureFingerCount = 0;
+  let gestureStartX = 0;
+  let gestureStartY = 0;
+  let gestureLastX  = 0;
+  let gestureLastY  = 0;
+  function avgTouchXY(touches) {
+    let sx = 0, sy = 0;
+    for (let i = 0; i < touches.length; i++) { sx += touches[i].clientX; sy += touches[i].clientY; }
+    return [sx / touches.length, sy / touches.length];
+  }
+  function flushSlotsAsUp() {
+    // Pending slots were never sent to iOS — drop them silently. Only slots
+    // iOS already saw (committed) need a closing Up.
+    dropPending();
+    if (!slots.size) return;
+    for (const s of slots.values()) s.action = T_UP;
+    sendMultiNow();
+    slots.clear();
+  }
+
+  function handleTouchStart(e) {
+    if (e.touches.length >= GESTURE_MIN_FINGERS) {
+      if (!gestureActive) { flushSlotsAsUp(); gestureActive = true; }
+      gestureFingerCount = Math.max(gestureFingerCount, e.touches.length);
+      // Reset start/last on each finger-add so swipe direction is measured
+      // from when the final finger count was reached.
+      [gestureStartX, gestureStartY] = avgTouchXY(e.touches);
+      gestureLastX = gestureStartX; gestureLastY = gestureStartY;
+      return;
+    }
+    if (gestureActive) return;
+    for (const t of e.changedTouches) {
+      if (slots.has(t.identifier)) continue;
+      const slot = allocSlot();
+      if (slot < 0) continue;
+      const [x, y] = normalize(t);
+      slots.set(t.identifier, { slot, x, y, x0: x, y0: y, action: T_DOWN, committed: false });
+    }
+    // commitPending() owns clearing the timer (a no-op if it has already fired).
+    if (!pendingTimer) pendingTimer = setTimeout(() => commitPending(false), PENDING_COMMIT_MS);
+  }
+
+  function handleTouchMove(e) {
+    if (gestureActive) {
+      if (e.touches.length >= GESTURE_MIN_FINGERS) {
+        [gestureLastX, gestureLastY] = avgTouchXY(e.touches);
+      }
+      return;
+    }
+    if (!slots.size) return;
+    // Stationary fingers still fire touchmove on iOS/Tesla — skip the WS send
+    // when no slot actually moved, else a held pinch spams ~60 packets/s.
+    let dirty = false;
+    for (const t of e.changedTouches) {
+      const s = slots.get(t.identifier);
+      if (!s) continue;
+      const [x, y] = normalize(t);
+      if (x === s.x && y === s.y) continue;
+      if (!s.committed) {
+        // Track position but keep the pending Down unsent; real movement
+        // means drag intent — commit early so drags don't eat the window.
+        s.x = x; s.y = y;
+        if (Math.abs(x - s.x0) > PENDING_MOVE_COMMIT || Math.abs(y - s.y0) > PENDING_MOVE_COMMIT) {
+          commitPending(false);
+        }
+        continue;
+      }
+      s.x = x; s.y = y; s.action = T_MOVE;
+      dirty = true;
+    }
+    if (dirty) scheduleMulti();
+  }
+
+  function handleTouchEnd(e) {
+    if (gestureActive) {
+      if (e.touches.length === 0) {
+        const deltaX = gestureLastX - gestureStartX;
+        const deltaY = gestureLastY - gestureStartY;
+        gestureActive = false;
+        const horizontal = Math.abs(deltaX) > Math.abs(deltaY);
+        const big = Math.max(Math.abs(deltaX), Math.abs(deltaY)) > GESTURE_MIN_PX;
+        if (gestureFingerCount >= 4) {
+          if (big && horizontal) switchApp(deltaX > 0 ? 1 : -1);
+          else if (big && deltaY > 0) cycleNightOverride();
+          else if (big)               goRoute('launcher');
+        } else {
+          if (!big)                   sendMediaKey('playOrPause');
+          else if (horizontal)        sendMediaKey(deltaX > 0 ? 'next' : 'prev');
+          else if (deltaY < 0)        sendMediaKey('siri');
+          else                        sendMediaKey('home');
+        }
+      }
+      return;
+    }
+    const endedIds = new Set();
+    let zeroEnding = false;
+    for (const t of e.changedTouches) {
+      const s = slots.get(t.identifier);
+      if (!s) continue;
+      endedIds.add(t.identifier);
+      if (s.slot === 0) zeroEnding = true;
+    }
+    if (endedIds.size === 0) return;
+    // Tap faster than the commit window: push the held Down out synchronously
+    // so the Up below lands as a separate packet right behind it.
+    commitPending(true);
+    const survivorIds = [...slots.keys()].filter(id => !endedIds.has(id));
+
+    // Clean break when slot 0 lifts mid-pinch: send [Up, Up] for both slots
+    // (iOS sees a re-tap), then re-Down the survivor on slot 0. The protocol
+    // can't rename id=1 to id=0; any attempt to bridge produces a phantom
+    // stuck touch on iOS's gesture tracker.
+    if (zeroEnding && survivorIds.length === 1) {
+      for (const s of slots.values()) s.action = T_UP;
+      sendMultiNow();
+      for (const id of endedIds) slots.delete(id);
+      const survivor = slots.get(survivorIds[0]);
+      survivor.slot = 0;
+      survivor.action = T_DOWN;
+      sendMultiNow();
+      return;
+    }
+    // Standard case: ended slots get Up, survivors (if any) ride along as Move
+    // in the same packet — slot ids stay stable.
+    for (const id of endedIds) slots.get(id).action = T_UP;
+    sendMultiNow();
+    for (const id of endedIds) slots.delete(id);
+  }
+
+  // touchcancel fires when the OS pre-empts the sequence (incoming call, system
+  // alert). Without this, gestureActive could latch on and disable touch input.
+  function handleTouchCancel(e) {
+    if (gestureActive) { gestureActive = false; return; }
+    flushSlotsAsUp();
+  }
+
+  function sendMediaKey(key) {
+    control.send(JSON.stringify({ type: 'mediaKey', key }));
+    showGestureToast(MEDIA_KEY_LABELS[key] || key);
+  }
+
+  function switchApp(dir) {
+    const cur = APP_ROUTES.indexOf(currentRoute());
+    const next = APP_ROUTES[(cur + dir + APP_ROUTES.length) % APP_ROUTES.length];
+    goRoute(next);
+    showGestureToast(ROUTE_LABELS[next] || next);
+  }
+
+  // Cert-expiry banner — fires while the overlay is up; 5-min low-frequency
+  // fallback runs while CarPlay is streaming. "Dismiss" hides for the session.
+  function dismissCertBanner() {
+    sessionStorage.setItem('cert-banner-dismissed', '1');
+    document.getElementById('cert-banner').classList.remove('show');
+  }
+  function maybeShowCertBanner(d) {
+    if (sessionStorage.getItem('cert-banner-dismissed') === '1') return;
+    const b = certBucket(d);
+    if (!b.warn) return;
+    const banner = document.getElementById('cert-banner');
+    document.getElementById('cert-banner-text').textContent =
+      d <= 0
+        ? 'TLS certificate has expired — bring the Pi indoors to renew.'
+        : `TLS certificate expires in ${d} day${d === 1 ? '' : 's'} — bring the Pi indoors so it can auto-renew on home Wi-Fi.`;
+    banner.classList.add('show');
+  }
+  async function pollCertOnly() {
+    if (!overlay.classList.contains('hidden')) return; // overlay's poll handles it
+    try {
+      const r = await fetch('/healthz', { cache: 'no-store' });
+      const j = await r.json();
+      maybeShowCertBanner(j.cert_days_remaining);
+    } catch {}
+  }
+  setInterval(pollCertOnly, 5 * 60 * 1000);
+
+  // Kick off — overlay starts visible, polling runs every 2 s.
+  showOverlay('initial-load');
+
+  function applyRoute(name) {
+    // The experimental Android route is unreachable while the feature is off.
+    if (name === 'android' && !androidEnabled) { location.hash = ''; return; }
+    for (const r of ROUTES) routeEls[r].hidden = (r !== name);
+    document.documentElement.setAttribute('data-route', name);
+    // Server requests a fresh keyframe on /video reconnect — return-to-carplay decodes immediately.
+    if (name === 'carplay') { video.start(); playerRect = player.getBoundingClientRect(); }
+    else video.stop();
+    syncFpsTicker();
+    if (name === 'monitor') startMonitorPoll(); else stopMonitorPoll();
+    if (name === 'settings') startSettingsPoll(); else stopSettingsPoll();
+    if (name === 'android') enterAndroidRoute(); else leaveAndroidRoute();
+    if (name === 'retroarch') enterRetroarchRoute(); else leaveRetroarchRoute();
+    if (name === 'launcher') { pollAndroid(); pollRetroTile(); } // refresh tile states
+    console.log('route → ' + name);
+  }
+
+  // ---- Android (Waydroid addon) over VNC ----
+  // The Pi captures the headless cage compositor and hardware-encodes it to
+  // H.264 (Pi V4L2 encoder); we decode it with the same WebCodecs worker as
+  // CarPlay over /android/h264. Touch goes to /android/input (adb input on the
+  // Pi). scrcpy's in-Android capture produced no frames on this image, and VNC
+  // was too laggy for a moving map — see docs/android-addon.md.
+  const ANDROID_VW = 1408, ANDROID_VH = 480; // cage output (video) dimensions = Android res (ultrawide for the dock)
+  const androidPlayer = document.getElementById('android-player');
+  let androidCanvas = null;
+  let androidWorker = null;
+  let androidVideo = null;
+  let androidInput = null;
+  let androidPollTimer = null;
+  let androidState = 'stopped';
+
+  // Android (Waydroid) is an experimental feature, off by default. The toggle
+  // lives in Settings › General; when off, the launcher tile stays hidden and
+  // the /#/android route is inaccessible. Saved per-browser.
+  const EXP_ANDROID_KEY = 'experimental-android';
+  const expAndroidSegEl = document.getElementById('exp-android-seg');
+  let androidEnabled = lsGet(EXP_ANDROID_KEY) === '1';
+  function applyExpAndroid() {
+    if (expAndroidSegEl) setSegActive(expAndroidSegEl, 'exp-android', androidEnabled ? 'on' : 'off');
+  }
+
+  function setAndroidChip(text) {
+    const chip = document.getElementById('android-status-chip');
+    if (!text) { chip.hidden = true; return; }
+    chip.hidden = false;
+    chip.textContent = text;
+  }
+
+  function ensureAndroidStreams() {
+    if (androidVideo) { androidVideo.start(); androidInput.start(); return; }
+    const barW = document.getElementById('android-bar').offsetWidth || 72;
+    androidPlayer.width = window.innerWidth - barW;
+    androidPlayer.height = Math.round(androidPlayer.width * ANDROID_VH / ANDROID_VW);
+    androidCanvas = androidPlayer.transferControlToOffscreen();
+    androidWorker = new Worker('./worker.js');
+    androidWorker.addEventListener('message', console.log);
+    androidWorker.postMessage({ type: 'setFps', fps: 30 });
+    androidVideo = connect('/android/h264', {
+      binary: true,
+      onMessage: (ev) => {
+        const data = new Uint8Array(ev.data);
+        // First NAL type (after the 3/4-byte start code): 7=SPS or 5=IDR ⇒ keyframe.
+        const off = (data[2] === 1) ? 3 : 4;
+        const nalType = data[off] & 0x1f;
+        const key = nalType === 7 || nalType === 5;
+        if (androidCanvas) {
+          androidWorker.postMessage({ canvas: androidCanvas, data, key }, [androidCanvas, data.buffer]);
+          androidCanvas = null;
+        } else {
+          androidWorker.postMessage({ data, key }, [data.buffer]);
+        }
+        setAndroidChip(null); // frames flowing — clear any status text
+      },
+    });
+    androidInput = connect('/android/input', { onMessage: () => {} });
+  }
+  function teardownAndroidStreams() {
+    if (androidVideo) { androidVideo.stop(); androidInput.stop(); }
+  }
+
+  function enterAndroidRoute() {
+    ensureAndroidStreams();
+    if (androidState !== 'running') setAndroidChip('Starting…');
+    startAndroidPoll();
+    startGpsFeed();
+  }
+  function leaveAndroidRoute() {
+    teardownAndroidStreams();
+    stopAndroidPoll();
+    stopGpsFeed();
+  }
+
+  // Feed the Tesla browser's GPS (the car's position) to the Pi, which injects
+  // it into Android as a mock location so Waze/Maps navigate. Needs the site's
+  // geolocation permission (granted once via the browser prompt); HTTPS makes
+  // navigator.geolocation available. Runs only while the Android route is open.
+  let gpsWatchId = null;
+  function startGpsFeed() {
+    if (gpsWatchId !== null || !navigator.geolocation) return;
+    gpsWatchId = navigator.geolocation.watchPosition(
+      (p) => {
+        const c = p.coords;
+        fetch('/android/gps', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat: c.latitude, lon: c.longitude, accuracy: c.accuracy }),
+        }).catch(() => {});
+      },
+      (err) => console.warn('geolocation', err.message),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 },
+    );
+  }
+  function stopGpsFeed() {
+    if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+  }
+
+  async function launchAndroid() {
+    goRoute('android');
+    try { await fetch('/android/start', { method: 'POST' }); } catch {}
+  }
+  async function stopAndroid() {
+    goRoute('launcher');
+    try { await fetch('/android/stop', { method: 'POST' }); } catch {}
+  }
+  // Android nav buttons → adb input keyevents on the Pi (back/home/recents).
+  function androidNavKey(key) {
+    if (androidInput) androidInput.send(JSON.stringify({ type: 'key', key }));
+  }
+
+  function applyAndroidTile(j) {
+    const tile = document.getElementById('tile-android');
+    if (!tile) return;
+    tile.hidden = !androidEnabled || !j.installed;
+    setText('tile-android-state',
+      j.state === 'running' ? 'Running' : j.state === 'starting' ? 'Starting' : 'Off');
+  }
+  async function pollAndroid() {
+    // Experimental + off: keep the tile hidden and don't poll the backend.
+    if (!androidEnabled) { const tile = document.getElementById('tile-android'); if (tile) tile.hidden = true; return; }
+    let j;
+    try { j = await (await fetch('/android/status', { cache: 'no-store' })).json(); } catch { return; }
+    androidState = j.state;
+    applyAndroidTile(j);
+    if (currentRoute() !== 'android') return;
+    if (j.state === 'starting') setAndroidChip('Starting Android… (takes about a minute)');
+    else if (j.state === 'stopped') setAndroidChip(j.last_error
+      ? 'Android failed: ' + j.last_error
+      : 'Android is stopped — relaunch from the launcher');
+    // running: streams stay connected; the chip clears when the first frame arrives
+  }
+  function startAndroidPoll() {
+    pollAndroid();
+    if (androidPollTimer) clearInterval(androidPollTimer);
+    androidPollTimer = setInterval(pollAndroid, 2000);
+  }
+  function stopAndroidPoll() {
+    if (androidPollTimer) { clearInterval(androidPollTimer); androidPollTimer = null; }
+  }
+
+  // Touch → /android/input. Android's `input` has no streaming touch, so a
+  // press is a tap and a drag is sent as one swipe on release (good enough for
+  // tapping buttons and panning the map). Coords are normalised to the canvas.
+  let androidRect = null;
+  let androidTouch = null;
+  window.addEventListener('resize', () => { androidRect = null; });
+  function androidNorm(t) {
+    const r = androidRect || (androidRect = androidPlayer.getBoundingClientRect());
+    return [Math.min(1, Math.max(0, (t.clientX - r.left) / r.width)),
+            Math.min(1, Math.max(0, (t.clientY - r.top) / r.height))];
+  }
+  function androidTouchStart(e) {
+    if (androidTouch) return;
+    const t = e.changedTouches[0];
+    const [x, y] = androidNorm(t);
+    androidTouch = { id: t.identifier, x, y, t: Date.now() };
+  }
+  function androidTouchEnd(e) {
+    if (!androidTouch || !androidInput) return;
+    const t = [...e.changedTouches].find((c) => c.identifier === androidTouch.id);
+    if (!t) return;
+    const [x, y] = androidNorm(t);
+    const moved = Math.hypot(x - androidTouch.x, y - androidTouch.y);
+    if (moved < 0.02) {
+      androidInput.send(JSON.stringify({ type: 'tap', x, y }));
+    } else {
+      const ms = Math.max(50, Math.min(800, Date.now() - androidTouch.t));
+      androidInput.send(JSON.stringify({ type: 'swipe', x1: androidTouch.x, y1: androidTouch.y, x2: x, y2: y, ms }));
+    }
+    androidTouch = null;
+  }
+
+  // ---- RetroArch (native addon) -------------------------------------------
+  // A native RetroArch session runs in its own headless cage on the Pi and is
+  // hardware-encoded to H.264 over /retroarch/h264 (decoded by the same worker
+  // as CarPlay/Android). Game audio arrives as raw S16LE PCM on /retroarch/audio
+  // and plays through an AudioWorklet ring buffer. The on-screen gamepad (and any
+  // BT pad paired to the Pi) drive a /dev/uinput virtual pad via /retroarch/input.
+  const retroPlayer = document.getElementById('ra-player');
+  let retroCanvas = null, retroWorker = null;
+  let retroVideo = null, retroAudio = null, retroInput = null;
+  let retroPollTimer = null, retroState = 'stopped', retroRom = null;
+
+  function setRaChip(t) {
+    const c = document.getElementById('ra-chip');
+    if (!t) { c.hidden = true; return; }
+    c.hidden = false; c.textContent = t;
+  }
+
+  function ensureRetroStreams() {
+    if (retroVideo) { retroVideo.start(); retroInput.start(); if (retroAudio) retroAudio.start(); return; }
+    // Canvas sizing is CSS (object-fit:contain on #ra-player) — the worker's
+    // renderer forces the backing store to the video's native size, so there's
+    // nothing to fit here.
+    retroCanvas = retroPlayer.transferControlToOffscreen();
+    retroWorker = new Worker('./worker.js');
+    retroWorker.addEventListener('message', console.log);
+    retroWorker.postMessage({ type: 'setFps', fps: 60 });
+    retroVideo = connect('/retroarch/h264', {
+      binary: true,
+      onMessage: (ev) => {
+        const data = new Uint8Array(ev.data);
+        const off = (data[2] === 1) ? 3 : 4;
+        const nalType = data[off] & 0x1f;
+        const key = nalType === 7 || nalType === 5;
+        if (retroCanvas) {
+          retroWorker.postMessage({ canvas: retroCanvas, data, key }, [retroCanvas, data.buffer]);
+          retroCanvas = null;
+        } else {
+          retroWorker.postMessage({ data, key }, [data.buffer]);
+        }
+        setRaChip(null);
+      },
+    });
+    retroInput = connect('/retroarch/input', {
+      onOpen: () => { raInputReady = true; raDbg(); },
+      onClose: () => { raInputReady = false; raDbg(); },
+      onMessage: () => {},
+    });
+    retroAudio = connect('/retroarch/audio', { binary: true, onMessage: (ev) => raFeedAudio(ev.data) });
+  }
+  function teardownRetroStreams() {
+    if (retroVideo) { retroVideo.stop(); retroInput.stop(); if (retroAudio) retroAudio.stop(); }
+  }
+
+  async function launchRetroarch() { ensureRetroAudio(); goRoute('retroarch'); }
+
+  function enterRetroarchRoute() {
+    ensureRetroAudio();          // first user tap (the tile) unlocks Web Audio
+    ensureRetroStreams();
+    startRetroPoll();
+    raDbg();
+    // Show the picker unless a game is already running.
+    fetch('/retroarch/status', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+      retroState = j.state; retroRom = j.rom;
+      if (j.state === 'running' && j.rom) { raClosePicker(); setRaChip(null); }
+      else raOpenPicker();
+    }).catch(() => raOpenPicker());
+  }
+  function leaveRetroarchRoute() { teardownRetroStreams(); stopRetroPoll(); }
+
+  async function raExit() {
+    goRoute('launcher');
+    try { await fetch('/retroarch/stop', { method: 'POST' }); } catch {}
+  }
+
+  async function pollRetro() {
+    let j;
+    try { j = await (await fetch('/retroarch/status', { cache: 'no-store' })).json(); } catch { return; }
+    retroState = j.state; retroRom = j.rom;
+    if (currentRoute() !== 'retroarch') return;
+    if (j.state === 'starting') setRaChip('Starting…');
+    else if (j.state === 'stopped') setRaChip(j.last_error ? 'Failed: ' + j.last_error : null);
+    // running: chip clears when the first frame arrives
+  }
+  function startRetroPoll() { pollRetro(); if (retroPollTimer) clearInterval(retroPollTimer); retroPollTimer = setInterval(pollRetro, 2000); }
+  function stopRetroPoll() { if (retroPollTimer) { clearInterval(retroPollTimer); retroPollTimer = null; } }
+
+  async function pollRetroTile() {
+    const tile = document.getElementById('tile-retroarch');
+    if (!tile) return;
+    try {
+      const j = await (await fetch('/retroarch/status', { cache: 'no-store' })).json();
+      tile.hidden = !j.installed;
+      setText('tile-retroarch-state', j.state === 'running' ? 'Running' : j.state === 'starting' ? 'Starting' : 'Off');
+    } catch {}
+  }
+
+  // ---- ROM picker ----
+  const RA_CORE_BY_EXT = { gba: 'gba', gb: 'gb', gbc: 'gbc' };
+  async function raOpenPicker() {
+    const picker = document.getElementById('ra-picker');
+    const list = document.getElementById('ra-list');
+    const empty = document.getElementById('ra-empty');
+    picker.hidden = false;
+    list.innerHTML = '';
+    let j;
+    try { j = await (await fetch('/retroarch/roms', { cache: 'no-store' })).json(); } catch { j = { roms: [] }; }
+    empty.hidden = (j.roms && j.roms.length > 0);
+    for (const r of (j.roms || [])) {
+      const b = document.createElement('button');
+      b.textContent = r.name;
+      b.onclick = () => raPickRom(r.name);
+      list.appendChild(b);
+    }
+  }
+  function raClosePicker() { document.getElementById('ra-picker').hidden = true; }
+  async function raPickRom(name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const core = RA_CORE_BY_EXT[ext] || 'gba';
+    raClosePicker();
+    setRaChip('Loading ' + name + '…');
+    try {
+      await fetch('/retroarch/launch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ core, rom: name }),
+      });
+    } catch {}
+  }
+  async function raLaunchMenu() {
+    raClosePicker();
+    setRaChip('Starting…');
+    try { await fetch('/retroarch/start', { method: 'POST' }); } catch {}
+  }
+
+  // ---- Gamepad overlay → /retroarch/input ----
+  // Direct per-element Pointer Event listeners (more reliable than hit-testing the
+  // stage; works for Tesla touch, mouse, and multi-touch combos). touch-action:none
+  // on the route (CSS) kills double-tap zoom. Face/shoulder/meta buttons are
+  // discrete (several can be held at once); the d-pad is an analog zone (one
+  // pointer → 8-way from its offset to centre). Append ?radebug=1 to see a HUD.
+  let raInputReady = false;
+  let raSendN = 0, raLastBtn = '';
+  let raDpadDirs = new Set();
+  const RA_DPAD_DEAD = 16;
+  const RA_DEBUG = new URLSearchParams(location.search).get('radebug') === '1';
+
+  function raDbg() {
+    if (!RA_DEBUG) return;
+    const el = document.getElementById('ra-dbg');
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = 'input ws: ' + (raInputReady ? 'OPEN' : 'closed')
+      + '  sent:' + raSendN + '  last:' + raLastBtn
+      + '\naudio: ' + (raAudioReady ? ((raAudioCtx ? Math.round(raAudioCtx.sampleRate) : '?') + 'Hz') : 'off');
+  }
+  function raSend(btn, action) {
+    raLastBtn = btn + ' ' + action; raSendN++;
+    if (retroInput) retroInput.send(JSON.stringify({ type: 'button', button: btn, action }));
+    raDbg();
+  }
+  function raTapButton(btn) { raSend(btn, 'down'); setTimeout(() => raSend(btn, 'up'), 90); }
+
+  function raSetDirPressed(dir, on) {
+    const el = document.querySelector('#ra-dpad [data-dir="' + dir + '"]');
+    if (el) el.classList.toggle('pressed', on);
+  }
+  function raUpdateDpad(e) {
+    const r = document.getElementById('ra-dpad').getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const want = new Set();
+    if (dy < -RA_DPAD_DEAD) want.add('up');
+    if (dy > RA_DPAD_DEAD) want.add('down');
+    if (dx < -RA_DPAD_DEAD) want.add('left');
+    if (dx > RA_DPAD_DEAD) want.add('right');
+    for (const d of raDpadDirs) if (!want.has(d)) { raSend(d, 'up'); raSetDirPressed(d, false); }
+    for (const d of want) if (!raDpadDirs.has(d)) { raSend(d, 'down'); raSetDirPressed(d, true); }
+    raDpadDirs = want;
+  }
+  function raReleaseDpad() {
+    for (const d of raDpadDirs) { raSend(d, 'up'); raSetDirPressed(d, false); }
+    raDpadDirs = new Set();
+  }
+  // Attach listeners once; the route's elements exist at load (script is at body end).
+  function raInitPad() {
+    document.querySelectorAll('#route-retroarch [data-btn]').forEach((el) => {
+      const btn = el.getAttribute('data-btn');
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch {}
+        el.classList.add('pressed');
+        raSend(btn, 'down');
+      });
+      const release = () => { el.classList.remove('pressed'); raSend(btn, 'up'); };
+      el.addEventListener('pointerup', release);
+      el.addEventListener('pointercancel', release);
+    });
+    const pad = document.getElementById('ra-dpad');
+    if (pad) {
+      let active = null;
+      pad.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); active = e.pointerId;
+        try { pad.setPointerCapture(e.pointerId); } catch {}
+        raUpdateDpad(e);
+      });
+      pad.addEventListener('pointermove', (e) => { if (e.pointerId === active) { e.preventDefault(); raUpdateDpad(e); } });
+      const end = (e) => { if (e.pointerId === active) { active = null; raReleaseDpad(); } };
+      pad.addEventListener('pointerup', end);
+      pad.addEventListener('pointercancel', end);
+    }
+    // Belt-and-suspenders against zoom (some engines double-tap-zoom anyway).
+    const route = document.getElementById('route-retroarch');
+    route.addEventListener('dblclick', (e) => e.preventDefault());
+    route.addEventListener('gesturestart', (e) => e.preventDefault());
+  }
+  raInitPad();
+
+  // ---- Audio: raw S16LE PCM → AudioWorklet ring buffer --------------------
+  // The Tesla browser (Chromium ≥102) plays Web Audio to the car speakers, but
+  // autoplay policy requires a user gesture to start the AudioContext — we do it
+  // on the tile tap. The ♪ button plays a test tone to confirm sound reaches the
+  // speakers (the one device behaviour we couldn't pre-confirm).
+  let raAudioCtx = null, raAudioNode = null, raAudioReady = false, raAudioLeftover = null;
+  async function ensureRetroAudio() {
+    if (raAudioCtx) { if (raAudioCtx.state === 'suspended') { try { await raAudioCtx.resume(); } catch {} } return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      // Ask for 48 kHz (best case → worklet does exact passthrough). If the
+      // browser ignores it and runs at e.g. 44.1 kHz, the worklet resamples the
+      // 48 kHz source to whatever rate it actually got (raAudioCtx.sampleRate).
+      try { raAudioCtx = new AC({ sampleRate: 48000, latencyHint: 'interactive' }); }
+      catch { raAudioCtx = new AC({ latencyHint: 'interactive' }); }
+      await raAudioCtx.audioWorklet.addModule('./retroarch-audio-worklet.js');
+      raAudioNode = new AudioWorkletNode(raAudioCtx, 'ra-ring',
+        { outputChannelCount: [2], processorOptions: { srcRate: 48000 } });
+      raAudioNode.connect(raAudioCtx.destination);
+      if (raAudioCtx.state === 'suspended') { try { await raAudioCtx.resume(); } catch {} }
+      raAudioReady = true;
+    } catch (e) { console.warn('retro audio init failed', e); raAudioReady = false; }
+  }
+  function raFeedAudio(buf) {
+    if (!raAudioReady || !raAudioNode) return;
+    let bytes = new Uint8Array(buf);
+    if (raAudioLeftover) {
+      const m = new Uint8Array(raAudioLeftover.length + bytes.length);
+      m.set(raAudioLeftover); m.set(bytes, raAudioLeftover.length);
+      bytes = m; raAudioLeftover = null;
+    }
+    const usable = bytes.length - (bytes.length % 2);   // PCM frames are 2 bytes; stash a split sample
+    if (usable < bytes.length) raAudioLeftover = bytes.slice(usable);
+    if (usable <= 0) return;
+    const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, usable / 2);
+    const f32 = new Float32Array(i16.length);
+    for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+    raAudioNode.port.postMessage(f32, [f32.buffer]);
+  }
+  async function raTestTone() {
+    await ensureRetroAudio();
+    if (!raAudioCtx) { setRaChip('Audio unavailable in this browser'); return; }
+    try {
+      const o = raAudioCtx.createOscillator(), g = raAudioCtx.createGain();
+      o.frequency.value = 660; g.gain.value = 0.15;
+      o.connect(g); g.connect(raAudioCtx.destination);
+      o.start(); o.stop(raAudioCtx.currentTime + 0.3);
+    } catch (e) { console.warn('tone failed', e); }
+  }
+
+  // Monitor route reuses the overlay's pollStatus timer when it's already
+  // running (overlay visible) — same payload, no need to fetch /healthz+/logs twice.
+  let monitorPollTimer = null;
+  function startMonitorPoll() {
+    pollStatus();
+    if (pollTimer) return;
+    if (monitorPollTimer) clearInterval(monitorPollTimer);
+    monitorPollTimer = setInterval(pollStatus, 2000);
+  }
+  function stopMonitorPoll() {
+    if (monitorPollTimer) { clearInterval(monitorPollTimer); monitorPollTimer = null; }
+  }
+
+  // Matches certbot's own "not due" threshold (default 30 days). If the cert
+  // isn't yet within this window, certbot exits 0 without renewing, so the
+  // button would just AP-flip for nothing — disable it until we're inside.
+  const CERT_RENEW_DUE_DAYS = 30;
+  function applyCertRenewGate(daysRemaining) {
+    const btn = document.getElementById('cert-renew-btn');
+    const note = document.getElementById('cert-renew-not-due');
+    if (!btn || !note) return; // not on settings route
+    if (daysRemaining == null) {
+      btn.disabled = true;
+      note.hidden = false;
+      note.textContent = 'Cert status unavailable — CERT_PATH not set or unreadable.';
+      return;
+    }
+    if (daysRemaining > CERT_RENEW_DUE_DAYS) {
+      btn.disabled = true;
+      note.hidden = false;
+      note.textContent =
+        'Renewal is available within ' + CERT_RENEW_DUE_DAYS + ' days of expiry (currently ' +
+        daysRemaining + ' d). The auto-watcher handles renewal once you cross that window.';
+    } else {
+      btn.disabled = false;
+      note.hidden = true;
+    }
+  }
+
+  // Settings route only needs cert_days_remaining — cheap 5 s healthz poll
+  // (pollStatus's full /logs payload is wasteful for a single field).
+  let settingsPollTimer = null;
+  async function pollSettingsCert() {
+    try {
+      const r = await fetch('/healthz', { cache: 'no-store' });
+      const j = await r.json();
+      const d = j.cert_days_remaining;
+      setText('s-cert-settings', d == null ? '—' : d);
+      applyCertChrome(d);
+      applyCertRenewGate(d);
+    } catch {}
+  }
+  function startSettingsPoll() {
+    pollSettingsCert();
+    if (settingsPollTimer) clearInterval(settingsPollTimer);
+    settingsPollTimer = setInterval(pollSettingsCert, 5000);
+  }
+  function stopSettingsPoll() {
+    if (settingsPollTimer) { clearInterval(settingsPollTimer); settingsPollTimer = null; }
+  }
+
+  function goRoute(name) {
+    if (!ROUTES.includes(name)) name = 'carplay';
+    location.hash = name === 'carplay' ? '' : '#/' + name;
+  }
+  window.addEventListener('hashchange', () => applyRoute(currentRoute()));
+  applyRoute(currentRoute());
+
+  bindSeg(document.getElementById('night-seg'), 'night', (v) => {
+    nightOverride = (v === 'auto') ? null : v;
+    saveOverride(nightOverride);
+    showGestureToast(OVERRIDE_LABELS[nightOverride] || 'Auto');
+    evaluateNightMode();
+  });
+
+  bindSeg(showFpsSegEl, 'show-fps', (v) => {
+    showFps = v === 'on';
+    lsSet(SHOW_FPS_KEY, showFps ? '1' : null);
+    applyShowFps();
+  });
+
+  applyExpAndroid();
+  if (expAndroidSegEl) bindSeg(expAndroidSegEl, 'exp-android', (v) => {
+    androidEnabled = v === 'on';
+    lsSet(EXP_ANDROID_KEY, androidEnabled ? '1' : null);
+    applyExpAndroid();
+    // Leaving the Android route if it's open and we just turned the feature off.
+    if (!androidEnabled && currentRoute() === 'android') goRoute('launcher');
+    pollAndroid(); // refresh the launcher tile visibility now
+  });
+
+  bindSeg(frameRateSegEl, 'frame-rate', (v) => {
+    const fps = Number(v);
+    if (!ALLOWED_FPS_CLIENT.has(fps)) return;
+    control.send(JSON.stringify({ type: 'frameRate', value: fps }));
+  });
+
+  bindSeg(handSegEl, 'hand', (v) => {
+    const h = Number(v);
+    if (!ALLOWED_HAND_CLIENT.has(h)) return;
+    control.send(JSON.stringify({ type: 'hand', value: h }));
+  });
+
+  bindSeg(aspectSegEl, 'aspect', (v) => {
+    if (!ALLOWED_ASPECT_CLIENT.has(v)) return;
+    control.send(JSON.stringify({ type: 'aspect', value: v }));
+  });
+
+  // Manual cert renewal. POST /cert/renew → systemd queues cert-renew-now.service,
+  // which immediately tears down hostapd — so the fetch typically *fails* (or
+  // returns 202 just before the AP dies) rather than completing cleanly. Treat
+  // both "got 202" and "network error after dispatch" as success indicators.
+  // Anything else (405, 500, etc. that resolves with a body) is a real failure.
+  const certRenewBtn = document.getElementById('cert-renew-btn');
+  const certRenewStatus = document.getElementById('cert-renew-status');
+  function setRenewStatus(text, isErr) {
+    certRenewStatus.hidden = false;
+    certRenewStatus.textContent = text;
+    certRenewStatus.classList.toggle('err', !!isErr);
+  }
+  certRenewBtn.addEventListener('click', async () => {
+    certRenewBtn.disabled = true;
+    setRenewStatus('Triggering renewal…', false);
+    try {
+      const r = await fetch('/cert/renew', { method: 'POST', cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 202) {
+        setRenewStatus('Renewal started. The AP will go down for ~3–5 min — leave this page open; it will reconnect automatically.', false);
+      } else {
+        setRenewStatus('Failed: ' + (j.stderr || ('HTTP ' + r.status)), true);
+        certRenewBtn.disabled = false;
+      }
+    } catch (e) {
+      // AP probably dropped between dispatch and response. Expected; not an error.
+      setRenewStatus('AP dropped (renewal likely started). Leave this page open; it will reconnect in a few minutes.', false);
+    }
+  });
+
+  </script>
+</html>

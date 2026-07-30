@@ -1,0 +1,32 @@
+node_modules/
+*.bak
+*.log
+.DS_Store
+
+# Claude Code workspace config (local tooling, absolute paths — not portable)
+.claude/
+
+# Session capture logs (may contain personal data — never publish)
+logs/
+
+# Server-side runtime settings (fps, etc.) — per-Pi, not portable
+settings.local.json
+
+# Live AP config (contains real PSK / SSID); commit hostapd.conf.template instead
+conf/hostapd.conf
+
+# Documents the live AP credentials — keep on disk, do not push
+docs/hotspot-credentials.md
+
+# Live Cloudflare API token — keep on disk, never commit
+docs/cloudflare-token.md
+
+# Redistributed / third-party APKs — copyright, never commit
+docs/*.apk
+docs/*.apkm
+
+# Local RetroArch test ROMs/saves (copyrighted — keep on disk, never commit/push)
+/retroarch-test/
+
+# Internal release checklist — local only
+/TODO.md

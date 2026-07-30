@@ -1,0 +1,17 @@
+# Copy to /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf and replace
+# the placeholders. Mode 600 (cert-renew-watch runs as root, but the file
+# contains your home Wi-Fi PSK).
+#
+#   chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
+#   chown root:root /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
+
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=MY
+
+network={
+    ssid="HOME_SSID_HERE"
+    psk="HOME_PSK_HERE"
+    key_mgmt=WPA-PSK
+    scan_ssid=1
+}

@@ -1,0 +1,155 @@
+#!/bin/bash
+# mytesla-android — privileged helper for the on-demand Waydroid stack.
+#
+# Installed to /usr/local/sbin/mytesla-android (mode 0755, root-owned) by
+# scripts/install-android-addon.sh. Invoked by mytesla.service (the service user)
+# via `sudo -n /usr/local/sbin/mytesla-android <verb>` — sudoers grants
+# NOPASSWD on this exact path only.
+#
+# The Android stack is OFF by default and never starts at boot. `start`
+# brings up waydroid-container.service + cage-headless.service (which runs
+# `waydroid show-full-ui` inside a headless wlroots compositor) and blocks
+# until the session reports RUNNING. `stop` tears everything down and
+# reclaims the ~1.5–2 GB the container holds.
+
+set -euo pipefail
+
+SERVICE_USER="${MYTESLA_SERVICE_USER:-mytesla}"
+SERVICE_UID="$(id -u "$SERVICE_USER")"
+START_TIMEOUT_S=120
+VERB="${1:-}"
+
+usage() {
+    cat >&2 <<EOF
+usage: mytesla-android <verb>
+  start    # start container + headless compositor, wait for session RUNNING
+  stop     # stop session, compositor and container (frees RAM)
+  status   # key=value lines: container, session, ip
+EOF
+    exit 2
+}
+
+# waydroid session state lives in the session user's runtime dir.
+waydroid_user() {
+    runuser -u "$SERVICE_USER" -- \
+        env XDG_RUNTIME_DIR="/run/user/$SERVICE_UID" waydroid "$@"
+}
+
+session_state() {
+    # `waydroid status` prints "Session:  RUNNING|STOPPED"; tolerate a
+    # missing container (command fails) by reporting STOPPED.
+    waydroid_user status 2>/dev/null | awk '/^Session:/ { print $2 }' || true
+}
+
+waydroid_ip() {
+    waydroid_user status 2>/dev/null | awk '/^IP address:/ { print $3 }' || true
+}
+
+WAYDROID_NET=192.168.240.0/24
+WAYDROID_IF=waydroid0
+AP_IF=wlan0   # Tesla-facing AP — must never reach the container
+
+# -w: waydroid-container.service manipulates iptables too; without the xtables
+# lock these calls race it and fail with "another app is currently holding the
+# xtables lock".
+ipt() { iptables -w 5 "$@"; }
+
+# Idempotent rule helpers. `-C` tests for an identical rule first, so `start`
+# can be re-run (and re-asserts after the captive firewall is re-applied)
+# without stacking duplicates.
+ensure_rule()     { local f="$1"; shift; ipt -C "$@" 2>/dev/null || ipt "$f" "$@"; }
+ensure_nat_rule() { local f="$1"; shift; ipt -t nat -C "$@" 2>/dev/null || ipt -t nat "$f" "$@"; }
+drop_rule()       { while ipt -C "$@" 2>/dev/null; do ipt -D "$@" 2>/dev/null || break; done; }
+drop_nat_rule()   { while ipt -t nat -C "$@" 2>/dev/null; do ipt -t nat -D "$@" 2>/dev/null || break; done; }
+
+# Give the Waydroid container internet by NAT-ing its subnet out whatever the
+# current uplink is (eth0 at the bench, wlan1 → a hotspot in the car). Without
+# this, cloud Android apps (Waze, Maps) sit forever on their splash.
+#
+# The rules are scoped BY INTERFACE, not just by subnet. That distinction is
+# load-bearing: conf/iptables.ipv4.nat sets FORWARD's *policy* to DROP and
+# installs no rules, and a policy is only consulted after every rule misses —
+# so a bare `-d 192.168.240.0/24 -j ACCEPT` would be the first matching rule in
+# the chain and would forward traffic from ANY interface into the container,
+# including the Tesla AP. Since dnsmasq hands AP clients this Pi as their
+# default gateway and the container's adbd listens unauthenticated on :5555,
+# that would hand any AP client a shell inside Android. Hence: an explicit deny
+# for AP→container at the head of the chain, egress limited to traffic
+# originating on waydroid0 and never aimed at the AP, and return traffic
+# admitted only for established flows.
+#
+# The base system pins net.ipv4.ip_forward=0; it is flipped on here and back
+# off in `stop`.
+ensure_waydroid_nat() {
+    sysctl -wq net.ipv4.ip_forward=1 2>/dev/null || true
+
+    # Drop the unscoped rules an earlier build of this script may have left
+    # behind, so upgrading a deployed Pi actually closes the hole.
+    drop_rule FORWARD -s "$WAYDROID_NET" -j ACCEPT
+    drop_rule FORWARD -d "$WAYDROID_NET" -j ACCEPT
+
+    ensure_nat_rule -A POSTROUTING -s "$WAYDROID_NET" ! -o "$WAYDROID_IF" -j MASQUERADE
+
+    # Inserted at the head so it wins over anything Waydroid's own container
+    # startup (or a later rule) appends.
+    ensure_rule -I FORWARD -i "$AP_IF" -d "$WAYDROID_NET" -j DROP
+
+    ensure_rule -A FORWARD -i "$WAYDROID_IF" ! -o "$AP_IF" -j ACCEPT
+    ensure_rule -A FORWARD -o "$WAYDROID_IF" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+}
+
+# Leaving forwarding enabled after the stack is stopped would keep the Pi a
+# router until the next reboot. Best-effort: never fail `stop` over a rule that
+# was already gone.
+teardown_waydroid_nat() {
+    drop_rule FORWARD -o "$WAYDROID_IF" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    drop_rule FORWARD -i "$WAYDROID_IF" ! -o "$AP_IF" -j ACCEPT
+    drop_rule FORWARD -i "$AP_IF" -d "$WAYDROID_NET" -j DROP
+    drop_nat_rule POSTROUTING -s "$WAYDROID_NET" ! -o "$WAYDROID_IF" -j MASQUERADE
+    sysctl -wq net.ipv4.ip_forward=0 2>/dev/null || true
+}
+
+case "$VERB" in
+    start)
+        systemctl start waydroid-container.service
+        systemctl start cage-headless.service
+        deadline=$((SECONDS + START_TIMEOUT_S))
+        while [[ "$(session_state)" != "RUNNING" ]]; do
+            if (( SECONDS >= deadline )); then
+                echo "timeout: session not RUNNING after ${START_TIMEOUT_S}s" >&2
+                systemctl status cage-headless.service --no-pager -l >&2 || true
+                exit 1
+            fi
+            sleep 2
+        done
+        # ADB inside the container takes a few more seconds after RUNNING.
+        ensure_waydroid_nat
+        ip="$(waydroid_ip)"
+        echo "session=RUNNING"
+        echo "ip=${ip:-unknown}"
+        ;;
+    stop)
+        # Order matters: session first (clean Android shutdown), then the
+        # compositor, then the LXC container.
+        waydroid_user session stop 2>/dev/null || true
+        systemctl stop cage-headless.service 2>/dev/null || true
+        systemctl stop waydroid-container.service 2>/dev/null || true
+        # Reclaim the routing/NAT state too — nothing should stay forwarded
+        # once the container is gone.
+        teardown_waydroid_nat || true
+        echo "session=STOPPED"
+        ;;
+    status)
+        container="$(systemctl is-active waydroid-container.service 2>/dev/null || true)"
+        # One `waydroid status` capture for both session + IP.
+        status_out="$(waydroid_user status 2>/dev/null || true)"
+        state="$(awk '/^Session:/ { print $2 }' <<<"$status_out")"
+        ip="$(awk '/^IP address:/ { print $3 }' <<<"$status_out")"
+        echo "container=${container:-inactive}"
+        echo "session=${state:-STOPPED}"
+        echo "ip=${ip}"
+        ;;
+    *)
+        usage
+        ;;
+esac

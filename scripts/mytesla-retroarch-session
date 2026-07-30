@@ -1,0 +1,53 @@
+#!/bin/bash
+# mytesla-retroarch-session — the command cage runs inside the headless
+# wlroots session for the RetroArch addon (ExecStart of cage-retroarch.service
+# is `cage -- /usr/local/bin/mytesla-retroarch-session`).
+#
+# Two jobs, in order:
+#   1. Pin the cage output mode BEFORE RetroArch starts. RetroArch reads the
+#      output resolution exactly once at startup; if we resized the output
+#      afterwards (as the Android bridge does for Waydroid) RetroArch would have
+#      already sized its GL surface to cage's 1280x720 default (→ a 960x720
+#      letterboxed image). Running wlr-randr here — we already have cage's
+#      WAYLAND_DISPLAY — makes RetroArch come up natively at the target size.
+#   2. exec RetroArch fullscreen, optionally booting straight into a core+ROM
+#      named by the bridge in $XDG_RUNTIME_DIR/mytesla-retroarch.cmd (two lines:
+#      core .so path, then ROM path; empty/absent ⇒ boot to the menu).
+#
+# Kept tiny and dependency-free so it's easy to audit as a compositor child.
+
+set -u
+
+OUTPUT="${RETROARCH_OUTPUT:-HEADLESS-1}"
+RUN_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+CMD_FILE="$RUN_DIR/mytesla-retroarch.cmd"
+MODE_FILE="$RUN_DIR/mytesla-retroarch.mode"
+# Output mode: the bridge writes the current WxH@Hz to the mode file, so
+# resolution/fps is tunable from the bridge with no privileged edit here. Falls
+# back to env, then a GBA-perfect default (720x480 = 3x 240x160, 3:2).
+MODE="${RETROARCH_MODE:-720x480@30}"
+if [[ -r "$MODE_FILE" ]]; then
+    m="$(cat "$MODE_FILE" 2>/dev/null)"
+    [[ -n "$m" ]] && MODE="$m"
+fi
+
+# 1. Pin the output mode (best-effort; RetroArch fullscreen tracks whatever the
+#    output ends up at, so a failure just falls back to cage's default).
+wlr-randr --output "$OUTPUT" --custom-mode "$MODE" 2>/dev/null || true
+
+# 2. Resolve an optional core + ROM to boot directly.
+core=""
+rom=""
+if [[ -r "$CMD_FILE" ]]; then
+    { IFS= read -r core; IFS= read -r rom; } < "$CMD_FILE" || true
+fi
+
+# -v logs joypad autoconfig + driver init to the journal (cage-retroarch.service)
+# so we can confirm the virtual pad bound. Harmless to leave on.
+if [[ -n "$core" && -f "$core" && -n "$rom" && -f "$rom" ]]; then
+    exec retroarch -v -f -L "$core" "$rom"
+elif [[ -n "$core" && -f "$core" ]]; then
+    exec retroarch -v -f -L "$core"
+else
+    exec retroarch -v -f
+fi

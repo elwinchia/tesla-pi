@@ -1,0 +1,38 @@
+[Unit]
+Description=Headless Wayland compositor (cage) hosting the Waydroid UI
+Documentation=https://github.com/elwinchia/mytesla/blob/main/docs/android-addon.md
+# The Waydroid LXC container (root side) must be up before the user session
+# can bind to it. waydroid-container.service ships with the waydroid package.
+Requires=waydroid-container.service
+After=waydroid-container.service
+
+[Service]
+# Runs as the mytesla service user. install-android-addon.sh rewrites this
+# line to the real account ($MYTESLA_SERVICE_USER) and enables lingering so
+# /run/user/<uid> exists without a login session.
+User=__MYTESLA_USER__
+# wlroots headless backend: no input devices, no display attached. cage
+# composites on the V3D GPU (gles2), NOT the CPU (pixman): on the Pi 4 the
+# software path costs ~half a core, and with the CPU already saturated by
+# Waydroid + Waze + the H.264 encoder, moving cage's composite to the
+# otherwise-idle GPU lifted sustained throughput ~37% (17 -> 23 fps at
+# 1024x800; surfaceflinger was unaffected). Needs the service user in the
+# `render` + `video` groups and a render node at /dev/dri/renderD128.
+# Android's render resolution is pinned via persist.waydroid.width/height in
+# /var/lib/waydroid/waydroid_base.prop (set by the installer), not here.
+Environment=WLR_BACKENDS=headless
+Environment=WLR_LIBINPUT_NO_DEVICES=1
+Environment=WLR_RENDERER=gles2
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-android
+ExecStart=/usr/bin/cage -- /usr/bin/waydroid show-full-ui
+ExecStopPost=-/usr/bin/waydroid session stop
+Restart=on-failure
+RestartSec=3
+# Waydroid + cage should never threaten the CarPlay service: if Android
+# leaks memory, the OOM killer takes this unit first.
+OOMScoreAdjust=500
+
+[Install]
+# Intentionally no WantedBy: this unit is started on demand by
+# /usr/local/sbin/mytesla-android and must never run at boot.

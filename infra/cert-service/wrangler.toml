@@ -1,0 +1,20 @@
+name = "mytesla-cert-service"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+# Serves the shared device cert to mytesla devices.
+# Deployed at certs.mytesla.humblebees.co — deliberately a DIFFERENT hostname
+# from device.mytesla.humblebees.co, which dnsmasq resolves to the Pi itself
+# while the in-car AP is up (conf/dnsmasq.conf serves a wildcard A record).
+routes = [
+  { pattern = "certs.mytesla.humblebees.co/cert/*", zone_name = "humblebees.co" },
+]
+
+# Cert artefacts written by .github/workflows/renew-cert.yml
+[[r2_buckets]]
+binding = "CERTS"
+bucket_name = "mytesla-certs"
+
+# DEVICE_TOKEN is a secret, never a var. Set it with:
+#   npx wrangler secret put DEVICE_TOKEN
+# The same value is baked into device images (/etc/default/mytesla, mode 0600).

@@ -1,0 +1,15 @@
+[Unit]
+Description=Bring wlan0 up with TeslaCP AP IP
+After=NetworkManager.service
+Before=hostapd.service dnsmasq.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/sbin/rfkill unblock wifi
+ExecStart=/sbin/ip link set wlan0 up
+ExecStart=/sbin/ip addr flush dev wlan0
+ExecStart=/sbin/ip addr add 192.168.4.254/24 dev wlan0
+
+[Install]
+WantedBy=multi-user.target

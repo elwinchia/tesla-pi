@@ -1,0 +1,85 @@
+#!/bin/bash
+# mytesla-wifi — privileged helper for managing wlan1 as a client adapter.
+#
+# Installed to /usr/local/sbin/mytesla-wifi (mode 0755, root-owned) by
+# scripts/install-wifi-tab.sh. Invoked by mytesla.service via
+# `sudo -n /usr/local/sbin/mytesla-wifi <verb> [args]` — sudoers grants
+# NOPASSWD on this exact path only.
+#
+# The interface is hard-coded to wlan1. If wlan1 is left `unmanaged` in
+# NetworkManager (some images boot it that way), this helper flips it to
+# managed at runtime when the Settings → WiFi tab needs to scan/connect.
+
+set -euo pipefail
+
+IFACE=wlan1
+VERB="${1:-}"
+shift || true
+
+usage() {
+    cat >&2 <<EOF
+usage: mytesla-wifi <verb> [args]
+  enable                      # nmcli device set $IFACE managed yes
+  disable                     # disconnect + set managed no
+  status                      # GENERAL.STATE/CONNECTION + IP4.ADDRESS
+  scan                        # nmcli device wifi list (rescan)
+  list-saved                  # nmcli connection show
+  connect <ssid> [password]
+  disconnect
+  forget <connection-name>
+EOF
+    exit 2
+}
+
+case "$VERB" in
+    enable)
+        # A leftover monitor-mode child (wlan1mon) from another tool can pin
+        # the parent radio "unavailable" to nmcli, so any scan returns 0
+        # networks. Reap the orphan if one exists.
+        if [[ -e /sys/class/net/${IFACE}mon ]]; then
+            /usr/sbin/iw dev "${IFACE}mon" del 2>/dev/null || true
+        fi
+        # NM's global wifi-radio flag is sometimes left "off" (boot default on
+        # some images). When off, every managed wifi device sits in state
+        # "unavailable" regardless of per-device managed=yes — scan returns 0
+        # hits. Idempotent: a no-op against wlan0 because wlan0 is unmanaged
+        # (hostapd owns it).
+        nmcli radio wifi on
+        nmcli device set "$IFACE" managed yes
+        ;;
+    disable)
+        # Best-effort disconnect; ignore if already idle.
+        nmcli device disconnect "$IFACE" 2>/dev/null || true
+        nmcli device set "$IFACE" managed no
+        ;;
+    status)
+        nmcli -t -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS device show "$IFACE"
+        ;;
+    scan)
+        nmcli -t -f IN-USE,BSSID,SSID,SIGNAL,SECURITY,FREQ device wifi list ifname "$IFACE" --rescan yes
+        ;;
+    list-saved)
+        nmcli -t -f NAME,TYPE,AUTOCONNECT,DEVICE connection show | grep ':802-11-wireless:' || true
+        ;;
+    connect)
+        ssid="${1:-}"
+        password="${2:-}"
+        [[ -n "$ssid" ]] || { echo "connect: ssid required" >&2; exit 2; }
+        if [[ -n "$password" ]]; then
+            nmcli device wifi connect "$ssid" password "$password" ifname "$IFACE"
+        else
+            nmcli device wifi connect "$ssid" ifname "$IFACE"
+        fi
+        ;;
+    disconnect)
+        nmcli device disconnect "$IFACE"
+        ;;
+    forget)
+        name="${1:-}"
+        [[ -n "$name" ]] || { echo "forget: connection name required" >&2; exit 2; }
+        nmcli connection delete "$name"
+        ;;
+    *)
+        usage
+        ;;
+esac

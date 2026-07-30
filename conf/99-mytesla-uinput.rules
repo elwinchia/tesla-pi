@@ -1,0 +1,5 @@
+# Let the mytesla service user (in group `input`) create the virtual gamepad on
+# /dev/uinput for the native RetroArch addon (scripts/uinput-pad.py). Installed
+# to /etc/udev/rules.d/ by scripts/install-retroarch-addon.sh. static_node keeps
+# the permissions correct even when the node is provided by a built-in driver.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

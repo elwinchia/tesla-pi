@@ -1,0 +1,132 @@
+# Issues and publishes the shared device certificate.
+#
+# This is the ONLY place the Cloudflare DNS token exists. Devices never hold it —
+# they pull the finished cert from the Worker (infra/cert-service).
+#
+# Stateless by design: each run reads the currently published expiry from R2 and
+# only issues a fresh cert when remaining life drops below RENEW_BEFORE_DAYS.
+# Nothing is persisted between runs except the artefacts in R2.
+#
+# Required repository secrets:
+#   CLOUDFLARE_DNS_TOKEN  - Zone/DNS/Edit on humblebees.co ONLY (for DNS-01)
+#   CLOUDFLARE_API_TOKEN  - Workers R2 read/write (used by wrangler)
+#   CLOUDFLARE_ACCOUNT_ID - Cloudflare account id
+#   ACME_EMAIL            - contact address for the Let's Encrypt account
+
+name: renew-cert
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # weekly, Mondays 03:17 UTC — a no-op until the threshold
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Issue a new cert even if the current one is still fresh'
+        type: boolean
+        default: false
+
+env:
+  CERT_DOMAIN: device.mytesla.humblebees.co
+  R2_BUCKET: mytesla-certs
+  # Renewal cadence. CA lifetimes are shrinking industry-wide (~47 days by 2029),
+  # so this is a config value rather than an assumption. Must stay comfortably
+  # below the cert's total lifetime to leave devices a wide catch-up window.
+  RENEW_BEFORE_DAYS: '60'
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether renewal is due
+        id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          due=yes
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "forced via workflow_dispatch"
+          elif npx --yes wrangler@3 r2 object get "$R2_BUCKET/version.json" \
+                 --file=current.json --remote 2>/dev/null && [ -s current.json ]; then
+            not_after=$(jq -r '.not_after // empty' current.json)
+            if [ -n "$not_after" ]; then
+              remaining=$(( ( $(date -u -d "$not_after" +%s) - $(date -u +%s) ) / 86400 ))
+              echo "published cert expires $not_after (${remaining}d remaining)"
+              if [ "$remaining" -gt "$RENEW_BEFORE_DAYS" ]; then
+                due=no
+              fi
+            fi
+          else
+            echo "no published cert found — issuing the first one"
+          fi
+          echo "due=$due" >> "$GITHUB_OUTPUT"
+          [ "$due" = yes ] && echo "renewal is due" || echo "renewal not due; skipping"
+
+      - name: Issue certificate (DNS-01)
+        if: steps.check.outputs.due == 'yes'
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN }}
+          ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p secrets out
+          printf 'dns_cloudflare_api_token = %s\n' "$CF_TOKEN" > secrets/cloudflare.ini
+          chmod 600 secrets/cloudflare.ini
+
+          docker run --rm \
+            -v "$PWD/secrets:/secrets:ro" \
+            -v "$PWD/out:/etc/letsencrypt" \
+            certbot/dns-cloudflare:latest \
+            certonly \
+              --dns-cloudflare \
+              --dns-cloudflare-credentials /secrets/cloudflare.ini \
+              --dns-cloudflare-propagation-seconds 30 \
+              -d "$CERT_DOMAIN" \
+              --non-interactive --agree-tos -m "$ACME_EMAIL" \
+              --key-type ecdsa
+
+          rm -f secrets/cloudflare.ini
+
+      - name: Verify the issued pair
+        if: steps.check.outputs.due == 'yes'
+        run: |
+          set -euo pipefail
+          live="out/live/$CERT_DOMAIN"
+          sudo chmod -R a+rX out
+          # Fail loudly rather than publishing a mismatched pair that would stop
+          # nginx from starting on every device.
+          c=$(sudo openssl x509 -in "$live/fullchain.pem" -noout -pubkey | openssl sha256)
+          k=$(sudo openssl pkey -in "$live/privkey.pem" -pubout | openssl sha256)
+          [ "$c" = "$k" ] || { echo "cert/key mismatch — refusing to publish"; exit 1; }
+          sudo openssl x509 -in "$live/fullchain.pem" -noout -subject -dates
+
+      - name: Publish to R2
+        if: steps.check.outputs.due == 'yes'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          live="out/live/$CERT_DOMAIN"
+          sudo cp "$live/fullchain.pem" "$live/privkey.pem" .
+          sudo chown "$USER" fullchain.pem privkey.pem
+
+          not_after=$(openssl x509 -in fullchain.pem -noout -enddate | cut -d= -f2)
+          not_after_iso=$(date -u -d "$not_after" +%Y-%m-%dT%H:%M:%SZ)
+          # Monotonic version: seconds since epoch at issuance.
+          version=$(date -u +%s)
+          jq -n --argjson v "$version" --arg n "$not_after_iso" \
+            '{version:$v, not_after:$n}' > version.json
+
+          # Order matters: PEMs first, version.json last. A device that polls
+          # mid-publish then sees the old version and simply retries later,
+          # rather than fetching a half-updated pair.
+          for f in fullchain.pem privkey.pem version.json; do
+            npx --yes wrangler@3 r2 object put "$R2_BUCKET/$f" \
+              --file="$f" --remote
+          done
+          echo "published version $version (expires $not_after_iso)"
