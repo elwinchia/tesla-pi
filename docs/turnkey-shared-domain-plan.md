@@ -7,8 +7,8 @@ no domain registration, no Cloudflare account, no certbot, no setup.
 **Decisions taken:**
 | Decision | Choice |
 |---|---|
-| Device hostname | `device.mytesla.humblebees.co` (fixed, same on every device) |
-| Renewal infra | Serverless (GitHub Actions cron + Cloudflare R2 + Worker) |
+| Device hostname | `device.tesla-pi.humblebees.co` (fixed, same on every device) |
+| Renewal infra | Serverless (GitHub Actions cron + Workers KV + Worker) |
 | Cert model | **Shared** cert across all devices (v1) |
 
 Prior art: this is the model [tesla-android](https://github.com/tesla-android) uses —
@@ -43,11 +43,11 @@ which is fine — each device serves exactly one cert on its own IP.
   │                                                                  │
   │  GitHub Actions (cron, every ~60d)                               │
   │    certbot/lego --dns-cloudflare  ── CF_API_TOKEN (Actions secret)│
-  │    issues cert for device.mytesla.humblebees.co                  │
+  │    issues cert for device.tesla-pi.humblebees.co                  │
   │            │ upload bundle + bump version                        │
   │            ▼                                                     │
-  │      Cloudflare R2  ◄────────  Cloudflare Worker                 │
-  │      (fullchain, privkey,       certs.mytesla.humblebees.co      │
+  │      Workers KV  ◄────────  Cloudflare Worker                 │
+  │      (fullchain, privkey,       tesla-pi-cert-service.<account>.workers.dev      │
   │       version.json)             token-gated, rate-limited        │
   └──────────────────────────────┬───────────────────────────────────┘
                                  │  HTTPS pull, only when the Pi is
@@ -55,7 +55,7 @@ which is fine — each device serves exactly one cert on its own IP.
                                  ▼
   ┌──────────────── the Pi (burned image) ──────────────────────────┐
   │  cert-sync client  → /etc/letsencrypt/live/device.../ → nginx -s reload
-  │  dnsmasq: device.mytesla.humblebees.co → 192.168.4.254 (itself) │
+  │  dnsmasq: device.tesla-pi.humblebees.co → 192.168.4.254 (itself) │
   │  nginx :443 ── proxy → node :8080                               │
   └─────────────────────────────────────────────────────────────────┘
                                  ▲
@@ -64,9 +64,9 @@ which is fine — each device serves exactly one cert on its own IP.
 
 **Two hostnames, deliberately distinct:**
 
-- `device.mytesla.humblebees.co` — what the car loads. Public DNS points it at a
+- `device.tesla-pi.humblebees.co` — what the car loads. Public DNS points it at a
   parking IP; **in the car it resolves locally to the Pi** via `dnsmasq`.
-- `certs.mytesla.humblebees.co` — the distribution endpoint. **Must be a
+- `tesla-pi-cert-service.<account>.workers.dev` — the distribution endpoint. **Must be a
   different name**: `conf/dnsmasq.conf` serves a wildcard A record, so while the
   AP is up *every* name resolves to the Pi. Sync only runs with the AP down
   (real DNS in effect), but keeping the names separate avoids the trap entirely.
@@ -76,18 +76,18 @@ which is fine — each device serves exactly one cert on its own IP.
 ## 3. Server side — what to build
 
 ### 3.1 DNS (one-time)
-- `device.mytesla.humblebees.co` → A record (any stable IP / Cloudflare proxy).
+- `device.tesla-pi.humblebees.co` → A record (any stable IP / Cloudflare proxy).
   Only needed so DNS-01 issuance has a zone entry and the name resolves publicly.
-- `certs.mytesla.humblebees.co` → the Worker route.
+- `tesla-pi-cert-service.<account>.workers.dev` → the Worker route.
 
 ### 3.2 Renewal job — GitHub Actions cron
 Scheduled workflow (`.github/workflows/renew-cert.yml`), runs ~every 60 days
 (and on manual dispatch):
 
 1. `certbot certonly --dns-cloudflare` (or [`lego`](https://github.com/go-acme/lego))
-   for `device.mytesla.humblebees.co`, using `CF_API_TOKEN` from **Actions
+   for `device.tesla-pi.humblebees.co`, using `CF_API_TOKEN` from **Actions
    secrets** — scoped `Zone / DNS / Edit` on `humblebees.co` only.
-2. Upload to R2: `fullchain.pem`, `privkey.pem`, and a `version.json`
+2. Upload to Workers KV: `fullchain.pem`, `privkey.pem`, and a `version.json`
    (`{version, not_after, sha256}`). Version = monotonic integer or the cert's
    `notBefore` timestamp.
 3. Never commit the cert or key to the repo.
@@ -96,7 +96,7 @@ This is the same DNS-01 flow `scripts/cert-renew-watch.sh` runs today — just
 relocated off-device.
 
 ### 3.3 Distribution endpoint — Cloudflare Worker
-Fronts R2 at `certs.mytesla.humblebees.co`. Two routes:
+Fronts Workers KV at `tesla-pi-cert-service.<account>.workers.dev`. Two routes:
 
 | Route | Returns | Notes |
 |---|---|---|
@@ -120,7 +120,7 @@ JSON parsing in shell, and `openssl` verifies the pair directly.
 ## 4. Device side — changes to this repo
 
 ### 4.1 Fixed hostname replaces `CARPLAY_DOMAIN`
-- `conf/mytesla.env.template` — default `CARPLAY_DOMAIN=device.mytesla.humblebees.co`
+- `conf/tesla-pi.env.template` — default `CARPLAY_DOMAIN=device.tesla-pi.humblebees.co`
   (keep the var so self-hosters can still override with their own domain).
 - `conf/nginx-carplay.conf` — unchanged mechanically; the installer still
   substitutes `CARPLAY_DOMAIN`.
@@ -133,7 +133,7 @@ New `scripts/cert-sync.sh`, and rework `scripts/cert-renew-watch.sh` to call it.
 - idle detection via `sta_count()` (no STA associated for 10 min),
 - `attempt_renewal()`'s AP teardown → join home Wi-Fi (`wpa_supplicant` +
   `dhclient`) → `restore_ap()`,
-- the `flock` on `/var/lock/mytesla-cert-flip` shared with `cert-renew-now.sh`,
+- the `flock` on `/var/lock/tesla-pi-cert-flip` shared with `cert-renew-now.sh`,
 - the `nginx -s reload` on success.
 
 **Only the middle changes.** Replace the `certbot renew` block in
@@ -165,14 +165,14 @@ can write DNS for `humblebees.co`.
 
 ### 4.4 Image contents (first boot works offline)
 Bake in: the current cert bundle, its `version`, and `DEVICE_TOKEN` (in
-`/etc/default/mytesla`, mode 0600). A freshly flashed card is immediately valid
+`/etc/default/tesla-pi`, mode 0600). A freshly flashed card is immediately valid
 for the remainder of that cert's life.
 
 ### 4.5 UI
 Reuse the existing cert-expiry banner in `static/index.html` (already wired to
 `cert_days_remaining` from `/healthz`). Change the copy when the cert is close
 to expiry: *"Connect the Pi to home Wi-Fi to refresh its certificate."*
-Optionally surface last-sync time in Settings → General.
+Optionally surface last-sync time in Settings → Certificate.
 
 ---
 
@@ -185,7 +185,7 @@ Optionally surface last-sync time in Settings → General.
 
 **Accepted trade-offs (same as tesla-android)**
 - **Shared private key.** Anyone who extracts it from an image can serve a
-  browser-trusted `device.mytesla.humblebees.co`. Bounded in practice: each Pi
+  browser-trusted `device.tesla-pi.humblebees.co`. Bounded in practice: each Pi
   is an isolated single-client AP with no upstream internet, so the MITM
   opportunity is narrow. If it leaks: revoke, re-issue, bump version, devices
   pull the new one through the same channel.
@@ -220,7 +220,7 @@ re-architecture and a performance regression. Out of scope here.
 ## 7. Phasing
 
 **Phase 1 — MVP (this plan)**
-DNS records → Actions renewal job → Worker + R2 → hardcode hostname → cert-sync
+Actions renewal job → Worker + KV → hardcode hostname → cert-sync
 client → bake bundle + token into image. Delivers "burn → works".
 
 **Phase 2 — operational maturity (only if a real fleet materialises)**
@@ -236,8 +236,8 @@ client → bake bundle + token into image. Delivers "burn → works".
 ## 8. Verification
 
 - **Issuance:** trigger the Actions workflow manually; confirm a valid cert for
-  `device.mytesla.humblebees.co` lands in R2 and `version.json` bumps.
-- **Endpoint:** `curl -H "Authorization: Bearer $TOKEN" https://certs.mytesla.humblebees.co/cert/version`
+  `device.tesla-pi.humblebees.co` lands in KV and `version.json` bumps.
+- **Endpoint:** `curl -H "Authorization: Bearer $TOKEN" https://tesla-pi-cert-service.<account>.workers.dev/cert/version`
   returns JSON; the same call **without** the token returns 401; repeated calls
   hit the rate limit.
 - **Sync:** on a Pi with an intentionally old cert, run `scripts/cert-sync.sh`
@@ -248,7 +248,7 @@ client → bake bundle + token into image. Delivers "burn → works".
   (`openssl rsa -noout -modulus` vs `openssl x509 -noout -modulus`) — a mismatched
   pair would leave nginx unable to start.
 - **End-to-end:** flash a clean image, boot with no prior setup, join the AP from
-  the Tesla, load `https://device.mytesla.humblebees.co` → no cert warning,
+  the Tesla, load `https://device.tesla-pi.humblebees.co` → no cert warning,
   CarPlay video + touch work.
 - **Idempotence:** running sync twice in a row makes no changes the second time.
 
@@ -256,9 +256,9 @@ client → bake bundle + token into image. Delivers "burn → works".
 
 ## 9. Resolved decisions
 
-1. **Single-name cert** for `device.mytesla.humblebees.co` — not a wildcard.
+1. **Single-name cert** for `device.tesla-pi.humblebees.co` — not a wildcard.
    A wildcard would widen the blast radius of a key that ships in every image.
-2. **Cloudflare proxy + landing page** on `device.mytesla.humblebees.co`
+2. **Cloudflare proxy + landing page** on `device.tesla-pi.humblebees.co`
    (`infra/cert-service/landing/index.html`) explaining the project, rather than
    a dead parking IP. Only ever seen outside the car — in-car, `dnsmasq`
    resolves the name to the Pi.

@@ -49,14 +49,14 @@ in-car bandwidth deficit, not just a home-Wi-Fi one.
 
 No changes needed to any of these:
 
-- `mytesla/index.js`, `mytesla/static/*` — node-carplay@4
+- `tesla-pi/index.js`, `tesla-pi/static/*` — node-carplay@4
   app code, frontend, worker
-- `mytesla/systemd/mytesla.service`
+- `tesla-pi/systemd/tesla-pi.service`
 - `/etc/udev/rules.d/52-nodecarplay.rules` (CarLinkit USB rule)
-- `mytesla/conf/dnsmasq.conf` (DHCP + DNS wildcard)
-- `mytesla/conf/iptables.ipv4.nat` (DNAT 240.3.3.4 → AP IP)
-- `mytesla/conf/sysctl-disable-forward.conf`
-- `mytesla/conf/nginx-carplay.conf` — including the
+- `tesla-pi/conf/dnsmasq.conf` (DHCP + DNS wildcard)
+- `tesla-pi/conf/iptables.ipv4.nat` (DNAT 240.3.3.4 → AP IP)
+- `tesla-pi/conf/sysctl-ip-forward.conf`
+- `tesla-pi/conf/nginx-carplay.conf` — including the
   `connman.vn.tesla.services` server block from
   `captive-bypass-troubleshooting.md`
 - LE cert + Cloudflare DNS-01 renewal flow
@@ -69,7 +69,7 @@ the network/AP layer ports as-is.
 
 ## What changes
 
-### 1. `mytesla/conf/hostapd.conf`
+### 1. `tesla-pi/conf/hostapd.conf`
 
 Move from 2.4 GHz channel 6 to 5 GHz channel 36 (UNII-1, no DFS,
 allowed in MY). Approximate diff:
@@ -137,7 +137,7 @@ add a small 5 V fan (Phase 5 BoM optional item, `plan.md:74`).
    `<pi-lan-ip>`) so both can coexist on the bench.
 3. SSH in, run the Phase 1 base setup verbatim (Node 20, build deps,
    udev rule, repo clone).
-4. `npm install` in `mytesla/`. Plug the CarLinkit dongle into
+4. `npm install` in `tesla-pi/`. Plug the CarLinkit dongle into
    a USB 2.0 port. Run `npm start`. Confirm CarPlay reaches the
    laptop browser at the new IP.
 5. Edit `conf/hostapd.conf` to the 5 GHz config above. Apply Phase 3:
@@ -168,7 +168,7 @@ Mirrors `plan.md:276–285`, with the bandwidth-relevant ones updated:
 - [ ] `iperf3` from a 5 GHz laptop client to the Pi 4 sustains
       ≥100 Mbps (sanity check the radio is actually 5 GHz/ac, not
       degraded to 2.4)
-- [ ] Pi 4 cold-boot to `mytesla.service` started: target <25 s
+- [ ] Pi 4 cold-boot to `tesla-pi.service` started: target <25 s
       (revised from <20 s due to Pi 4 boot overhead)
 - [ ] Stream at `1920 × 1496` shows no stutter (the original
       bandwidth-bound resolution that pushed the migration)
@@ -190,8 +190,8 @@ The Zero 2 W SD card stays in a drawer. If the Pi 4 setup misbehaves
 in any way that can't be fixed in the parking spot, swap the card and
 the dashboard mount back to the Zero. None of the on-Pi state moves
 between hosts (Cloudflare token, LE cert, etc. are in
-`mytesla/conf/*.template`-derived files that get re-rendered on
-fresh installs from `mytesla.env.template`).
+`tesla-pi/conf/*.template`-derived files that get re-rendered on
+fresh installs from `tesla-pi.env.template`).
 
 ## Decision points
 

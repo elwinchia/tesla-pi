@@ -140,8 +140,8 @@ The Pi serves [RetroArch.js](https://github.com/libretro/RetroArch) (the Emscrip
 ### Tasks
 
 1. **Build / fetch a RetroArch.js bundle**: pull from upstream releases or build from source. Cores to start: `nestopia` (NES), `gambatte` (GameBoy), `snes9x` (SNES). All three are tiny WASM blobs, well under Tesla MCU's memory headroom.
-2. **Static hosting**: drop bundle at `mytesla/static/retroarch/` (built artifacts ignored via `.gitignore`). Update nginx if necessary for `.wasm` mime-type; node's static handler in `index.js:144-153` needs `.wasm: 'application/wasm'` in the MIME map.
-3. **ROM storage**: `/home/<user>/mytesla/roms/` (or USB SSD mount, see Phase 5). Static `/roms/` HTTP route, optional dir listing in launcher.
+2. **Static hosting**: drop bundle at `tesla-pi/static/retroarch/` (built artifacts ignored via `.gitignore`). Update nginx if necessary for `.wasm` mime-type; node's static handler in `index.js:144-153` needs `.wasm: 'application/wasm'` in the MIME map.
+3. **ROM storage**: `/home/<user>/tesla-pi/roms/` (or USB SSD mount, see Phase 5). Static `/roms/` HTTP route, optional dir listing in launcher.
 4. **Touch overlay**: RetroArch.js has built-in on-screen controls; tune size/position for the Tesla aspect ratio.
 5. **Audio**: HTML5 audio inside the Tesla browser plays through Tesla speakers natively. CarPlay audio meanwhile rides the existing iPhone-BT path. **Both can play simultaneously** — UX rule: when entering the RetroArch route, send `{type: 'mute', value: true}` on `/control` to silence CarPlay (or just trust the user).
 6. **Iframe sandboxing**: serve RetroArch on the same origin (no CORS dance). Sandbox the iframe with `allow="autoplay; fullscreen; gamepad"` minimal set.
@@ -188,7 +188,7 @@ The current `index.js:42` config sets `audioTransferMode: true`. That command te
 
 ### Acceptance
 
-- One drive's worth of `audio_rate` log lines in `journalctl -u mytesla`.
+- One drive's worth of `audio_rate` log lines in `journalctl -u tesla-pi`.
 
 ### Risks
 
@@ -205,7 +205,7 @@ Pi 4 has USB 3.0. A small USB-3.0 SATA enclosure + 256GB SSD removes both the SD
 ### Tasks
 
 1. Format SSD as ext4, mount at `/mnt/roms` via `/etc/fstab` with `nofail` flag (so a missing SSD doesn't block boot).
-2. `mytesla/static/retroarch/roms/` → symlink to `/mnt/roms/`.
+2. `tesla-pi/static/retroarch/roms/` → symlink to `/mnt/roms/`.
 3. Document in `setup-guide.md`.
 
 Skip until RetroArch usage proves out.
@@ -280,7 +280,7 @@ Each phase is independently revertable:
 - Phase 5: SSD. Unmount + remove fstab line.
 - Phase 6: audio pipeline. Roll back = stop the audio WS broadcast, re-set dongle NV to phone-audio mode (separate physical step). Audio reverts to iPhone BT path.
 
-The `mytesla.service` watchdog and restart logic (`index.js:82-108`, `WatchdogSec=30`) cover none of these new components automatically — make sure any new long-running pipeline (Phase 6 ffmpeg) feeds the watchdog ping path or is supervised by node so a stuck encoder doesn't keep `mytesla` looking healthy.
+The `tesla-pi.service` watchdog and restart logic (`index.js:82-108`, `WatchdogSec=30`) cover none of these new components automatically — make sure any new long-running pipeline (Phase 6 ffmpeg) feeds the watchdog ping path or is supervised by node so a stuck encoder doesn't keep `tesla-pi` looking healthy.
 
 ---
 

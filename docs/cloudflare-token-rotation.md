@@ -9,7 +9,7 @@ Deployment runbook: [`../infra/cert-service/README.md`](../infra/cert-service/RE
 | Secret | Where it lives | Blast radius if leaked |
 |---|---|---|
 | `CLOUDFLARE_DNS_TOKEN` | GitHub Actions secret only | DNS write on the zone → attacker can issue certs for any subdomain, redirect MX, tamper with SPF/DKIM |
-| `CLOUDFLARE_API_TOKEN` | GitHub Actions secret only | Read/write the R2 cert bucket (including the private key) |
+| `CLOUDFLARE_API_TOKEN` | GitHub Actions secret only | Read/write the KV namespace holding the cert (including the private key) |
 | `CERT_SYNC_TOKEN` | Worker secret **and** every device image | Lets the holder download the shared cert + private key |
 
 > Rotate promptly on any doubt: accidental commit, screen-share exposure, a
@@ -53,9 +53,9 @@ Deployment runbook: [`../infra/cert-service/README.md`](../infra/cert-service/RE
    cert in your name). Check Cloudflare → Audit Log for the old token's activity
    window.
 
-## B. Rotate `CLOUDFLARE_API_TOKEN` (R2 access)
+## B. Rotate `CLOUDFLARE_API_TOKEN` (Workers KV access)
 
-1. Create a token with Workers R2 read/write on the account.
+1. Create a token with Workers KV Storage read/write on the account.
 2. Update the Actions secret (as above).
 3. Re-run **renew-cert** with `force: true` to confirm the publish step still works.
 4. Delete the old token.
@@ -71,7 +71,7 @@ until the current cert expires, then breaks.
 
 1. Generate: `openssl rand -hex 32`
 2. Update the Worker: `npx wrangler secret put DEVICE_TOKEN` (in `infra/cert-service/`)
-3. Update `CERT_SYNC_TOKEN` in `/etc/default/mytesla` on every existing device,
+3. Update `CERT_SYNC_TOKEN` in `/etc/default/tesla-pi` on every existing device,
    and in the image build for new ones.
 4. Verify: the authenticated call succeeds and an unauthenticated one is rejected.
    ```bash
@@ -95,7 +95,7 @@ in the design doc.
 ## Quick checklist
 
 - [ ] New token created with the correct, minimal scope
-- [ ] Verified active via the Cloudflare API (DNS token) or a test publish (R2 token)
+- [ ] Verified active via the Cloudflare API (DNS token) or a test publish (KV token)
 - [ ] GitHub Actions secret updated
 - [ ] **renew-cert** run manually with `force: true` and it succeeded
 - [ ] Old token deleted in Cloudflare

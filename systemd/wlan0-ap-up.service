@@ -1,5 +1,5 @@
 [Unit]
-Description=Bring wlan0 up with TeslaCP AP IP
+Description=Bring wlan0 up with the AP IP
 After=NetworkManager.service
 Before=hostapd.service dnsmasq.service
 

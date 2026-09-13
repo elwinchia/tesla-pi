@@ -1,0 +1,45 @@
+#!/bin/bash
+# tesla-pi-karaoke — privileged helper for the on-demand Nightingale karaoke server.
+#
+# Installed to /usr/local/sbin/tesla-pi-karaoke (mode 0755, root-owned) by
+# scripts/install-karaoke-addon.sh. Invoked by tesla-pi.service (the service
+# user) via `sudo -n /usr/local/sbin/tesla-pi-karaoke <verb>` — sudoers grants
+# NOPASSWD on this exact path only, and the verb allowlist below means the
+# grant cannot be repurposed into a general-purpose systemctl.
+#
+# Unlike the RetroArch helper there is no compositor, no loopback and no
+# capture pipeline to bring up: the karaoke app runs entirely in the Tesla's
+# browser and the Pi only serves files. `start` is one unit; the work is
+# waiting for it to accept connections, which the bridge does itself.
+
+set -euo pipefail
+
+UNIT=nightingale.service
+VERB="${1:-}"
+
+usage() {
+    cat >&2 <<USAGE
+usage: tesla-pi-karaoke <verb>
+  start    # start the Nightingale karaoke server (loopback :8088)
+  stop     # stop it (idle cost is small, ~9 MB empty, but grows with the library)
+  status   # key=value lines: unit
+USAGE
+    exit 2
+}
+
+case "$VERB" in
+    start)
+        systemctl start "$UNIT"
+        echo "unit=started"
+        ;;
+    stop)
+        systemctl stop "$UNIT" 2>/dev/null || true
+        echo "unit=stopped"
+        ;;
+    status)
+        echo "unit=$(systemctl is-active "$UNIT" 2>/dev/null || echo inactive)"
+        ;;
+    *)
+        usage
+        ;;
+esac

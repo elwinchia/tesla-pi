@@ -10,7 +10,7 @@
 > **Do not follow its certificate steps.** They describe the old flow where you
 > owned a domain, ran `certbot` on a laptop, and kept a Cloudflare token on the
 > Pi. None of that applies now: devices use the shared hostname
-> `device.mytesla.humblebees.co`, certificates are issued in CI, and the Pi holds
+> `device.tesla-pi.humblebees.co`, certificates are issued in CI, and the Pi holds
 > no DNS credential. See [`docs/setup-guide.md`](docs/setup-guide.md) and
 > [`docs/turnkey-shared-domain-plan.md`](docs/turnkey-shared-domain-plan.md).
 
@@ -272,7 +272,7 @@ log-queries
 log-dhcp
 ```
 
-`address=/#/240.3.3.4` is a dnsmasq wildcard: every name not matched elsewhere resolves to that address. Combined with `no-resolv`, dnsmasq never tries to forward queries upstream — appropriate for a Pi with no internet. Disable the log lines once you're past the bring-up phase.
+Note what is *not* in that file: the resolver policy. `scripts/net-share.sh` owns it and regenerates `/etc/dnsmasq.d/10-tesla-pi-mode.conf` whenever the uplink appears or goes away — see "Internet sharing" below. A wildcard put back into `dnsmasq.conf` would shadow that snippet for every name and pin the AP to the offline behaviour. Disable the log lines once you're past the bring-up phase.
 
 ```
 systemctl enable dnsmasq
@@ -282,16 +282,16 @@ systemctl restart dnsmasq
 Bypass Tesla's private-IP block | iptables
 ------
 
-The Tesla browser refuses to load anything served from RFC1918 space (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12). The trick from the original marcraft2 fork is to give the CarPlay site a public-looking IP — `240.3.3.4` (an unassigned, non-routable but technically public range) — and DNAT inbound traffic on that address back to the Pi. We keep that trick. We do **not** need IP forwarding (no upstream interface to forward to), and we do **not** need MASQUERADE.
+The Tesla browser refuses to load anything served from RFC1918 space (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12). The trick from the original marcraft2 fork is to give the CarPlay site a public-looking IP — `240.3.3.4` (an unassigned, non-routable but technically public range) — and DNAT inbound traffic on that address back to the Pi. We keep that trick. The DNAT itself terminates locally and needs no forwarding; forwarding and MASQUERADE are enabled separately, for internet sharing (below).
 
 ```
 apt install iptables iptables-persistent -y
 ```
 
-Drop `conf/sysctl-disable-forward.conf` from this repo to `/etc/sysctl.d/99-no-forward.conf`. This explicitly leaves `net.ipv4.ip_forward=0` (the DNAT path terminates locally so no forwarding is required).
+Drop `conf/sysctl-ip-forward.conf` from this repo to `/etc/sysctl.d/99-ip-forward.conf`, and delete any `99-no-forward.conf` an older install left behind — both files would be read, and `no` sorts after `ip`, so the stale one wins and quietly disables sharing.
 
 ```
-sysctl -p /etc/sysctl.d/99-no-forward.conf
+sysctl -p /etc/sysctl.d/99-ip-forward.conf
 ```
 
 Drop `conf/iptables.ipv4.nat` from this repo to `/etc/iptables/rules.v4`:
@@ -301,6 +301,8 @@ Drop `conf/iptables.ipv4.nat` from this repo to `/etc/iptables/rules.v4`:
 :INPUT ACCEPT [0:0]
 :FORWARD DROP [0:0]
 :OUTPUT ACCEPT [0:0]
+-A FORWARD -i wlan0 ! -o wlan0 -j ACCEPT
+-A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 COMMIT
 
 *nat
@@ -310,8 +312,11 @@ COMMIT
 :POSTROUTING ACCEPT [0:0]
 -A PREROUTING -d 240.3.3.4/32 -i wlan0 -p tcp -m tcp --dport 80 -j DNAT --to-destination <pi-lan-ip>
 -A PREROUTING -d 240.3.3.4/32 -i wlan0 -p tcp -m tcp --dport 443 -j DNAT --to-destination <pi-lan-ip>
+-A POSTROUTING -s 192.168.4.0/24 ! -o wlan0 -j MASQUERADE
 COMMIT
 ```
+
+The `FORWARD` policy stays `DROP`: only AP traffic leaving on some other interface, and the return path for connections the car opened, are allowed. Nothing can be initiated *towards* the AP subnet from the uplink side. The rules name interfaces rather than a specific uplink, so eth0, wlan1 and a USB tether are all covered without regenerating anything.
 
 `netfilter-persistent` (installed by `iptables-persistent`) restores these on boot. `wlan0` is brought up with a static IP via `/etc/network/interfaces.d/wlan0`:
 ```
@@ -322,6 +327,40 @@ iface wlan0 inet static
 No `iptables-restore` hook needed — `netfilter-persistent` handles it.
 
 
+
+Internet sharing | net-share.sh
+------
+
+With forwarding and MASQUERADE in place, AP clients can reach whatever the Pi can reach. DNS is the piece that cannot be static, because the two states want opposite answers:
+
+| Pi state | What the car needs from DNS |
+| --- | --- |
+| uplink up (eth0 / wlan1 / USB tether) | real upstream lookups, so it can actually use the internet |
+| no uplink | every name → `240.3.3.4`, or the connectivity probe fails and Tesla drops the SSID |
+
+`scripts/net-share.sh` (unit `tesla-pi-netshare.service`) polls every 20 s and rewrites `/etc/dnsmasq.d/10-tesla-pi-mode.conf`, restarting dnsmasq only when the file actually changes.
+
+Shared mode has to be **earned, not assumed**. The watcher first asks `uplink_iface()` (from `cert-renew-lib.sh`, so there is one definition of "has an uplink") and then actually resolves `www.google.com` through the upstream resolvers with `busybox nslookup`. A default route is not the same as a working path — after a reboot `wlan1` can hold a route for minutes while the link is still unusable — and that distinction is not cosmetic:
+
+> On 2026-08-15 the car repeatedly associated, completed WPA, took a DHCP lease, and then **refused to join** with *"The Internet is unreachable"*. `log-queries` showed why: current firmware probes `www.google.com`, `www.apple.com`, `www.microsoft.com` and `www.tesla.com` as well as connman, and every one of those was forwarded upstream with no reply. Shared mode had been entered on the strength of a route alone. The walled garden could never fail that check, because every name resolved to `240.3.3.4` and nginx answered `X-ConnMan-Status: online` — so the regression cost CarPlay, not merely internet.
+
+The streaks are asymmetric. One successful probe is enough to start sharing (a probe that answered is real evidence, unlike a bare route); giving sharing up takes `NETSHARE_DOWN_STREAK` consecutive failures, default 3, because each change costs a dnsmasq restart and a single blip must not tear it down. Losing the interface entirely skips the streak and drops to walled at once. If a future image ships without `busybox nslookup` the watcher logs once and reverts to route-only detection, rather than being pinned offline by a probe that can never pass.
+
+Two names stay pinned at the Pi even in shared mode:
+
+- **`CARPLAY_DOMAIN`** has no public A record. Left to an upstream resolver it returns NXDOMAIN and the car cannot load the app at all.
+- **`connman.vn.tesla.services`** (and the `.cloud.tesla.cn` variant) stays local so that holding the SSID never depends on the uplink being healthy — the point of the nginx bypass — and so the probe behaves identically either side of a mode flip.
+
+Offline mode is deliberately byte-identical to the pre-sharing behaviour: a single `address=/#/240.3.3.4` and nothing else. dnsmasq prefers the most specific match, so the wildcard is only ever consulted in the mode that has no specific entries.
+
+Upstream resolvers are named explicitly (`1.1.1.1`, `8.8.8.8`, override with `NETSHARE_UPSTREAM_DNS`) rather than inherited from the uplink's DHCP lease, which on a hotel or tethered network is often a resolver that only answers for its own clients. The lease's own resolver is then appended *after* those, not instead of them: a network that blackholes the public resolvers almost always still runs one that works, and without the fallback the car has no DNS there at all.
+
+One consequence worth knowing: the car gets the same reach as any other device on the uplink's network, the home LAN included. That is ordinary router behaviour, but it matters if the AP passphrase is ever shared.
+
+```
+systemctl enable --now tesla-pi-netshare
+journalctl -u tesla-pi-netshare -f
+```
 
 Web server + captive-portal bypass | nginx
 ------
@@ -377,42 +416,46 @@ apt install certbot python3-certbot-dns-cloudflare wpa_supplicant isc-dhcp-clien
 # Cloudflare API token — Edit zone DNS, scoped to your CarPlay domain only.
 # https://dash.cloudflare.com/profile/api-tokens
 mkdir -p /root/.secrets && chmod 700 /root/.secrets
-cp /home/dietpi/mytesla/conf/cloudflare.ini.template /root/.secrets/cloudflare.ini
+cp /home/dietpi/tesla-pi/conf/cloudflare.ini.template /root/.secrets/cloudflare.ini
 chmod 600 /root/.secrets/cloudflare.ini
 nano /root/.secrets/cloudflare.ini    # paste the token
 
 # Home Wi-Fi credentials.
-cp /home/dietpi/mytesla/conf/wpa_supplicant-wlan0-home.conf.template \
+cp /home/dietpi/tesla-pi/conf/wpa_supplicant-wlan0-home.conf.template \
    /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
 chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
 nano /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf   # set ssid + psk
 
 # Shared env file for both services.
-cp /home/dietpi/mytesla/conf/mytesla.env.template /etc/default/mytesla
-nano /etc/default/mytesla   # set CARPLAY_DOMAIN
+cp /home/dietpi/tesla-pi/conf/tesla-pi.env.template /etc/default/tesla-pi
+nano /etc/default/tesla-pi   # set CARPLAY_DOMAIN
 
-# Watcher script + service.
-mkdir -p /opt/mytesla/scripts
-cp /home/dietpi/mytesla/scripts/cert-renew-watch.sh /opt/mytesla/scripts/
-chmod +x /opt/mytesla/scripts/cert-renew-watch.sh
-cp /home/dietpi/mytesla/systemd/cert-renew-watch.service /etc/systemd/system/
+# Watcher script + service. cert-renew-lib.sh holds the helpers both renewal
+# entry points share and is sourced from their own directory — copy it too.
+mkdir -p /opt/tesla-pi/scripts
+cp /home/dietpi/tesla-pi/scripts/cert-renew-watch.sh /opt/tesla-pi/scripts/
+cp /home/dietpi/tesla-pi/scripts/cert-renew-lib.sh   /opt/tesla-pi/scripts/
+chmod +x /opt/tesla-pi/scripts/cert-renew-watch.sh
+cp /home/dietpi/tesla-pi/systemd/cert-renew-watch.service /etc/systemd/system/
 
-# On-demand renewal — same teardown→home-Wi-Fi→certbot→restore flow, but
-# bypasses the watcher's 10-min-idle + 60-day cert-age gates. Triggered
-# from the in-car Settings page (POST /cert/renew → sudo systemctl start
+# On-demand renewal, available at any time. With an uplink that isn't our
+# own AP (eth0, second Wi-Fi adapter, USB tether) it syncs the cert in
+# place; without one it uses the same teardown→home-Wi-Fi→sync→restore flow
+# as the watcher, bypassing its 10-min-idle gate. Triggered from the in-car
+# Settings page (POST /cert/renew → sudo systemctl start
 # cert-renew-now.service). Serialized with the watcher via flock on
-# /var/lock/mytesla-cert-flip so the two can't double-tear-down the AP.
-cp /home/dietpi/mytesla/scripts/cert-renew-now.sh /opt/mytesla/scripts/
-chmod +x /opt/mytesla/scripts/cert-renew-now.sh
-cp /home/dietpi/mytesla/systemd/cert-renew-now.service /etc/systemd/system/
+# /var/lock/tesla-pi-cert-flip so the two can't double-tear-down the AP.
+cp /home/dietpi/tesla-pi/scripts/cert-renew-now.sh /opt/tesla-pi/scripts/
+chmod +x /opt/tesla-pi/scripts/cert-renew-now.sh
+cp /home/dietpi/tesla-pi/systemd/cert-renew-now.service /etc/systemd/system/
 
-# Sudoers — allow the mytesla service user (<user>) to start the oneshot
+# Sudoers — allow the tesla-pi service user (<user>) to start the oneshot
 # without a password. Scope locked to this exact invocation so an
 # escalation via /cert/renew can't run anything else.
-cat <<'SUDO' > /etc/sudoers.d/mytesla-cert-renew
+cat <<'SUDO' > /etc/sudoers.d/tesla-pi-cert-renew
 <user> ALL=(root) NOPASSWD: /bin/systemctl start --no-block cert-renew-now.service
 SUDO
-chmod 0440 /etc/sudoers.d/mytesla-cert-renew
+chmod 0440 /etc/sudoers.d/tesla-pi-cert-renew
 visudo -c
 
 systemctl daemon-reload
@@ -421,9 +464,11 @@ systemctl enable --now cert-renew-watch.service
 # oneshot, started on demand only.
 ```
 
-To trigger renewal on demand (background, automatic): bring the Pi indoors, plug into wall power, wait ~12 minutes (10 min idle + ~60 s flip + DNS-01 propagation). `journalctl -u cert-renew-watch -f` shows progress.
+Automatic renewal, no interaction: give the Pi internet on any interface other than wlan0 — plug in eth0, add a second Wi-Fi adapter, tether. The watcher notices the default route within 60 s and syncs the cert in place; nothing is torn down and the Tesla stays associated. The `nginx -s reload` that activates the new cert is held while `/healthz` reports video clients (i.e. CarPlay is on screen) and fires as soon as the stream ends, so renewal can never interrupt playback; `/run/cert-renew.deployed` is the pending-reload marker. `journalctl -u cert-renew-watch -f` shows progress.
 
-To trigger renewal on demand (foreground, from the car): park within range of the home Wi-Fi configured in `wpa_supplicant-wlan0-home.conf`, open the in-car launcher → Settings → "Renew now". The CarPlay page loses its connection for ~3–5 min while the AP is torn down and restored; `journalctl -u cert-renew-now -f` (over SSH from the home network during the flip window) shows progress.
+Automatic renewal, no uplink: bring the Pi indoors, plug into wall power, wait ~12 minutes (10 min idle + ~60 s flip + sync). Same log.
+
+On demand, from the car: open the in-car launcher → Settings → Certificate → "Renew now". The button is available at any time. With an uplink it is a quiet in-place check and the page stays up. Without one it needs the Pi parked within range of the home Wi-Fi configured in `wpa_supplicant-wlan0-home.conf`, and the CarPlay page loses its connection for ~3–5 min while the AP is torn down and restored; `journalctl -u cert-renew-now -f` (over SSH from the home network during the flip window) shows progress.
 
 The Node app's `/healthz` exposes `cert_days_remaining`, and the in-car CarPlay page shows a dismissable banner once that number drops to ≤10.
 
@@ -630,7 +675,7 @@ If you open Carplay in a browser on a computer, you must simulate a touch screen
 Enjoy
 ------
 
-- Reboot the Pi so hostapd / dnsmasq / nginx / iptables / `mytesla.service` all start cleanly
+- Reboot the Pi so hostapd / dnsmasq / nginx / iptables / `tesla-pi.service` all start cleanly
 - Connect your Tesla to the `TeslaCP` Wi-Fi (it should stay on the SSID despite no internet)
 - Plug in your iPhone (or skip if wireless CarPlay is already paired with the dongle)
 - Open the Tesla browser on your domain (`https://your-domain.example/`)

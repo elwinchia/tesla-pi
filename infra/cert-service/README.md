@@ -1,24 +1,24 @@
 # cert-service — shared device certificate distribution
 
-Serves the shared TLS certificate for `device.mytesla.humblebees.co` to myTesla
-devices. Devices hold **no** Cloudflare credential; issuance happens centrally in
-GitHub Actions and devices pull the finished cert from here.
+Serves the shared TLS certificate for `device.tesla-pi.humblebees.co` to tesla-pi
+devices. Devices hold **no** Cloudflare credential; issuance happens centrally
+and devices pull the finished cert from here.
 
 Design rationale: [`docs/turnkey-shared-domain-plan.md`](../../docs/turnkey-shared-domain-plan.md).
 
 ```
-GitHub Actions (cron)  --issues cert-->  R2 bucket  <--reads--  Worker  <--pulls--  devices
-   holds CF DNS token                  mytesla-certs        certs.mytesla...    (bearer token)
+issuance (CI or manual)  --writes-->  Workers KV  <--reads--  Worker  <--pulls--  devices
+   holds the CF DNS token             binding CERTS      *.workers.dev      (bearer token)
 ```
 
 ## Components
 
 | Path | What it is |
 |---|---|
-| `src/worker.js` | Cloudflare Worker: token-gated `/cert/*` endpoints backed by R2 |
-| `wrangler.toml` | Worker config + R2 binding + route |
-| `landing/index.html` | Static page served at `device.mytesla.humblebees.co` (only ever seen outside the car) |
-| `../../.github/workflows/renew-cert.yml` | Issues + publishes the cert |
+| `src/worker.js` | Worker: token-gated `/cert/*` endpoints backed by Workers KV |
+| `wrangler.toml` | Worker config + KV binding (`workers_dev = true`) |
+| `landing/index.html` | Static page for `device.tesla-pi.humblebees.co` (optional; only ever seen outside the car) |
+| `../../.github/workflows/renew-cert.yml` | Issues + publishes the cert on a cron |
 
 ## API
 
@@ -33,56 +33,138 @@ All routes require `Authorization: Bearer <DEVICE_TOKEN>`.
 Raw PEM (rather than a JSON bundle) keeps the device client dependency-free —
 no JSON parsing in shell.
 
-## One-time setup
+## Why KV and workers.dev
 
-### 1. DNS (Cloudflare, zone `humblebees.co`)
-- `device.mytesla` → **proxied** (orange cloud), pointing at the landing page.
-  In the car this name never resolves publicly — `dnsmasq` on the Pi answers it
-  with the Pi's own address.
-- `certs.mytesla` → the Worker route.
+- **KV, not R2** — the payload is a few KB of text. KV is included in the free
+  Workers plan; R2 requires a payment method on file even for its free tier.
+  KV's ~60 s eventual consistency is irrelevant for a cert that rotates every
+  ~60 days.
+- **`*.workers.dev`, not a custom hostname** — `certs.tesla-pi.humblebees.co` is
+  two labels deep, and Cloudflare's free Universal SSL only covers the apex and
+  a single-label wildcard (`*.humblebees.co`). A two-deep hostname would serve
+  an invalid edge certificate and `cert-sync.sh` would fail its TLS handshake.
+  Fixing that properly needs Advanced Certificate Manager (paid). workers.dev
+  gets valid TLS automatically and needs no DNS record at all.
 
-> These must stay **different hostnames**. `conf/dnsmasq.conf` serves a wildcard
-> A record, so while the AP is up *every* name resolves to the Pi. Sync only runs
-> with the AP down, but separate names remove the trap entirely.
+Neither choice constrains the device hostname: DNS-01 validates via a TXT
+record so issuance works at any depth, and in the car `dnsmasq` resolves
+`CARPLAY_DOMAIN` to the Pi itself.
 
-### 2. R2 bucket
+---
+
+## Setup
+
+### 1. Authenticate
+
 ```bash
-npx wrangler r2 bucket create mytesla-certs
+npx wrangler login          # browser OAuth; pick the account owning humblebees.co
+npx wrangler whoami         # confirm account + note the Account ID
 ```
-Keep it **private** — it holds the private key. Never expose it via a public
-r2.dev URL or a custom domain.
 
-### 3. Device token
-Generate one and store it in both places:
-```bash
-DEVICE_TOKEN=$(openssl rand -hex 32)
-npx wrangler secret put DEVICE_TOKEN     # paste it
-```
-The same value goes into device images as `CERT_SYNC_TOKEN` in
-`/etc/default/mytesla` (mode 0600) — see `conf/mytesla.env.template`.
+### 2. Create the KV namespace
 
-### 4. Deploy the Worker
 ```bash
 cd infra/cert-service
+npx wrangler kv namespace create CERTS
+```
+
+Copy the printed `id` into `wrangler.toml` over `REPLACE_WITH_KV_NAMESPACE_ID`
+(and into the workflow's `KV_NAMESPACE_ID` if you use CI renewal).
+
+### 3. Device token
+
+```bash
+openssl rand -hex 32                 # generate
+npx wrangler secret put DEVICE_TOKEN # paste it
+```
+
+The same value goes into `/etc/default/tesla-pi` (mode 0600) on every device as
+`CERT_SYNC_TOKEN`.
+
+### 4. Deploy
+
+```bash
 npx wrangler deploy
 ```
 
-### 5. Rate limiting (do not skip)
-The bundle contains a private key. Add a Cloudflare WAF rate-limiting rule in
-front of the Worker route — e.g. 10 requests / 10 min / IP on
-`certs.mytesla.humblebees.co/cert/*`. Devices poll rarely (hours apart), so this
-is generous for legitimate use and expensive for scraping.
+Note the printed URL — `https://tesla-pi-cert-service.<account>.workers.dev`.
+That is `CERT_SYNC_URL`.
 
-### 6. GitHub repository secrets
-| Secret | Scope |
+### 5. DNS-01 token (for issuing the certificate)
+
+`wrangler login` does **not** grant DNS edit rights, so certbot needs its own
+token. Cloudflare dashboard → My Profile → API Tokens → Create Custom Token:
+
+| Field | Value |
 |---|---|
-| `CLOUDFLARE_DNS_TOKEN` | Zone / DNS / Edit on `humblebees.co` **only** (DNS-01) |
-| `CLOUDFLARE_API_TOKEN` | Workers R2 read/write (used by wrangler) |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account id |
-| `ACME_EMAIL` | Let's Encrypt contact address |
+| Permissions | `Zone` / `DNS` / `Edit` |
+| Zone Resources | Include / Specific zone / `humblebees.co` |
+| Client IP Filtering | leave blank |
 
-Then run the workflow once manually (**Actions → renew-cert → Run workflow**) to
-publish the first cert.
+```bash
+mkdir -p ~/.secrets && chmod 700 ~/.secrets
+printf 'dns_cloudflare_api_token = <TOKEN>\n' > ~/.secrets/cloudflare.ini
+chmod 600 ~/.secrets/cloudflare.ini
+```
+
+### 6. Issue and publish the first certificate
+
+Either run the GitHub workflow (**Actions → renew-cert → Run workflow**,
+`force: true`), or do it locally with the same container:
+
+```bash
+DOMAIN=device.tesla-pi.humblebees.co
+mkdir -p out
+docker run --rm \
+  -v "$HOME/.secrets:/secrets:ro" -v "$PWD/out:/etc/letsencrypt" \
+  certbot/dns-cloudflare:latest certonly \
+    --dns-cloudflare --dns-cloudflare-credentials /secrets/cloudflare.ini \
+    --dns-cloudflare-propagation-seconds 30 \
+    -d "$DOMAIN" --non-interactive --agree-tos -m <you@example.com> --key-type ecdsa
+
+live="out/live/$DOMAIN"
+sudo cp "$live/fullchain.pem" "$live/privkey.pem" . && sudo chown "$USER" *.pem
+
+# Verify the pair BEFORE publishing — a mismatch stops nginx on every device.
+diff <(openssl x509 -in fullchain.pem -noout -pubkey) \
+     <(openssl pkey -in privkey.pem -pubout) && echo "pair OK"
+
+not_after=$(date -u -d "$(openssl x509 -in fullchain.pem -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%SZ)
+version=$(date -u +%s)
+printf '{"version":%s,"not_after":"%s"}\n' "$version" "$not_after" > version.json
+
+NS=<kv-namespace-id>
+for f in fullchain.pem privkey.pem version.json; do   # version.json LAST
+  npx wrangler kv key put "$f" --path="$f" --namespace-id "$NS" --remote \
+    --metadata "{\"version\":\"$version\"}"
+done
+```
+
+> Publish order matters: PEMs first, `version.json` last. A device polling
+> mid-publish then sees the old version and simply retries, rather than
+> fetching a half-updated pair.
+
+### 7. Verify
+
+```bash
+URL=https://tesla-pi-cert-service.<account>.workers.dev
+curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$URL/cert/version"   # 200 + JSON
+curl -sS -o /dev/null -w '%{http_code}\n' "$URL/cert/version"           # 401
+```
+
+### 8. Rate limiting
+
+The bundle contains a private key. Add a rate-limiting rule in front of the
+Worker (Cloudflare dashboard → Security → WAF → Rate limiting rules), e.g. 10
+requests / 10 min / IP. Devices poll hours apart, so this is generous for
+legitimate use and expensive for scraping.
+
+> On `*.workers.dev`, WAF rules apply at the account level rather than a zone
+> route. If rate limiting proves awkward there, that is the main argument for
+> moving to a single-label custom hostname (e.g. `certs-teslapi.humblebees.co`)
+> later.
+
+---
 
 ## Operations
 
@@ -92,26 +174,21 @@ shrinking industry-wide, so lower this rather than assuming 90 days.
 
 **Force a re-issue:** Actions → renew-cert → Run workflow → `force: true`.
 
-**Verify what's published:**
+**Inspect what's published:**
 ```bash
-curl -H "Authorization: Bearer $DEVICE_TOKEN" \
-  https://certs.mytesla.humblebees.co/cert/version
-# without the token -> 401
+npx wrangler kv key get version.json --namespace-id "$NS" --remote
 ```
 
-**If the private key leaks:** revoke the cert, run the workflow with
-`force: true`, and devices pick up the replacement through the same channel on
-their next sync. Consider rotating `DEVICE_TOKEN` too — but note that rotating it
-strands already-flashed images, so it needs a coordinated re-image (see the
-per-device-token item in the design doc's Phase 2).
+**If the private key leaks:** revoke the cert, re-issue (`force: true`), and
+devices pick up the replacement on their next sync. Consider rotating
+`DEVICE_TOKEN` too — but note that strands already-flashed images, so it needs a
+coordinated re-image (see the design doc's Phase 2).
 
 ## Security notes
 
-- The Cloudflare DNS token exists **only** in GitHub Actions secrets. It is
-  never in the Worker, the bucket, an image, or this repo.
+- The Cloudflare DNS token exists **only** in GitHub Actions secrets (or your
+  local `~/.secrets`). It is never in the Worker, KV, an image, or this repo.
 - `DEVICE_TOKEN` is shared across all images, so it is a weak secret by design —
   it gates cert distribution, nothing else. Rate limiting is what makes it hold up.
 - The certificate's private key is shared across devices. Bounded because each Pi
   is an isolated single-client AP; recoverable by re-issuing and republishing.
-- Publish order in the workflow is PEMs first, `version.json` last — a device
-  polling mid-publish sees the old version and simply retries.

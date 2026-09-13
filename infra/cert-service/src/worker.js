@@ -1,14 +1,18 @@
 // Cloudflare Worker — token-gated distribution of the shared device certificate.
 //
-// Serves the current cert bundle to mytesla devices from R2. The Cloudflare API
-// token that issues certs never touches this Worker (or any device) — issuance
-// happens in GitHub Actions (.github/workflows/renew-cert.yml), which writes the
-// artefacts here.
+// Serves the current cert bundle to tesla-pi devices from Workers KV. The
+// Cloudflare API token that issues certs never touches this Worker (or any
+// device) — issuance happens in CI (.github/workflows/renew-cert.yml), or
+// manually with the same certbot container, and writes the artefacts here.
 //
 // Routes (all GET, all require `Authorization: Bearer <DEVICE_TOKEN>`):
 //   /cert/version        -> {"version":N,"not_after":"..."}  (cheap; devices poll)
 //   /cert/fullchain.pem  -> raw PEM
 //   /cert/privkey.pem    -> raw PEM
+//
+// KV rather than R2: the payload is a few KB of text, KV is included in the free
+// Workers plan (R2 needs a payment method on file), and KV's eventual
+// consistency (~60 s) is irrelevant for a cert that rotates every ~60 days.
 //
 // The privkey is a secret: this endpoint must stay token-gated and rate-limited
 // (see README — the rate limit is a WAF rule, enforced in front of the Worker).
@@ -62,15 +66,15 @@ export default {
       return deny(401, 'unauthorized')
     }
 
-    const obj = await env.CERTS.get(target.key)
-    if (!obj) return deny(503, 'no certificate published yet')
+    const { value, metadata } = await env.CERTS.getWithMetadata(target.key, 'text')
+    if (value == null) return deny(503, 'no certificate published yet')
 
-    return new Response(obj.body, {
+    return new Response(value, {
       headers: {
         'Content-Type': target.type,
         // Devices poll /cert/version; never let an edge cache mask a rotation.
         'Cache-Control': 'no-store',
-        'X-Cert-Version': obj.customMetadata?.version ?? '',
+        'X-Cert-Version': metadata?.version ?? '',
       },
     })
   },

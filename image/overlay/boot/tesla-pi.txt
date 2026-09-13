@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tesla-Pi — first-boot configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#  Edit this file on the SD card, on any computer, BEFORE the first boot.
+#  Everything here is optional: a card left completely untouched still boots
+#  into a working hotspot that your Tesla can join.
+#
+#  These values are applied ONCE, on the first boot only. After that the box
+#  is configured from the browser (Settings), and edits here are ignored.
+#
+#  Format is KEY=VALUE, one per line. Do not use quotes. Blank means "keep
+#  the default". Lines starting with # are comments.
+#
+#  SECURITY NOTE: this partition is plain FAT — readable by anyone who puts
+#  the card in a computer. Any password you type below is therefore stored in
+#  the clear until first boot, at which point Tesla-Pi applies it and then
+#  BLANKS IT OUT of this file. Do not treat this file as a safe place to keep
+#  a password long-term.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Wi-Fi country ────────────────────────────────────────────────────────────
+#
+#  THE ONE SETTING WORTH FILLING IN.
+#
+#  Your ISO 3166-1 alpha-2 country code — GB, US, DE, FR, AU, SG, MY, JP …
+#
+#  Radio regulations differ by country, and the fast 5 GHz channels this box
+#  prefers are not legal everywhere. Tell it where you are and it will pick the
+#  best channel your country permits.
+#
+#  Leave this blank and nothing breaks — the box falls back to 2.4 GHz, which
+#  is allowed almost everywhere. CarPlay still works, it is just slower and
+#  more prone to stutter in a crowded car park. You can set the country later
+#  from Settings → Hotspot.
+#
+COUNTRY=
+
+
+# ── The hotspot your Tesla joins ─────────────────────────────────────────────
+#
+#  Leave AP_SSID blank and each box names itself Tesla-Pi-XXXX, where XXXX is
+#  derived from the Raspberry Pi's own serial number. That keeps two of these
+#  from colliding in the same car park.
+#
+#  AP_PASSPHRASE must be 8-63 characters. Leave it blank and the box ships with
+#  "12345678" — deliberately trivial so a fresh card is reachable before you
+#  can type anything, and NOT safe to drive around with. The in-car settings
+#  page nags you with a banner until you change it. Setting a real one here
+#  means you never see that banner.
+#
+#  The hotspot password is the ONLY thing protecting this device: anyone who
+#  can join it can drive CarPlay and reconfigure the box. See SECURITY.md.
+#
+AP_SSID=
+AP_PASSPHRASE=
+
+
+# ── Home Wi-Fi (for certificate renewal) ─────────────────────────────────────
+#
+#  Not used in the car. Not needed on day one. Read this anyway.
+#
+#  The box serves HTTPS, and its certificate expires roughly every 90 days. To
+#  refresh it the Pi has to reach the internet occasionally — so when it has
+#  been sitting idle with nothing connected for 10 minutes (i.e. parked at
+#  home), it briefly drops its own hotspot, joins the network below, pulls a
+#  fresh certificate, and puts the hotspot back.
+#
+#  If you never give it a network to join, the certificate eventually expires
+#  and the Tesla browser refuses to load the page. The in-car settings page
+#  warns you well before that happens, and you can fill this in later from
+#  Settings → Wi-Fi.
+#
+#  Leave HOME_WIFI_PSK blank for an open network.
+#
+HOME_WIFI_SSID=
+HOME_WIFI_PSK=
+
+
+# ── SSH (optional, off by default) ───────────────────────────────────────────
+#
+#  SSH is DISABLED unless you turn it on here. That is deliberate: the hotspot
+#  password is this box's entire security boundary, so an SSH server sitting
+#  behind a default password would turn "someone guessed the Wi-Fi" into
+#  "someone owns the machine".
+#
+#  Two ways to enable it, key-based strongly preferred:
+#
+#    1. Drop your public key in a file named  authorized_keys  next to this
+#       file on this same partition. SSH turns on with password login
+#       disabled. This is the recommended route.
+#
+#    2. Set SSH_PASSWORD below. SSH turns on with password login enabled for
+#       the tesla-pi user. Weaker, and the password sits in cleartext on this
+#       partition until first boot wipes it.
+#
+SSH_PASSWORD=
+
+
+# ── Hostname ─────────────────────────────────────────────────────────────────
+#
+#  What the box calls itself on your home network. Cosmetic — the Tesla always
+#  reaches it at the fixed address below, never by hostname.
+#
+HOSTNAME=tesla-pi
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Once booted:
+#    1. On the Tesla: Wi-Fi → join Tesla-Pi-XXXX (password 12345678 by default)
+#    2. Tesla browser → https://device.tesla-pi.humblebees.co
+#    3. Change the hotspot password in Settings → Hotspot. Do this first.
+#    4. Bookmark the page as a homepage favourite.
+# ─────────────────────────────────────────────────────────────────────────────

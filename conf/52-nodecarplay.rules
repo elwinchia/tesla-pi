@@ -1,0 +1,36 @@
+# CarPlay dongle — Carlinkit CPC200-CCPA, USB 1314:1521 "Auto Box".
+#
+# This file had been living only on the device, hand-installed and unrecorded,
+# which meant a reflash silently lost the permissions the app needs. It is in
+# the repo now. Install to /etc/udev/rules.d/52-nodecarplay.rules; the 52 prefix
+# matters, because rule 2 has to be read before 69-libmtp.rules.
+
+# 1. Let the app open the dongle without root: node-carplay drives it through
+#    libusb, which needs write access to the device node.
+SUBSYSTEM=="usb", ATTR{idVendor}=="1314", MODE="0660", GROUP="plugdev"
+
+# 2. Keep libmtp's prober off it.
+#
+#    /usr/lib/udev/rules.d/69-libmtp.rules runs /usr/lib/udev/mtp-probe against
+#    any device with bDeviceClass 00|02|06|ef|ff — the dongle qualifies — unless
+#    MTP_NO_PROBE is already set. On a desktop that costs one probe per plug.
+#    Here it is unbounded: this dongle re-enumerates itself about every 13 s for
+#    as long as no host holds it open, and "no host holds it open" is precisely
+#    CarPlay's on-demand idle state (docs/carplay-on-demand.md). So every cycle,
+#    around the clock, spawned two mtp-probe processes that opened the device,
+#    issued control transfers, concluded "was not an MTP device", and logged two
+#    lines each.
+#
+#    Measured on a test Pi 4 2026-09-08: 75,176 mtp-probe lines in a 7-day
+#    journal — the second-largest writer on the system, against a SystemMaxUse
+#    of 512M that was already 408M full. That is real CarPlay history being
+#    evicted to keep re-recording a negative answer about a device we know is
+#    not a media player. Exactly the trade conf/dnsmasq.conf makes for
+#    log-queries, for the same reason.
+#
+#    The secondary reason is the one that might matter more: mtp-probe *opens*
+#    the device. Having an unrelated program claim the dongle every 13 s, with
+#    no coordination with our own start path, is a plausible contributor to the
+#    usb_read_error / start_failed / dongle_absent counts — unproven, but it
+#    costs nothing to remove the interference and then re-measure.
+SUBSYSTEM=="usb", ATTR{idVendor}=="1314", ENV{MTP_NO_PROBE}="1"

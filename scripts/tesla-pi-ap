@@ -1,0 +1,205 @@
+#!/bin/bash
+# tesla-pi-ap — privileged helper for the Tesla-facing hotspot (wlan0/hostapd).
+#
+# Installed to /usr/local/sbin/tesla-pi-ap (mode 0755, root-owned) by
+# scripts/install-ap-tab.sh. Invoked by tesla-pi.service via
+# `sudo -n /usr/local/sbin/tesla-pi-ap <verb> [args]` — sudoers grants NOPASSWD
+# on this exact path only. The verb list below is closed, and the config path is
+# hard-coded, so the grant can't be repurposed.
+#
+# The AP passphrase is this appliance's entire trust boundary (see SECURITY.md):
+# every HTTP/WS endpoint is unauthenticated and relies on the hotspot password.
+# So the helper NEVER prints the passphrase — `status` reports only the SSID and
+# whether the credentials are still the shipped defaults.
+
+set -uo pipefail
+
+CONF=/etc/hostapd/hostapd.conf
+UNIT=hostapd.service
+RADIO_SELECT=/opt/tesla-pi/scripts/ap-radio-select.sh
+STATE_DIR=/var/lib/tesla-pi
+
+# Shipped defaults. A fresh image boots with these, and the SPA nags the user to
+# change them until it does. Keep in sync with conf/hostapd.conf.template.
+DEFAULT_SSID="${TESLAPI_DEFAULT_AP_SSID:-Tesla-Pi}"
+DEFAULT_PSK="${TESLAPI_DEFAULT_AP_PSK:-12345678}"
+
+usage() {
+    cat >&2 <<EOF
+usage: tesla-pi-ap <verb> [args]
+  status                    # ssid=<name> is_default=<0|1> stations=<n|empty> + radio
+  set <ssid> <passphrase>   # validate + write config (does NOT restart)
+  country <CC>              # set regulatory domain, re-pick channel (no restart)
+  restart                   # restart hostapd (drops all clients)
+EOF
+    exit 2
+}
+
+# hostapd.conf is `key=value`, one per line. Read a key without echoing secrets.
+conf_get() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | head -1; }
+
+# Associated-station count. Shared with cert-renew-watch.sh, which gates its
+# AP-teardown on the same number.
+#
+# Prints a bare integer, or NOTHING when hostapd_cli cannot attach (no
+# ctrl_interface in the config, socket missing, hostapd down). "Unknown" and
+# "nobody is connected" must not look alike here: this number is what the SPA
+# shows the driver and what the watcher reads before deciding the car has left,
+# and answering 0 for a broken socket gets both of those wrong in the same
+# direction.
+# hostapd_cli lives in /usr/sbin, which is not always on the PATH sudo hands us.
+HOSTAPD_CLI="$(command -v hostapd_cli 2>/dev/null || echo /usr/sbin/hostapd_cli)"
+sta_count() {
+    local out
+    out="$("$HOSTAPD_CLI" -i wlan0 list_sta 2>/dev/null)" || return 0
+    printf '%s' "$out" | grep -cE '^[0-9a-f]{2}:'
+}
+
+# Radio state, as key=value lines. country/hw_mode/channel come from
+# hostapd.conf rather than radio.env because that is what hostapd actually
+# runs — radio.env only records what ap-radio-select.sh last decided, and the
+# two diverge if anyone edits the config by hand. `reason` has no equivalent in
+# hostapd.conf, so it is the one field taken from radio.env; it is advisory and
+# simply absent on a box whose radio was never re-selected.
+#
+# One awk pass over the config: this is the hot path (/ap/status runs on every
+# page load) and a conf_get per key was five sed|head pipelines, ~10 forks.
+print_radio() {
+    awk -F= '
+        $1 == "country_code" { c = $2 }
+        $1 == "hw_mode"      { m = $2 }
+        $1 == "channel"      { ch = $2 }
+        END {
+            band = (m == "a") ? "5 GHz" : ((m == "g" || m == "b") ? "2.4 GHz" : "")
+            # No country_code line means the world domain: ap-radio-select.sh
+            # drops the key for 00, because hostapd rejects "00" as a value.
+            # Report it as 00 rather than empty, so callers do not each have to
+            # invent that default.
+            if (c == "") c = "00"
+            printf "country=%s\nband=%s\nchannel=%s\n", c, band, ch
+        }' "$CONF" 2>/dev/null
+    printf 'radio_reason=%s\n' "$(sed -n 's/^reason=//p' "$STATE_DIR/radio.env" 2>/dev/null | head -1)"
+}
+
+VERB="${1:-}"
+shift || true
+
+case "$VERB" in
+    status)
+        ssid="$(conf_get ssid)"
+        psk="$(conf_get wpa_passphrase)"
+        is_default=0
+        # Either field left at the shipped value counts as "not yet configured" —
+        # a user who renamed the SSID but kept the default password is still
+        # wide open, which is the case the onboarding flow exists to catch.
+        if [[ "$ssid" == "$DEFAULT_SSID" || "$psk" == "$DEFAULT_PSK" ]]; then
+            is_default=1
+        fi
+        echo "ssid=${ssid}"
+        echo "is_default=${is_default}"
+        echo "stations=$(sta_count)"
+        print_radio
+        ;;
+
+    set)
+        ssid="${1:-}"
+        psk="${2:-}"
+        # hostapd limits: SSID 1-32 bytes, PSK 8-63 ASCII chars.
+        [[ -n "$ssid" && ${#ssid} -le 32 ]] || { echo "ssid must be 1-32 chars" >&2; exit 2; }
+        [[ ${#psk} -ge 8 && ${#psk} -le 63 ]] || { echo "passphrase must be 8-63 chars" >&2; exit 2; }
+        # Reject anything that isn't printable ASCII: a newline would let a
+        # caller inject arbitrary hostapd directives into the config file.
+        [[ "$ssid" =~ ^[[:print:]]+$ ]] || { echo "ssid has invalid characters" >&2; exit 2; }
+        [[ "$psk"  =~ ^[[:print:]]+$ ]] || { echo "passphrase has invalid characters" >&2; exit 2; }
+
+        [[ -r "$CONF" ]] || { echo "missing $CONF" >&2; exit 1; }
+
+        tmp="$(mktemp)" || exit 1   # mktemp already creates it 0600
+        trap 'rm -f "$tmp"' EXIT
+
+        # Rewrite only the two credential lines; everything else (channel,
+        # country, vht_*) is a working radio setup we must not disturb.
+        awk -v s="$ssid" -v p="$psk" '
+            /^ssid=/          { print "ssid=" s;          seen_s=1; next }
+            /^wpa_passphrase=/{ print "wpa_passphrase=" p; seen_p=1; next }
+                              { print }
+            END {
+                if (!seen_s) print "ssid=" s
+                if (!seen_p) print "wpa_passphrase=" p
+            }' "$CONF" > "$tmp" || { echo "rewrite failed" >&2; exit 1; }
+
+        # NOTE: hostapd has no config-test mode. Its `-t` flag means "add
+        # timestamps to debug output" — passing a config to it STARTS the
+        # daemon (and blocks). Do not "validate" that way. Safety here comes
+        # from three places instead:
+        #   1. the strict length/charset checks above (the only fields we touch),
+        #   2. this backup, and
+        #   3. `restart` rolling back automatically if hostapd fails to come up.
+        cp -f "$CONF" "${CONF}.bak" 2>/dev/null || true
+        # Atomic swap, and 0600 because this file holds the trust boundary.
+        install -m 0600 -o root -g root "$tmp" "$CONF" || { echo "install failed" >&2; exit 1; }
+        echo "ok"
+        ;;
+
+    country)
+        # Set the regulatory domain and let ap-radio-select.sh re-pick the
+        # channel under it. Deliberately does NOT restart, for the same reason
+        # `set` doesn't: the caller is on the AP we are about to move.
+        #
+        # Safe to get wrong. ap-radio-select.sh asks the kernel which channels
+        # the domain actually permits rather than trusting a table, so the worst
+        # a bad country does is drop the box to 2.4 GHz — it cannot hand hostapd
+        # a channel that makes it exit. See that script's header.
+        # Case is not normalised here — ap-radio-select.sh uppercases the value
+        # it resolves, and it is the one that decides what gets persisted.
+        cc="${1:-}"
+        [[ "$cc" =~ ^([A-Za-z]{2}|00)$ ]] \
+            || { echo "country must be a 2-letter ISO 3166-1 code, or 00 for the world domain" >&2; exit 2; }
+
+        [[ -r "$CONF" ]] || { echo "missing $CONF" >&2; exit 1; }
+        [[ -x "$RADIO_SELECT" ]] || { echo "missing $RADIO_SELECT" >&2; exit 1; }
+
+        # Persisting AP_COUNTRY and snapshotting hostapd.conf.bak both belong to
+        # ap-radio-select.sh — it is the only writer of the radio fields, and it
+        # persists the resolved country rather than the requested one.
+        "$RADIO_SELECT" "$cc" >/dev/null || { echo "radio selection failed" >&2; exit 1; }
+
+        # Report the outcome, so the caller does not need a second privileged
+        # round trip to find out that e.g. the country forbids 5 GHz.
+        print_radio
+        ;;
+
+    restart)
+        # Drops every associated client, including whoever asked for this — so
+        # if the new config is bad there is nobody left to fix it by hand. Roll
+        # back to the previous config automatically rather than leaving the
+        # appliance with no radio at all.
+        try_start() {
+            systemctl restart "$UNIT" >/dev/null 2>&1
+            sleep 2
+            systemctl is-active --quiet "$UNIT"
+        }
+        rollback() {
+            [[ -f "${CONF}.bak" ]] || return 1
+            echo "rolling back to previous hotspot config" >&2
+            install -m 0600 -o root -g root "${CONF}.bak" "$CONF" || return 1
+            try_start
+        }
+
+        if try_start; then
+            echo "ok"
+            exit 0
+        fi
+
+        if rollback; then
+            echo "hostapd rejected the new config; rolled back to the previous one" >&2
+            exit 1
+        fi
+        echo "hostapd failed to start AND rollback failed — AP is down" >&2
+        exit 1
+        ;;
+
+    *)
+        usage
+        ;;
+esac

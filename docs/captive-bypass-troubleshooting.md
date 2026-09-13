@@ -24,7 +24,7 @@ The network plumbing was already correct:
 - iptables DNATs `240.3.3.4:80/443` to the Pi's nginx at `<pi-lan-ip>`.
 - nginx had to grow a Host-matched server block returning the magic header. That's the actual fix.
 
-The added block (in `mytesla/conf/nginx-carplay.conf`):
+The added block (in `tesla-pi/conf/nginx-carplay.conf`):
 
 ```nginx
 server {
@@ -58,12 +58,12 @@ server {
 2. **From the Mac on TeslaCP**, push the new nginx config and reload:
    ```bash
    rsync -av \
-     ~/mytesla/conf/nginx-carplay.conf \
-     pi@raspberrypi.local:/home/<user>/mytesla/conf/nginx-carplay.conf
+     ~/tesla-pi/conf/nginx-carplay.conf \
+     pi@raspberrypi.local:/home/<user>/tesla-pi/conf/nginx-carplay.conf
 
    ssh pi@raspberrypi.local 'sudo bash -c "
      sed s/CARPLAY_DOMAIN/$CARPLAY_DOMAIN/g \
-       /home/<user>/mytesla/conf/nginx-carplay.conf > /etc/nginx/conf.d/carplay.conf
+       /home/<user>/tesla-pi/conf/nginx-carplay.conf > /etc/nginx/conf.d/carplay.conf
      nginx -t && systemctl reload nginx
    "'
    ```
@@ -125,13 +125,13 @@ networksetup -setairportnetwork en0 TeslaCP '<your-ap-passphrase>'
 
 # Push the new scripts to the Pi (and update /opt/ copy that systemd uses)
 rsync -av \
-  ~/mytesla/scripts/ \
-  pi@raspberrypi.local:/home/<user>/mytesla/scripts/
+  ~/tesla-pi/scripts/ \
+  pi@raspberrypi.local:/home/<user>/tesla-pi/scripts/
 
-ssh pi@raspberrypi.local 'sudo cp /home/<user>/mytesla/scripts/{dev-mode,ap-mode}.sh /opt/mytesla/scripts/ && sudo chmod +x /opt/mytesla/scripts/{dev-mode,ap-mode}.sh'
+ssh pi@raspberrypi.local 'sudo cp /home/<user>/tesla-pi/scripts/{dev-mode,ap-mode}.sh /opt/tesla-pi/scripts/ && sudo chmod +x /opt/tesla-pi/scripts/{dev-mode,ap-mode}.sh'
 
 # Flip to dev mode (Pi reboots, joins home wifi)
-ssh pi@raspberrypi.local 'sudo /opt/mytesla/scripts/dev-mode.sh'
+ssh pi@raspberrypi.local 'sudo /opt/tesla-pi/scripts/dev-mode.sh'
 ```
 
 The SSH session dies when the reboot fires.
@@ -147,15 +147,15 @@ networksetup -setairportnetwork en0 <your-home-ssid> <your-home-psk>
 ### Step 3 — verify Pi is back
 
 ```bash
-ssh pi@raspberrypi.local 'systemctl is-active hostapd dnsmasq mytesla nginx'
+ssh pi@raspberrypi.local 'systemctl is-active hostapd dnsmasq tesla-pi nginx'
 # expect: inactive  inactive  active  active
 ```
 
 ### When you want to flip back to AP for car testing
 
 ```bash
-ssh pi@raspberrypi.local 'sudo /opt/mytesla/scripts/ap-mode.sh'
+ssh pi@raspberrypi.local 'sudo /opt/tesla-pi/scripts/ap-mode.sh'
 # wait ~30s, switch Mac to TeslaCP, ssh pi@raspberrypi.local
 ```
 
-The scripts are reversible — toggle as often as you need during dev. Want me to also keep `mytesla.service` running in dev mode (so you can hit it on `http://<pi-lan-ip>:8080/healthz` from your Mac), or stop that too?
+The scripts are reversible — toggle as often as you need during dev. Want me to also keep `tesla-pi.service` running in dev mode (so you can hit it on `http://<pi-lan-ip>:8080/healthz` from your Mac), or stop that too?

@@ -5,8 +5,8 @@ Wants=hostapd.service dnsmasq.service
 
 [Service]
 Type=oneshot
-EnvironmentFile=/etc/default/mytesla
-ExecStart=/opt/mytesla/scripts/cert-renew-now.sh
+EnvironmentFile=/etc/default/tesla-pi
+ExecStart=/opt/tesla-pi/scripts/cert-renew-now.sh
 
 # Needs root for hostapd, ip, wpa_supplicant, certbot, nginx -s reload.
 # No [Install] block — never enabled, only started on demand via

@@ -1,14 +1,14 @@
 #!/bin/bash
 # install-retroarch-addon.sh — installs the native RetroArch addon on the Pi.
 #
-# Streams a native (NOT Android/Waydroid) RetroArch session to the Tesla browser:
+# Streams a native (not emulated) RetroArch session to the Tesla browser:
 # RetroArch runs in its own headless `cage` compositor, is hardware-encoded to
 # H.264, and is driven by a /dev/uinput virtual gamepad. Game audio is captured
 # off an ALSA loopback. See docs/retroarch-addon.md.
 #
 # Everything is OFF by default after install: no unit is enabled, boot time is
 # untouched (bar loading snd-aloop), and CarPlay never depends on anything here.
-# The Node server starts the stack on demand via /usr/local/sbin/mytesla-retroarch.
+# The Node server starts the stack on demand via /usr/local/sbin/tesla-pi-retroarch.
 #
 # Idempotent. Safe to re-run. Requires internet on the Pi for the apt packages.
 
@@ -16,25 +16,35 @@ set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 
-SERVICE_USER="${MYTESLA_SERVICE_USER:-mytesla}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+# The account the app runs as on THIS device, which is not always the
+# image-built default. See scripts/service-user-lib.sh.
+. "$SRC_DIR/service-user-lib.sh"
+SERVICE_USER="$(resolve_service_user)"
 REPO_DIR="$(dirname "$SRC_DIR")"
 USER_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
 USER_UID="$(id -u "$SERVICE_USER")"
 
-HELPER_SRC="$SRC_DIR/mytesla-retroarch"
-HELPER_DST=/usr/local/sbin/mytesla-retroarch
-SESSION_SRC="$SRC_DIR/mytesla-retroarch-session"
-SESSION_DST=/usr/local/bin/mytesla-retroarch-session
-SUDOERS_DST=/etc/sudoers.d/mytesla-retroarch
+HELPER_SRC="$SRC_DIR/tesla-pi-retroarch"
+HELPER_DST=/usr/local/sbin/tesla-pi-retroarch
+SESSION_SRC="$SRC_DIR/tesla-pi-retroarch-session"
+SESSION_DST=/usr/local/bin/tesla-pi-retroarch-session
+SUDOERS_DST=/etc/sudoers.d/tesla-pi-retroarch
 UNIT_SRC="$REPO_DIR/systemd/cage-retroarch.service"
 UNIT_DST=/etc/systemd/system/cage-retroarch.service
-UDEV_SRC="$REPO_DIR/conf/99-mytesla-uinput.rules"
-UDEV_DST=/etc/udev/rules.d/99-mytesla-uinput.rules
+UDEV_SRC="$REPO_DIR/conf/99-tesla-pi-uinput.rules"
+UDEV_DST=/etc/udev/rules.d/99-tesla-pi-uinput.rules
 MODULES_SRC="$REPO_DIR/conf/retroarch-modules.conf"
-MODULES_DST=/etc/modules-load.d/mytesla-retroarch.conf
+MODULES_DST=/etc/modules-load.d/tesla-pi-retroarch.conf
 RA_CFG_SRC="$REPO_DIR/conf/retroarch/retroarch.cfg"
-PAD_AUTOCONF_SRC="$REPO_DIR/conf/retroarch/autoconfig/mytesla-pad.cfg"
+PAD_AUTOCONF_SRC="$REPO_DIR/conf/retroarch/autoconfig/tesla-pi-pad.cfg"
+
+# True when there is no running systemd — i.e. we are inside the image build
+# chroot (image/provision.sh) rather than on a live Pi. udev, logind and
+# systemctl all exist as binaries there but have nothing to talk to, and under
+# `set -e` their failure would abort the build. Everything they do is runtime
+# state that the real first boot re-establishes anyway.
+in_chroot() { [[ ! -d /run/systemd/system ]]; }
 
 # install_if_changed <src> <dst> <mode> — install only when content differs.
 install_if_changed() {
@@ -54,7 +64,6 @@ id "$SERVICE_USER" >/dev/null || { echo "service user $SERVICE_USER does not exi
 echo "  aarch64, user $SERVICE_USER ($USER_HOME) — ok"
 
 echo "=== packages: retroarch, mGBA core, python3-evdev, ffmpeg ==="
-# cage + wf-recorder come from the Android addon / base; install only what's new.
 # Add more cores here (libretro-snes9x, libretro-genesisplusgx, …) to support
 # more systems — the bridge's CORES allowlist gates which are launchable.
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -64,14 +73,30 @@ echo "=== groups for $SERVICE_USER (input for /dev/uinput, audio for the loopbac
 usermod -aG input,audio,render,video "$SERVICE_USER"
 
 echo "=== linger for $SERVICE_USER ==="
-loginctl enable-linger "$SERVICE_USER"
+if in_chroot; then
+    # logind is not running; enable-linger's only effect is this marker file.
+    install -d -m 0755 /var/lib/systemd/linger
+    touch "/var/lib/systemd/linger/$SERVICE_USER"
+    echo "  chroot: marked linger for $SERVICE_USER"
+else
+    loginctl enable-linger "$SERVICE_USER"
+fi
 
 echo "=== /dev/uinput access (udev rule) ==="
 install_if_changed "$UDEV_SRC" "$UDEV_DST" 0644
-udevadm control --reload-rules
-udevadm trigger /dev/uinput 2>/dev/null || true
-# static_node only re-applies on module (re)load; fix the live node now too.
-[[ -e /dev/uinput ]] && { chgrp input /dev/uinput || true; chmod 0660 /dev/uinput || true; }
+if in_chroot; then
+    echo "  chroot: skipping udev reload (rules apply at boot)"
+else
+    udevadm control --reload-rules || true
+    udevadm trigger /dev/uinput 2>/dev/null || true
+    # static_node only re-applies on module (re)load; fix the live node now too.
+    # Guarded rather than `[[ -e ]] && …`, which returns 1 under `set -e` when
+    # the node is absent (uinput not yet loaded) and would abort the install.
+    if [[ -e /dev/uinput ]]; then
+        chgrp input /dev/uinput || true
+        chmod 0660 /dev/uinput || true
+    fi
+fi
 
 echo "=== audio loopback (snd-aloop) ==="
 install_if_changed "$MODULES_SRC" "$MODULES_DST" 0644
@@ -84,8 +109,8 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$RA_CFG_DIR" "$RA_CFG_
 sed "s|__HOME__|$USER_HOME|g" "$RA_CFG_SRC" > "$RA_CFG_DIR/retroarch.cfg"
 chown "$SERVICE_USER:$SERVICE_USER" "$RA_CFG_DIR/retroarch.cfg"
 chmod 0644 "$RA_CFG_DIR/retroarch.cfg"
-install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0644 "$PAD_AUTOCONF_SRC" "$RA_CFG_DIR/autoconfig/mytesla-pad.cfg"
-echo "  wrote $RA_CFG_DIR/retroarch.cfg + autoconfig/mytesla-pad.cfg"
+install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0644 "$PAD_AUTOCONF_SRC" "$RA_CFG_DIR/autoconfig/tesla-pi-pad.cfg"
+echo "  wrote $RA_CFG_DIR/retroarch.cfg + autoconfig/tesla-pi-pad.cfg"
 
 echo "=== content directories ==="
 for d in roms states saves system; do
@@ -102,7 +127,7 @@ sed "s|^User=.*|User=$SERVICE_USER|; s|/run/user/1000|/run/user/$USER_UID|" \
     "$UNIT_SRC" > "$TMP_UNIT"
 install_if_changed "$TMP_UNIT" "$UNIT_DST" 0644
 rm -f "$TMP_UNIT"
-systemctl daemon-reload
+in_chroot || systemctl daemon-reload
 
 echo "=== installing $HELPER_DST ==="
 install_if_changed "$HELPER_SRC" "$HELPER_DST" 0755
@@ -111,7 +136,7 @@ echo "=== installing $SUDOERS_DST ==="
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 cat > "$TMP" <<EOF
-# Managed by scripts/install-retroarch-addon.sh — grants the mytesla service
+# Managed by scripts/install-retroarch-addon.sh — grants the tesla-pi service
 # user NOPASSWD on exactly the RetroArch lifecycle helper. The helper validates
 # verbs, so this entry can't be repurposed for other commands.
 $SERVICE_USER ALL=(root) NOPASSWD: $HELPER_DST
@@ -128,12 +153,12 @@ Native RetroArch addon installed (everything off until the RetroArch tile is
 tapped). Drop GBA/GB/GBC ROMs in $USER_HOME/retroarch/roms.
 
 Smoke test:
-  sudo mytesla-retroarch start     # headless cage + RetroArch (menu)
-  sudo mytesla-retroarch status
-  sudo mytesla-retroarch stop
+  sudo tesla-pi-retroarch start     # headless cage + RetroArch (menu)
+  sudo tesla-pi-retroarch status
+  sudo tesla-pi-retroarch stop
 
 Then restart the Node server so the launcher shows the RetroArch tile:
-  sudo systemctl restart mytesla.service
+  sudo systemctl restart tesla-pi.service
 
 A Bluetooth controller paired to the Pi (bluetoothctl) is read by RetroArch's
 udev joypad driver automatically — no extra config. See docs/retroarch-addon.md.

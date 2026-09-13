@@ -1,13 +1,41 @@
+# Copy to /etc/hostapd/hostapd.conf, mode 0600 (it holds the passphrase,
+# which is this appliance's entire trust boundary — see SECURITY.md).
+#
+# DEFAULT CREDENTIALS: a fresh image ships with the ssid/passphrase below so
+# the box is reachable on first boot. They are deliberately trivial and are NOT
+# meant to survive setup — the SPA shows a persistent, non-dismissible banner
+# until the owner sets their own via Settings > Hotspot.
+#
+# Until that happens the hotspot is effectively open: the AP password is this
+# appliance's entire trust boundary (SECURITY.md), so anyone in Wi-Fi range who
+# guesses it can drive CarPlay and reconfigure the device. Change it first.
+#
+# Keep these in sync with the defaults in scripts/tesla-pi-ap.
 interface=wlan0
+# hostapd's control socket. Without it hostapd_cli cannot attach and `list_sta`
+# answers nothing, so every station count reads as zero: the SPA reports
+# "0 devices" to the very car that is looking at it, and cert-renew-watch.sh
+# reads "the Tesla is gone" and tears the AP down underneath it.
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
 hw_mode=a
-channel=36
+# UNII-3, deliberately far from the Carlinkit dongle's own AP. The dongle serves
+# the phone on channel 36 (its BoxInfo reports WiFiChannel=36) and we used to sit
+# on 36 too — at 80 MHz that meant we occupied 36/40/44/48 and the two radios,
+# a foot apart in the car, shared airtime for what is really the same video
+# stream twice over: phone → dongle, then Pi → Tesla.
+#
+# channel and vht_oper_centr_freq_seg0_idx MUST move together. 155 is the centre
+# of the 149/153/157/161 80 MHz block, the way 42 was the centre of 36–48. Change
+# only one and hostapd starts but the VHT config is invalid.
+channel=149
 country_code=MY
 ieee80211d=1
 ieee80211n=1
 ieee80211ac=1
 ht_capab=[HT40+]
 vht_oper_chwidth=1
-vht_oper_centr_freq_seg0_idx=42
+vht_oper_centr_freq_seg0_idx=155
 vht_capab=[SHORT-GI-80]
 wmm_enabled=1
 macaddr_acl=0
@@ -16,5 +44,5 @@ ignore_broadcast_ssid=0
 wpa=2
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
-ssid=YOUR_AP_SSID
-wpa_passphrase=CHANGE_ME_AP_PSK
+ssid=Tesla-Pi
+wpa_passphrase=12345678

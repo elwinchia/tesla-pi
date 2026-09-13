@@ -1,8 +1,8 @@
 #!/bin/bash
 # install-wifi-tab.sh — installs the Settings → WiFi tab plumbing.
 #
-# Places /usr/local/sbin/mytesla-wifi (the privileged nmcli wrapper) and
-# /etc/sudoers.d/mytesla-wifi (NOPASSWD for the service user).
+# Places /usr/local/sbin/tesla-pi-wifi (the privileged nmcli wrapper) and
+# /etc/sudoers.d/tesla-pi-wifi (NOPASSWD for the service user).
 # Idempotent. Safe to re-run.
 #
 # The WiFi tab only needs wlan1 to exist. Run this once on any Pi where a
@@ -13,11 +13,14 @@ set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "run as root"; exit 1; }
 
-SERVICE_USER="${MYTESLA_SERVICE_USER:-mytesla}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-HELPER_SRC="$SRC_DIR/mytesla-wifi"
-HELPER_DST=/usr/local/sbin/mytesla-wifi
-SUDOERS_DST=/etc/sudoers.d/mytesla-wifi
+# The account the app runs as on THIS device, which is not always the
+# image-built default. See scripts/service-user-lib.sh.
+. "$SRC_DIR/service-user-lib.sh"
+SERVICE_USER="$(resolve_service_user)"
+HELPER_SRC="$SRC_DIR/tesla-pi-wifi"
+HELPER_DST=/usr/local/sbin/tesla-pi-wifi
+SUDOERS_DST=/etc/sudoers.d/tesla-pi-wifi
 
 [[ -r "$HELPER_SRC" ]] || { echo "missing source: $HELPER_SRC"; exit 1; }
 
@@ -35,7 +38,7 @@ echo "=== installing $SUDOERS_DST ==="
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 cat > "$TMP" <<EOF
-# Managed by scripts/install-wifi-tab.sh — grants the mytesla service user
+# Managed by scripts/install-wifi-tab.sh — grants the tesla-pi service user
 # NOPASSWD on exactly the wlan1 helper. The helper itself validates verbs
 # and hard-codes the interface, so this entry can't be repurposed to run
 # other nmcli/system commands.
@@ -55,10 +58,10 @@ echo
 echo "=== done ==="
 cat <<EOF
 
-The Settings → WiFi tab will appear once mytesla.service has reloaded and
+The Settings → WiFi tab will appear once tesla-pi.service has reloaded and
 the SPA detects /sys/class/net/wlan1 on this host:
 
-  sudo systemctl restart mytesla.service
+  sudo systemctl restart tesla-pi.service
 
 If wlan1 is currently pinned unmanaged in NetworkManager, the helper
 flips it back to managed at runtime when the user opens the tab — no

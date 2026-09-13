@@ -4,9 +4,9 @@ The CarPlay video stream resolution is set in **three places that all have to ma
 
 | File | Field | What it controls |
 |---|---|---|
-| `mytesla/index.js` | `config.width`, `config.height` | What the Pi tells the iPhone to encode at (via the dongle) |
-| `mytesla/static/index.html` | `const carplayWidth`, `const carplayHeight` | Canvas pixel dimensions on the browser side; touch-coord normalization |
-| `mytesla/static/index.html` | CSS `canvas { aspect-ratio: W / H }` | Display letterboxing — keeps proportions when window aspect doesn't match |
+| `tesla-pi/index.js` | `config.width`, `config.height` | What the Pi tells the iPhone to encode at (via the dongle) |
+| `tesla-pi/static/index.html` | `const carplayWidth`, `const carplayHeight` | Canvas pixel dimensions on the browser side; touch-coord normalization |
+| `tesla-pi/static/index.html` | CSS `canvas { aspect-ratio: W / H }` | Display letterboxing — keeps proportions when window aspect doesn't match |
 
 ## Current value
 
@@ -48,7 +48,7 @@ If lag appears after a resolution bump, the bottleneck is the Pi Zero 2 W's 2.4 
 ### 1. Edit on the Mac
 
 ```bash
-cd ~/mytesla
+cd ~/tesla-pi
 
 # index.js — top-level config object
 #   width: <NEW_WIDTH>,
@@ -66,11 +66,11 @@ Pi reachable on home Wi-Fi at `<pi-lan-ip>`.
 
 ```bash
 rsync -av \
-  ~/mytesla/ \
-  pi@raspberrypi.local:/home/<user>/mytesla/ \
+  ~/tesla-pi/ \
+  pi@raspberrypi.local:/home/<user>/tesla-pi/ \
   --exclude='.git' --exclude='node_modules' --exclude='package-lock.json'
 
-ssh pi@raspberrypi.local 'sudo systemctl restart mytesla'
+ssh pi@raspberrypi.local 'sudo systemctl restart tesla-pi'
 ```
 
 ### 3. Reload the Tesla browser tab
@@ -106,7 +106,7 @@ H.264 encoders prefer dimensions that are multiples of 16 (or at least 8). 1180 
 ## Verifying after a change
 
 ```bash
-ssh pi@raspberrypi.local 'sudo journalctl -u mytesla -n 30 --no-pager'
+ssh pi@raspberrypi.local 'sudo journalctl -u tesla-pi -n 30 --no-pager'
 # Look for: "boot" log line with the new config
 # Look for: "carplay_started" within ~15 s
 

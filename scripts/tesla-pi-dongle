@@ -1,0 +1,226 @@
+#!/bin/bash
+# tesla-pi-dongle — privileged USB-stick helper for Settings → Dongle.
+#
+# Installed to /usr/local/sbin/tesla-pi-dongle (mode 0755, root-owned) by
+# scripts/install-dongle-tab.sh. Invoked by tesla-pi.service via
+# `sudo -n /usr/local/sbin/tesla-pi-dongle <verb> ...` — sudoers grants NOPASSWD
+# on this exact path only.
+#
+# Why it needs root at all: the dongle takes firmware from a FAT32 stick, and on
+# DietPi nothing auto-mounts. So the one job here is "mount a removable stick,
+# drop one named image in its root, unmount" — which is `mount`, and that is
+# root's.
+#
+# Why the argument grammar is this tight: the sudo grant is a standing offer to
+# copy a file onto a block device. Everything that could turn that into "write
+# anywhere" is closed off here rather than in the caller —
+#
+#   * the source must be a plain filename inside SRC_DIR, so no path can escape
+#     the firmware store;
+#   * the destination device must look like a USB disk partition AND be reported
+#     removable/hotplug by the kernel AND carry a FAT filesystem AND not host /
+#     or /boot — four independent checks, because getting this wrong means
+#     writing over the machine's own card;
+#   * the destination filename is a bare name matching what a dongle updater
+#     looks for.
+#
+# It cannot flash anything. Moving the stick from this machine to the dongle is
+# a human step and there is no way around it — see dongle-firmware.js.
+
+set -uo pipefail
+
+# Must match FIRMWARE_DIR in the Node app. Hardcoded rather than taken from the
+# environment: a sudo-invoked script that reads its allowed source directory
+# from its caller's environment is not a boundary at all.
+SRC_DIR=/var/lib/tesla-pi/firmware
+MNT=/run/tesla-pi/usb
+MAX_BYTES=$((64 * 1024 * 1024))
+
+NAME_RE='^[A-Za-z0-9._-]+\.img$'
+# Deliberately only /dev/sd?N. USB mass storage lands there; the machine's own
+# card is mmcblk* and never matches, so the SD card is excluded by grammar
+# before any runtime check runs.
+DEV_RE='^/dev/sd[a-z][0-9]+$'
+
+die() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit 1; }
+
+usage() {
+    cat >&2 <<EOF
+usage: tesla-pi-dongle <verb>
+  targets                        # JSON list of writable removable FAT targets
+  write <image> <device> <name>  # copy SRC_DIR/<image> to <device> as <name>
+EOF
+    exit 2
+}
+
+command -v lsblk   >/dev/null || die "lsblk_missing"
+command -v python3 >/dev/null || die "python3_missing"
+
+# One lsblk call, JSON, for both verbs. PKNAME gives the parent disk so a
+# partition can inherit its disk's removable/hotplug flags — a stick's partition
+# often reports RM=0 while the disk it sits on reports RM=1.
+probe() {
+    lsblk -J -b -o PATH,NAME,PKNAME,SIZE,FSTYPE,LABEL,MOUNTPOINT,RM,HOTPLUG,TYPE 2>/dev/null
+}
+
+# Filters the tree down to partitions we are willing to write to, and annotates
+# each with free space. Anything rejected simply does not appear: the page shows
+# what is usable, and "nothing here" is the honest answer for a stick that is
+# ext4, or is the boot card, or is not plugged in.
+targets() {
+    probe | python3 -c '
+import json, os, sys
+
+FAT = {"vfat", "exfat", "msdos"}
+PROTECTED = ("/", "/boot", "/boot/firmware")
+
+try:
+    tree = json.load(sys.stdin)
+except Exception:
+    print(json.dumps({"ok": False, "error": "lsblk_unparseable"}))
+    raise SystemExit(1)
+
+disks = {}
+def walk(nodes, parent=None):
+    for n in nodes:
+        n["_parent"] = parent
+        disks[n.get("name")] = n
+        walk(n.get("children") or [], n)
+walk(tree.get("blockdevices") or [])
+
+out = []
+for n in disks.values():
+    if n.get("type") != "part":
+        continue
+    if (n.get("fstype") or "").lower() not in FAT:
+        continue
+    parent = n.get("_parent") or {}
+    # Removable OR hotplug, on the partition or the disk it belongs to: USB
+    # sticks are inconsistent about which of the two flags they set.
+    # lsblk -J emits these as real booleans on util-linux >= 2.33 and as the
+    # strings "0"/"1" before that, and bool("0") is True — so normalise.
+    def flag(v):
+        return str(v).strip().lower() in ("1", "true")
+    flags = (n.get("rm"), n.get("hotplug"), parent.get("rm"), parent.get("hotplug"))
+    if not any(flag(f) for f in flags):
+        continue
+    mp = n.get("mountpoint") or ""
+    if mp in PROTECTED:
+        continue
+    free = None
+    if mp:
+        try:
+            st = os.statvfs(mp)
+            free = st.f_bavail * st.f_frsize
+        except OSError:
+            free = None
+    out.append({
+        "device": n.get("path"),
+        "size": n.get("size"),
+        "fstype": n.get("fstype"),
+        "label": n.get("label") or "",
+        "mountpoint": mp,
+        "free": free,
+    })
+
+out.sort(key=lambda t: t["device"])
+print(json.dumps({"ok": True, "targets": out}))
+'
+}
+
+write_image() {
+    local image="$1" device="$2" destname="$3"
+
+    [[ "$image"    =~ $NAME_RE ]] || die "bad_image_name"
+    [[ "$destname" =~ $NAME_RE ]] || die "bad_dest_name"
+    [[ "$device"   =~ $DEV_RE  ]] || die "bad_device"
+
+    local src="$SRC_DIR/$image"
+    [[ -f "$src" ]] || die "image_missing"
+    local bytes
+    bytes=$(stat -c %s "$src") || die "stat_failed"
+    (( bytes > 0 ))          || die "image_empty"
+    (( bytes <= MAX_BYTES )) || die "image_too_large"
+
+    # Re-derive every property from the kernel at write time. The listing the
+    # page acted on may be seconds old, and the stick may have been swapped.
+    local fstype rm hotplug mp pk prm phot
+    fstype=$(lsblk -no FSTYPE "$device" 2>/dev/null | head -1)
+    rm=$(lsblk -no RM "$device" 2>/dev/null | head -1)
+    hotplug=$(lsblk -no HOTPLUG "$device" 2>/dev/null | head -1)
+    mp=$(lsblk -no MOUNTPOINT "$device" 2>/dev/null | head -1)
+    pk=$(lsblk -no PKNAME "$device" 2>/dev/null | head -1)
+    [[ -n "$pk" ]] && {
+        prm=$(lsblk -no RM "/dev/$pk" 2>/dev/null | head -1)
+        phot=$(lsblk -no HOTPLUG "/dev/$pk" 2>/dev/null | head -1)
+    }
+
+    case "${fstype,,}" in
+        vfat|exfat|msdos) ;;
+        *) die "not_fat" ;;
+    esac
+    [[ "$rm" == "1" || "$hotplug" == "1" || "${prm:-}" == "1" || "${phot:-}" == "1" ]] || die "not_removable"
+    case "$mp" in
+        /|/boot|/boot/firmware) die "protected_mount" ;;
+    esac
+
+    # Reuse an existing mount rather than fighting whoever made it; otherwise
+    # mount privately under /run, which is tmpfs and gone on reboot.
+    local target unmount=0
+    if [[ -n "$mp" ]]; then
+        target="$mp"
+    else
+        mkdir -p "$MNT" || die "mkdir_failed"
+        mount -t "$fstype" -o rw,noexec,nosuid,nodev,umask=0022 "$device" "$MNT" 2>/dev/null \
+            || die "mount_failed"
+        target="$MNT"
+        unmount=1
+    fi
+
+    finish() {
+        if (( unmount )); then umount "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null; fi
+    }
+
+    # python3 rather than `stat -f` arithmetic: it is already a hard dependency
+    # of the targets verb, and it gives a plain integer with no shell maths.
+    local free
+    free=$(python3 -c 'import os,sys; s=os.statvfs(sys.argv[1]); print(s.f_bavail*s.f_frsize)' \
+           "$target" 2>/dev/null || echo "")
+    if [[ -n "$free" ]] && (( free < bytes )); then
+        finish
+        die "no_space_on_target"
+    fi
+
+    # Write beside the final name, then rename: a stick pulled mid-copy holds a
+    # .part the dongle ignores, not a half-image it might try to flash.
+    if ! cp -f "$src" "$target/$destname.part" 2>/dev/null; then
+        finish
+        die "copy_failed"
+    fi
+    if ! mv -f "$target/$destname.part" "$target/$destname" 2>/dev/null; then
+        rm -f "$target/$destname.part" 2>/dev/null
+        finish
+        die "rename_failed"
+    fi
+    # FAT with no journal on a stick that gets yanked: sync is the whole
+    # guarantee that what we copied is actually on the flash.
+    sync
+    finish
+
+    printf '{"ok":true,"device":"%s","name":"%s","bytes":%s,"mount":"%s"}\n' \
+        "$device" "$destname" "$bytes" "$target"
+}
+
+case "${1:-}" in
+    targets)
+        [[ $# -eq 1 ]] || usage
+        targets
+        ;;
+    write)
+        [[ $# -eq 4 ]] || usage
+        write_image "$2" "$3" "$4"
+        ;;
+    *)
+        usage
+        ;;
+esac

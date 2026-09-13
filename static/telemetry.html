@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Telemetry</title>
+<!--
+  Everything this appliance can currently learn about the car and itself, on one
+  page: https://<device>/telemetry.html
+
+  Three sources, deliberately kept visually distinct because they have very
+  different costs and availability:
+
+    MOTION   the browser's own GPS. Free, live, needs nothing installed.
+             Measured 2026-08-27: the Tesla populates coords.speed and
+             coords.heading, so this is a real telemetry source and not just a
+             dot on a map.
+
+    VEHICLE  BLE to the car's VCSEC, via scripts/tesla-pi-ble on the Pi. Rich —
+             charge, climate, tyres, closures, drive — but it costs a radio the
+             AP shares silicon with, and it needs a key enrolled in the car.
+             So it is button-driven. Nothing here polls on a timer, and the
+             server caches for 20 s and runs one BLE operation at a time.
+
+    DEVICE   the Pi itself, from /healthz. Free and live.
+
+  What is deliberately NOT here: anything requiring the internet (Fleet API) or
+  a CAN harness. See docs/telemetry-options.md for the tiers and their costs.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 18px 40px;
+    background: #0b0c0e; color: #f2f3f5;
+    font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #8a8f97; font-size: 13px; margin-bottom: 16px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .span2 { grid-column: 1 / -1; } }
+  .card {
+    background: #16181c; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 16px;
+  }
+  .card h2 {
+    font-size: 13px; margin: 0 0 12px; color: #8a8f97; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.07em;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .tag { font-size: 11px; padding: 3px 8px; border-radius: 999px; letter-spacing: 0.04em; }
+  .tag.live { background: rgba(70,167,88,0.18); color: #46a758; }
+  .tag.manual { background: rgba(232,161,58,0.18); color: #e8a13a; }
+  .hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .hero .n { font-size: 56px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+  .hero .u { font-size: 16px; color: #8a8f97; }
+  .compass { display: flex; align-items: center; gap: 14px; margin: 14px 0 6px; }
+  .compass svg { flex: none; }
+  .kv { display: grid; grid-template-columns: minmax(120px, 44%) 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: #8a8f97; }
+  .kv dd { margin: 0; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .ok { color: #46a758; } .warn { color: #e8a13a; } .bad { color: #e5484d; } .dim { color: #8a8f97; }
+  button {
+    -webkit-appearance: none; appearance: none;
+    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px; padding: 11px 14px; font-size: 14px; font-weight: 500;
+    touch-action: manipulation;
+  }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; }
+  button:disabled { opacity: 0.45; }
+  .cats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .banner {
+    border-radius: 10px; padding: 12px; font-size: 13px; margin-bottom: 12px;
+    background: rgba(232,161,58,0.12); border: 1px solid rgba(232,161,58,0.3); color: #e8c48a;
+  }
+  .banner.bad { background: rgba(229,72,77,0.12); border-color: rgba(229,72,77,0.3); color: #f0a0a2; }
+  .banner b { color: #fff; }
+  pre {
+    background: #0e1013; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 11px; font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; margin: 0;
+  }
+  .foot { color: #6a7078; font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+
+<h1>Telemetry</h1>
+<div class="sub" id="sub">everything this box can see</div>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>Motion <span class="tag live" id="motion-tag">browser GPS</span></h2>
+    <div class="hero"><span class="n" id="speed">—</span><span class="u">km/h</span></div>
+    <div class="compass">
+      <svg width="58" height="58" viewBox="0 0 58 58" aria-hidden="true">
+        <circle cx="29" cy="29" r="27" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="2"/>
+        <g id="needle" transform="rotate(0 29 29)">
+          <polygon points="29,7 35,33 29,28 23,33" fill="#4c6ef5"/>
+        </g>
+      </svg>
+      <div>
+        <div style="font-size:22px;font-weight:600" id="heading">—</div>
+        <div class="dim" style="font-size:12px" id="heading-name">heading</div>
+      </div>
+    </div>
+    <dl class="kv" id="motion-info"></dl>
+  </div>
+
+  <div class="card">
+    <h2>Device <span class="tag live" id="dev-tag">/healthz</span></h2>
+    <dl class="kv" id="dev-info"></dl>
+  </div>
+
+  <div class="card span2">
+    <h2>Vehicle <span class="tag manual">BLE · on demand</span></h2>
+    <div id="ble-banner"></div>
+    <div class="cats" id="cats"></div>
+    <div class="cats">
+      <button class="go" id="ble-refresh">Read selected</button>
+      <button id="ble-clear">Clear</button>
+    </div>
+    <dl class="kv" id="ble-summary"></dl>
+    <pre id="ble-raw">nothing read yet</pre>
+  </div>
+
+</div>
+
+<div class="foot" id="foot"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Same categories the server allowlists. Kept in this order because it is
+  // roughly most-useful-first for a car you are sitting in.
+  const CATEGORIES = [
+    'charge', 'climate', 'drive', 'location', 'closures', 'tire-pressure',
+    'media', 'charge-schedule', 'software-update',
+  ];
+  const DEFAULT_SELECTED = ['charge', 'climate', 'drive'];
+  // Measured on the car: a parked Tesla reports this as its accuracy. It is a
+  // placeholder, not a 10 km error bound, so it must not be shown as one.
+  const ACCURACY_SENTINEL_M = 9999;
+
+  const $ = (id) => document.getElementById(id);
+  const kv = (el, pairs) => {
+    el.innerHTML = '';
+    for (const [k, v, cls] of pairs) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      if (cls) dd.className = cls;
+      el.append(dt, dd);
+    }
+  };
+  const n1 = (v, u) => (v === null || v === undefined) ? '—' : v.toFixed(1) + (u || '');
+  const compass = (deg) => ['N','NE','E','SE','S','SW','W','NW'][Math.round(((deg % 360) + 360) % 360 / 45) % 8];
+
+  $('sub').textContent = location.host;
+
+  // ── Motion ───────────────────────────────────────────────────────────────
+  let lastFix = null, fixCount = 0, firstRx = null;
+
+  if (!navigator.geolocation) {
+    $('motion-tag').textContent = 'unavailable';
+    $('motion-tag').className = 'tag manual';
+    kv($('motion-info'), [['geolocation', 'not supported by this browser', 'bad']]);
+  } else {
+    navigator.geolocation.watchPosition((pos) => {
+      const c = pos.coords;
+      // rx, not pos.timestamp: measured on the car, pos.timestamp is not epoch
+      // based and does not advance between fixes.
+      const rx = Date.now();
+      if (firstRx === null) firstRx = rx;
+      fixCount++;
+
+      const spd = (c.speed === null || c.speed === undefined) ? null : c.speed;
+      $('speed').textContent = spd === null ? '—' : (spd * 3.6).toFixed(0);
+
+      const hdg = (c.heading === null || c.heading === undefined) ? null : c.heading;
+      if (hdg === null) {
+        $('heading').textContent = '—';
+        $('heading-name').textContent = 'heading not reported';
+      } else {
+        $('heading').textContent = hdg.toFixed(0) + '°';
+        $('heading-name').textContent = compass(hdg);
+        $('needle').setAttribute('transform', 'rotate(' + hdg.toFixed(1) + ' 29 29)');
+      }
+
+      const accSentinel = c.accuracy !== null && c.accuracy >= ACCURACY_SENTINEL_M;
+      const spanS = (rx - firstRx) / 1000;
+      const rate = spanS > 0 ? (fixCount - 1) / spanS : 0;
+
+      kv($('motion-info'), [
+        ['speed', spd === null ? 'not reported' : n1(spd, ' m/s'), spd === null ? 'warn' : 'ok'],
+        ['latitude', c.latitude.toFixed(5)],
+        ['longitude', c.longitude.toFixed(5)],
+        ['altitude', n1(c.altitude, ' m')],
+        ['accuracy', accSentinel ? 'not reported (placeholder)' : n1(c.accuracy, ' m'), accSentinel ? 'dim' : 'ok'],
+        ['fixes', fixCount + ' in ' + spanS.toFixed(0) + ' s  (' + rate.toFixed(2) + ' Hz)'],
+      ]);
+      lastFix = rx;
+    }, (err) => {
+      $('motion-tag').textContent = 'error';
+      $('motion-tag').className = 'tag manual';
+      kv($('motion-info'), [['error', err.message, 'bad'],
+        ['code', err.code === 1 ? 'permission denied' : err.code === 2 ? 'position unavailable' : 'timeout']]);
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  }
+
+  // ── Device ───────────────────────────────────────────────────────────────
+  async function pollHealth() {
+    try {
+      const j = await (await fetch('/healthz', { cache: 'no-store' })).json();
+      const up = j.uptime_s || 0;
+      const hhmm = Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm';
+      const under = j.power && j.power.under;
+      const everUnder = j.power && j.power.ever;
+      kv($('dev-info'), [
+        ['CarPlay', j.carplay ?? '—', j.carplay === 'streaming' ? 'ok' : 'dim'],
+        ['phone', j.phone_type ?? 'none connected', 'dim'],
+        ['CPU temp', n1(j.cpu_temp_c, ' °C'), (j.cpu_temp_c ?? 0) < 70 ? 'ok' : 'warn'],
+        ['load', j.load_avg ?? '—'],
+        ['memory', (j.mem_used_mb ?? '?') + ' / ' + (j.mem_total_mb ?? '?') + ' MB'],
+        ['uptime', hhmm],
+        // Surfaced because a sagging 5 V rail does not announce itself as bad
+        // power — it announces itself as random misbehaviour.
+        ['power', under ? 'UNDERVOLTAGE NOW' : everUnder ? 'ok (has sagged before)' : 'ok',
+          under ? 'bad' : everUnder ? 'warn' : 'ok'],
+        ['cert', (j.cert_days_remaining ?? '?') + ' days', (j.cert_days_remaining ?? 0) > 14 ? 'ok' : 'warn'],
+        ['RetroArch', j.retroarch ?? '—', 'dim'],
+      ]);
+    } catch (err) {
+      kv($('dev-info'), [['error', String(err.message), 'bad']]);
+    }
+  }
+  pollHealth();
+  setInterval(pollHealth, 5000);
+
+  // ── Vehicle (BLE) ────────────────────────────────────────────────────────
+  const selected = new Set(DEFAULT_SELECTED);
+  const results = {};
+
+  function renderCats() {
+    const box = $('cats');
+    box.innerHTML = '';
+    for (const c of CATEGORIES) {
+      const b = document.createElement('button');
+      b.textContent = c;
+      if (selected.has(c)) { b.classList.add('go'); }
+      b.addEventListener('click', () => {
+        selected.has(c) ? selected.delete(c) : selected.add(c);
+        renderCats();
+      });
+      box.append(b);
+    }
+  }
+  renderCats();
+
+  function banner(html, bad) {
+    $('ble-banner').innerHTML = html ? '<div class="banner' + (bad ? ' bad' : '') + '">' + html + '</div>' : '';
+  }
+
+  // Flatten whatever protobuf-shaped object comes back into readable rows,
+  // rather than guessing at a schema that is not contractual.
+  function flatten(obj, prefix, out) {
+    out = out || []; prefix = prefix || '';
+    if (obj === null || typeof obj !== 'object') { out.push([prefix || 'value', String(obj)]); return out; }
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? prefix + '.' + k : k;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) flatten(v, key, out);
+      else out.push([key, Array.isArray(v) ? JSON.stringify(v) : String(v)]);
+    }
+    return out;
+  }
+
+  async function readOne(cat) {
+    const r = await fetch('/telemetry/ble?category=' + encodeURIComponent(cat), { cache: 'no-store' });
+    let j;
+    try { j = await r.json(); } catch { j = { ok: false, error: 'non-JSON response (HTTP ' + r.status + ')' }; }
+    j.httpStatus = r.status;
+    return j;
+  }
+
+  $('ble-refresh').addEventListener('click', async () => {
+    const btn = $('ble-refresh');
+    btn.disabled = true;
+    const cats = [...selected];
+    if (!cats.length) { banner('Pick at least one category first.'); btn.disabled = false; return; }
+    banner('Reading ' + cats.length + ' categor' + (cats.length === 1 ? 'y' : 'ies') + ' over BLE — a few seconds each.');
+    for (const c of cats) {
+      btn.textContent = 'Reading ' + c + '…';
+      // Sequential on purpose. The server serialises anyway, and firing them in
+      // parallel would just queue behind each other while looking broken.
+      results[c] = await readOne(c);
+      render();
+    }
+    btn.textContent = 'Read selected';
+    btn.disabled = false;
+
+    const first = results[cats[0]];
+    if (first && first.httpStatus === 404) {
+      banner('<b>BLE is not wired up on this box.</b> The server has no /telemetry/ble route, '
+        + 'which means <code>TESLA_BLE_HELPER</code> is unset in /etc/default/tesla-pi. '
+        + 'See docs/telemetry-options.md.', true);
+    } else if (Object.values(results).every((v) => v && v.ok === false)) {
+      banner('<b>Every category failed.</b> The usual cause is that the signing key is not '
+        + 'enrolled in the car yet — run <code>tesla-pi-ble enroll</code> and tap the NFC key '
+        + 'card on the centre console. If it is enrolled, check that the role is permitted to '
+        + 'read these categories.', true);
+    } else {
+      banner('');
+    }
+  });
+
+  $('ble-clear').addEventListener('click', () => {
+    for (const k of Object.keys(results)) delete results[k];
+    banner(''); render();
+  });
+
+  function render() {
+    const rows = [];
+    for (const [cat, r] of Object.entries(results)) {
+      if (!r) continue;
+      if (r.ok) {
+        rows.push([cat, 'ok — ' + (r.cached ? 'cached ' + Math.round((r.ageMs || 0) / 1000) + 's' : r.elapsedMs + ' ms'), 'ok']);
+        if (r.data) for (const [k, v] of flatten(r.data)) rows.push(['  ' + cat + '.' + k, v]);
+      } else {
+        rows.push([cat, r.error || ('HTTP ' + r.httpStatus), 'bad']);
+      }
+    }
+    kv($('ble-summary'), rows.length ? rows : [['status', 'nothing read yet', 'dim']]);
+    $('ble-raw').textContent = Object.keys(results).length
+      ? JSON.stringify(results, null, 2) : 'nothing read yet';
+  }
+  render();
+
+  $('foot').textContent = 'Motion and Device update live. Vehicle is read only when you ask, '
+    + 'because the Pi’s Bluetooth shares silicon with the Wi-Fi AP.';
+})();
+</script>
+</body>
+</html>

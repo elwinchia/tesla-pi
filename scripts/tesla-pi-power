@@ -1,0 +1,37 @@
+#!/bin/bash
+# tesla-pi-power — privileged restart/shutdown helper for Settings → System.
+#
+# Installed to /usr/local/sbin/tesla-pi-power (mode 0755, root-owned) by
+# scripts/install-power-tab.sh. Invoked by tesla-pi.service via
+# `sudo -n /usr/local/sbin/tesla-pi-power <verb>` — sudoers grants NOPASSWD on
+# this exact path only. The verb list below is closed and takes no arguments,
+# so the grant cannot be repurposed.
+
+set -uo pipefail
+
+usage() {
+    cat >&2 <<EOF
+usage: tesla-pi-power <verb>
+  reboot     # restart the machine
+  poweroff   # halt the machine (needs a power cycle to come back)
+EOF
+    exit 2
+}
+
+case "${1:-}" in
+    reboot|poweroff)
+        # --no-block: systemd's shutdown transaction stops tesla-pi.service,
+        # i.e. our own caller. A blocking systemctl would sit waiting to be
+        # killed and the HTTP handler would never see the exit status.
+        #
+        # sync first: the rootfs is an SD card and the car can cut USB power
+        # the moment the system halts. systemd flushes too, but this costs
+        # nothing and runs before anything else starts tearing down.
+        sync
+        systemctl --no-block "$1" || { echo "systemctl $1 failed" >&2; exit 1; }
+        echo "ok"
+        ;;
+    *)
+        usage
+        ;;
+esac

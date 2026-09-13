@@ -1,0 +1,21 @@
+[Unit]
+Description=Tesla CarPlay
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+WatchdogSec=30s
+# Set these to the account that owns the checkout and its path before
+# installing, e.g.:  sudo sed -i "s|__TESLAPI_USER__|$USER|; s|__TESLAPI_DIR__|$PWD|" tesla-pi.service
+User=__TESLAPI_USER__
+WorkingDirectory=__TESLAPI_DIR__
+EnvironmentFile=-/etc/default/tesla-pi
+ExecStart=/usr/bin/node __TESLAPI_DIR__/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
