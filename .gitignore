@@ -30,6 +30,10 @@ image/overlay/boot/tesla-pi.local.txt
 # Documents the live AP credentials — keep on disk, do not push
 docs/hotspot-credentials.md
 
+# The maintainer's test device: hostname, LAN addresses, user, BT MAC — local
+# development only, never part of the public repo
+docs/test-pi.md
+
 # Live Cloudflare API token — keep on disk, never commit
 docs/cloudflare-token.md
 
