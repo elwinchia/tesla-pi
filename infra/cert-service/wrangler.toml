@@ -1,20 +1,29 @@
-name = "mytesla-cert-service"
+name = "tesla-pi-cert-service"
 main = "src/worker.js"
 compatibility_date = "2026-01-01"
 
-# Serves the shared device cert to mytesla devices.
-# Deployed at certs.mytesla.humblebees.co — deliberately a DIFFERENT hostname
-# from device.mytesla.humblebees.co, which dnsmasq resolves to the Pi itself
-# while the in-car AP is up (conf/dnsmasq.conf serves a wildcard A record).
-routes = [
-  { pattern = "certs.mytesla.humblebees.co/cert/*", zone_name = "humblebees.co" },
-]
+# Served from the free *.workers.dev subdomain:
+#   https://tesla-pi-cert-service.<account>.workers.dev
+#
+# Deliberately NOT a custom hostname. `certs.tesla-pi.humblebees.co` is two
+# labels deep, and Cloudflare's free Universal SSL only covers the apex and a
+# single-label wildcard (*.humblebees.co) — a two-deep hostname would serve an
+# invalid edge certificate and cert-sync.sh would fail its TLS handshake.
+# workers.dev gets valid TLS automatically and needs no DNS record at all.
+#
+# Nothing else depends on the hostname: in the car, dnsmasq resolves
+# CARPLAY_DOMAIN to the Pi itself, and DNS-01 issuance validates via a TXT
+# record, so cert issuance works at any depth.
+workers_dev = true
 
-# Cert artefacts written by .github/workflows/renew-cert.yml
-[[r2_buckets]]
+# Cert artefacts, written by .github/workflows/renew-cert.yml (or by hand with
+# the same certbot container). Values are a few KB of PEM/JSON text.
+# KV rather than R2: included in the free Workers plan, no payment method.
+# Namespace id is filled in by `wrangler kv namespace create CERTS`.
+[[kv_namespaces]]
 binding = "CERTS"
-bucket_name = "mytesla-certs"
+id = "77bd43b9a2304b369a0f0e8173bcaf33"
 
 # DEVICE_TOKEN is a secret, never a var. Set it with:
 #   npx wrangler secret put DEVICE_TOKEN
-# The same value is baked into device images (/etc/default/mytesla, mode 0600).
+# The same value goes into /etc/default/tesla-pi (mode 0600) on every device.

@@ -1,16 +1,16 @@
 // retroarch-bridge.js — streams a NATIVE RetroArch session to the Tesla browser.
 //
-// The user rejected RetroArch-in-Waydroid (Android emulation is too laggy for a
-// game). RetroArch has a native Linux/Wayland build, so we run it directly in
-// its own headless `cage` wlroots compositor and reuse the *exact* streaming
-// pipeline the Waydroid bridge proves — minus the entire Android stack:
-//   - POST /retroarch/start runs `sudo mytesla-retroarch start`, which starts
-//     cage-retroarch.service (`cage -- mytesla-retroarch-session`). The session
+// Emulating RetroArch inside an Android container was tried and rejected — far
+// too laggy for a game. RetroArch has a native Linux/Wayland build, so we run it
+// directly in its own headless `cage` wlroots compositor and reuse the same
+// H.264-over-WebSocket streaming pipeline CarPlay uses:
+//   - POST /retroarch/start runs `sudo tesla-pi-retroarch start`, which starts
+//     cage-retroarch.service (`cage -- tesla-pi-retroarch-session`). The session
 //     launcher pins the cage output to 1024x768 BEFORE RetroArch starts (so
 //     RetroArch sizes its GL surface correctly) then execs RetroArch fullscreen.
 //   - We capture that cage output with `wf-recorder` → Pi hardware H.264
 //     (/dev/video11) → /retroarch/h264 (binary WS), decoded by the same
-//     WebCodecs worker.js the CarPlay/Android paths use.
+//     WebCodecs worker.js the CarPlay path uses.
 //   - Game AUDIO: RetroArch plays to an ALSA loopback (snd-aloop, hw:Loopback,0,0);
 //     we capture the mirror (hw:Loopback,1,0) with ffmpeg as raw S16LE PCM and
 //     broadcast it on /retroarch/audio. The browser plays it via an AudioWorklet
@@ -20,11 +20,12 @@
 //     on-screen overlay (and any BT pad paired to the Pi) drive RetroArch through
 //     its `udev` joypad driver; an autoconfig binds our pad to RetroPad on sight.
 //
-// Unlike Waydroid, RetroArch is NOT kept warm: it runs the core at 60 fps even
-// unwatched, so leaving the route tears the whole session down. Cold start ~2s.
+// RetroArch is NOT kept warm: it runs the core at 60 fps even unwatched, so
+// leaving the route tears the whole session down. Cold start ~2s.
 //
-// Coexists with the Android cage: that one owns wayland-0 from boot pre-warm; we
-// identify OUR cage socket by diffing the wayland-* set across our helper start.
+// We identify OUR cage socket by diffing the wayland-* set across our helper
+// start, rather than assuming wayland-0 — the service user's runtime dir may
+// already hold sockets from other sessions.
 
 import fsSync from 'fs'
 import path from 'path'
@@ -34,13 +35,13 @@ import { WebSocketServer } from 'ws'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const RA_HELPER = process.env.RETROARCH_HELPER || '/usr/local/sbin/mytesla-retroarch'
+const RA_HELPER = process.env.RETROARCH_HELPER || '/usr/local/sbin/tesla-pi-retroarch'
 const RUNTIME_DIR = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`
 const CAGE_OUTPUT = process.env.CAGE_OUTPUT || 'HEADLESS-1'
 // Encode size = the cage output the session launcher pins (must match
-// RETROARCH_MODE in scripts/mytesla-retroarch-session). 4:3; cores letterbox
+// RETROARCH_MODE in scripts/tesla-pi-retroarch-session). 4:3; cores letterbox
 // to their own aspect within it (GBA is 3:2). Full-screen with no concurrent
-// CarPlay, so we can afford 60 fps and a fatter bitrate than the Android dock.
+// CarPlay, so we can afford 60 fps and a fatter bitrate than CarPlay itself.
 // 720x480 = exactly 3x the GBA's native 240x160 (3:2, no letterbox) and ~56% of
 // 1024x768's pixels — wf-recorder's per-frame RGB→yuv420p convert is the CPU
 // hog, so fewer pixels is the biggest lever. The browser upscales to fill the
@@ -61,8 +62,8 @@ const RA_FPS = Number(process.env.RETROARCH_FPS || 30)
 const AUDIO_RATE = 48000
 const AUDIO_CH = 2
 
-const CMD_FILE = path.join(RUNTIME_DIR, 'mytesla-retroarch.cmd')
-const MODE_FILE = path.join(RUNTIME_DIR, 'mytesla-retroarch.mode')
+const CMD_FILE = path.join(RUNTIME_DIR, 'tesla-pi-retroarch.cmd')
+const MODE_FILE = path.join(RUNTIME_DIR, 'tesla-pi-retroarch.mode')
 const PAD_SCRIPT = path.join(__dirname, 'scripts', 'uinput-pad.py')
 
 // Cores we allow /retroarch/launch to load, by short key → .so filename. mGBA
@@ -78,7 +79,7 @@ const CORES = {
   gb: 'mgba_libretro.so',
   gbc: 'mgba_libretro.so',
 }
-const ROMS_DIR = path.join(process.env.HOME || '/home/mytesla', 'retroarch', 'roms')
+const ROMS_DIR = path.join(process.env.HOME || '/home/tesla-pi', 'retroarch', 'roms')
 const ROM_EXT = new Set(['.gba', '.gb', '.gbc', '.zip', '.7z'])
 
 // Allowlisted overlay/RetroPad buttons (must match uinput-pad.py).
@@ -110,7 +111,7 @@ export function createRetroarchBridge({ log, execResult, sendJson, attachKeepali
   const installed = () => fsSync.existsSync(RA_HELPER)
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-  // ---- cage socket discovery (diff-based, coexists with the Android cage) ---
+  // ---- cage socket discovery (diff-based; never assumes wayland-0) ---------
   const listSockets = () => {
     try { return fsSync.readdirSync(RUNTIME_DIR).filter((n) => /^wayland-\d+$/.test(n)) }
     catch { return [] }
@@ -165,7 +166,7 @@ export function createRetroarchBridge({ log, execResult, sendJson, attachKeepali
     })
   }
 
-  // ---- H.264 producer (AU splitter reused verbatim from android-bridge) -----
+  // ---- H.264 producer -------------------------------------------------------
   function spawnRecorder(display) {
     const proc = spawn('wf-recorder', [
       '-y',
@@ -419,7 +420,7 @@ export function createRetroarchBridge({ log, execResult, sendJson, attachKeepali
       if (!rom) { sendJson(res, 400, { ok: false, error: 'unknown_rom' }); return true }
       // Boot the game by (re)starting the session with the core+ROM in the cmd
       // file. RetroArch reads content only at startup, so swapping a game means a
-      // session restart (~2s) — the same stop→start the Android dock does.
+      // session restart (~2s).
       ;(async () => {
         try { await stop('relaunch') } catch {}
         await doStart(core, rom)

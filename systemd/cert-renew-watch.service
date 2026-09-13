@@ -5,8 +5,8 @@ Wants=hostapd.service dnsmasq.service
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/default/mytesla
-ExecStart=/opt/mytesla/scripts/cert-renew-watch.sh
+EnvironmentFile=/etc/default/tesla-pi
+ExecStart=/opt/tesla-pi/scripts/cert-renew-watch.sh
 Restart=always
 RestartSec=30
 

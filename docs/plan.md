@@ -92,7 +92,7 @@
 
 ## Phase 1 — Bench Proof of Concept
 
-**Effort**: 1 weekend · **Goal**: prove `mytesla` works on Pi Zero 2 W with current `node-carplay`, on the bench, before any car involvement
+**Effort**: 1 weekend · **Goal**: prove `tesla-pi` works on Pi Zero 2 W with current `node-carplay`, on the bench, before any car involvement
 
 ### Tasks
 
@@ -110,10 +110,10 @@
    sudo apt install -y git build-essential libusb-1.0-0-dev
    ```
 
-3. **Fork and clone `marcraft2/mytesla`**
+3. **Fork and clone `marcraft2/tesla-pi`**
    - Fork on GitHub to your account
-   - On Pi (via `ssh pi@raspberrypi.local`): `git clone https://github.com/<you>/mytesla.git`
-   - `cd mytesla && npm install`
+   - On Pi (via `ssh pi@raspberrypi.local`): `git clone https://github.com/<you>/tesla-pi.git`
+   - `cd tesla-pi && npm install`
 
 4. **Bump `node-carplay` to current version**
    ```bash
@@ -166,7 +166,7 @@
 
 2. **Systemd service for auto-start**
    ```ini
-   # /etc/systemd/system/mytesla.service
+   # /etc/systemd/system/tesla-pi.service
    [Unit]
    Description=Tesla CarPlay
    After=network-online.target hostapd.service
@@ -175,15 +175,15 @@
    [Service]
    Type=simple
    User=dietpi
-   WorkingDirectory=/home/dietpi/mytesla
-   ExecStart=/usr/bin/node /home/dietpi/mytesla/index.js
+   WorkingDirectory=/home/dietpi/tesla-pi
+   ExecStart=/usr/bin/node /home/dietpi/tesla-pi/index.js
    Restart=always
    RestartSec=5
 
    [Install]
    WantedBy=multi-user.target
    ```
-   - `sudo systemctl enable --now mytesla`
+   - `sudo systemctl enable --now tesla-pi`
 
 3. **Confirm dongle audio routing** (no Pi-side work needed)
    - Verify the CarLinkit is set to "phone audio / phone mic" mode (carry-over from Tesla-Android setup)
@@ -196,19 +196,19 @@
 ### Validation gates
 
 - [x] Service auto-restarts after `kill -9 <pid>` (verified: PID 1405 → 1438 in ~6s)
-- [x] Service starts within 3 s of boot completion — `mytesla.service @11.121s`, immediately after `network-online.target @11.099s` (Type=simple → instant fork)
+- [x] Service starts within 3 s of boot completion — `tesla-pi.service @11.121s`, immediately after `network-online.target @11.099s` (Type=simple → instant fork)
 - [~] Server cleanly recovers from a mid-session dongle disconnect — code path verified firing during initial open/reset (`usb_detach` event + in-flight guard), but a real cable yank with the dongle plugged in still pending
 - [ ] Audio plays through Tesla speakers via the phone's existing BT pairing (Pi not involved) — needs in-car bench test
 
 ### Phase 2 baseline measurements (2026-05-03, post-reboot)
 
-Measured on the bench Pi Zero 2 W (DietPi, `mytesla v0.1.0`, dongle plugged in, laptop browser tab open):
+Measured on the bench Pi Zero 2 W (DietPi, `tesla-pi v0.1.0`, dongle plugged in, laptop browser tab open):
 
 | Milestone | Kernel uptime | Notes |
 |---|---|---|
 | Kernel handoff to userspace | 4.34s | `systemd-analyze` |
 | `network-online.target` reached | 11.10s | dominated by `ifup@wlan0.service` (5.36s) |
-| `mytesla.service` started | 11.12s | Type=simple, fires immediately after network-online |
+| `tesla-pi.service` started | 11.12s | Type=simple, fires immediately after network-online |
 | Node `http_listen` on :8080 | ~19.9s | ~4.4s of node ESM module load on the Pi Zero 2 W |
 | Dongle found & opened, CarPlay ready | ~31.1s | ~11s reset/re-enumerate cycle (dongle firmware behavior) |
 | Total system boot to graphical.target | 15.58s | within `<20s` target from project header |
@@ -218,7 +218,7 @@ Measured on the bench Pi Zero 2 W (DietPi, `mytesla v0.1.0`, dongle plugged in, 
 - Node ESM load (~4s) — `node --experimental-snapshot` could help; gnarly, defer
 - USB reset cycle (~11s) — dongle firmware, not addressable from our side
 
-How to re-measure: `sudo systemd-analyze critical-chain mytesla.service` and `journalctl -u mytesla -b 0 -o short-monotonic | grep -E "Started|http_listen|carplay_started"`.
+How to re-measure: `sudo systemd-analyze critical-chain tesla-pi.service` and `journalctl -u tesla-pi -b 0 -o short-monotonic | grep -E "Started|http_listen|carplay_started"`.
 
 ### Risks at this phase
 
@@ -230,6 +230,8 @@ How to re-measure: `sudo systemd-analyze critical-chain mytesla.service` and `jo
 
 **Effort**: 1 weekend · **Goal**: Pi serves Tesla a Wi-Fi network it stays associated to despite no upstream; CarPlay site reachable over HTTPS via the `240.3.3.4` shim.
 
+**Superseded in part (2026-08-14):** the Pi 4 has spare USB and a second Wi-Fi adapter, so upstream internet came back — sharing is now on by default whenever an uplink exists, with the walled garden below as the automatic offline fallback. Tasks 3's "no MASQUERADE, `ip_forward=0`" no longer describes the build; see "Internet sharing | net-share.sh" in `tesla-doc.md`.
+
 **Revision (2026-05-03):** the original Phase 3 plan assumed a USB phone tether on the Pi for upstream internet. The Pi Zero 2 W's single USB OTG port is committed to the CarLinkit dongle (Phase 1 confirms `1314:1521` on the inner micro-USB), so a USB hub + phone is parts/heat/cable mess for a feature the user doesn't actually need (iPhone carries cellular for both CarPlay backend and Tesla map tiles). Rescoped to no-internet design with a fake captive-portal layer.
 
 ### Tasks
@@ -237,30 +239,32 @@ How to re-measure: `sudo systemd-analyze critical-chain mytesla.service` and `jo
 1. **Configure `hostapd` on `wlan0`**
    - SSID `TeslaCP`, channel 6, `hw_mode=g`, 802.11n, CCMP-only, country `MY`
    - Static IP `<pi-lan-ip>/24` on `wlan0` via `/etc/network/interfaces.d/wlan0`
-   - Source: `mytesla/conf/hostapd.conf`
+   - Source: `tesla-pi/conf/hostapd.conf`
 
 2. **`dnsmasq` for DHCP + DNS + wildcard A**
    - DHCP `<lan-host>–50`, gateway and DNS = `<pi-lan-ip>`, lease 24h
    - `address=/#/240.3.3.4` resolves every name to the public-IP shim
    - `no-resolv`, `bind-interfaces` — dnsmasq never tries upstream
-   - Source: `mytesla/conf/dnsmasq.conf`
+   - Source: `tesla-pi/conf/dnsmasq.conf`
 
 3. **iptables: keep `240.3.3.4` shim, drop everything else**
    - PREROUTING DNAT `240.3.3.4:80/443` → `<pi-lan-ip>`
-   - No MASQUERADE, no FORWARD rules, `net.ipv4.ip_forward=0`
-   - Sources: `mytesla/conf/iptables.ipv4.nat`, `mytesla/conf/sysctl-disable-forward.conf`
+   - No MASQUERADE, no FORWARD rules, `net.ipv4.ip_forward=0` *(since revised:
+     forwarding is on and interface-scoped MASQUERADE/FORWARD rules exist for the
+     optional internet sharing in `scripts/net-share.sh`)*
+   - Sources: `tesla-pi/conf/iptables.ipv4.nat`, `tesla-pi/conf/sysctl-ip-forward.conf`
 
 4. **nginx with captive-bypass + CarPlay site**
    - `:80 default_server`: returns 204 for `/generate_204`, success HTML for `/hotspot-detect.html` and `/library/test/success.html`, plain-text "Microsoft NCSI" / "Microsoft Connect Test" for the MS probes, 204 fallback for everything else
    - `:443` server block for the user's domain — reverse-proxies `/` and `/ws/*` to the Node app on :8080
-   - Source: `mytesla/conf/nginx-carplay.conf`
+   - Source: `tesla-pi/conf/nginx-carplay.conf`
    - Initial LE cert seeded once from a laptop. Subsequent renewals automated on-Pi (next item).
 
 5. **Auto-renewal on home Wi-Fi** (`cert-renew-watch.service`)
    - Long-running watcher polls `hostapd_cli list_sta` every 60s
    - After 10 min with no STA: tear down hostapd/dnsmasq, `wpa_supplicant` → home SSID, run `scripts/cert-sync.sh` (fetch the centrally-issued cert), restore AP, reload nginx. Gated on remote cert *version*, not local file age, so a long-offline device catches up on its first idle window.
    - Triggered by physically bringing the Pi indoors and powering it on; in the car the Tesla associates within minutes so the idle timer never reaches threshold
-   - Sources: `mytesla/scripts/cert-renew-watch.sh`, `mytesla/scripts/cert-sync.sh`, `mytesla/systemd/cert-renew-watch.service`, plus templates: `conf/wpa_supplicant-wlan0-home.conf.template`, `conf/mytesla.env.template`
+   - Sources: `tesla-pi/scripts/cert-renew-watch.sh`, `tesla-pi/scripts/cert-sync.sh`, `tesla-pi/systemd/cert-renew-watch.service`, plus templates: `conf/wpa_supplicant-wlan0-home.conf.template`, `conf/tesla-pi.env.template`
    - The device holds **no** Cloudflare credential — issuance runs in CI (`.github/workflows/renew-cert.yml`). See `docs/turnkey-shared-domain-plan.md`.
 
 6. **Cert-expiry banner in CarPlay UI**
@@ -447,5 +451,5 @@ After 2 weeks of stable use:
 - iPhone's wireless CarPlay handshakes within 5–10 s.
 - Total: **<15 s from unlock to driving with CarPlay**, vs current 80–120 s.
 - Pinch-zoom works in Maps via Android Auto leg.
-- Tesla itself has no internet on this Wi-Fi (the Pi has none to share). Tesla map tiles, traffic, etc. fall back to the iPhone via Tesla's own LTE/cell — same as before. The Wi-Fi exists purely to host the CarPlay URL.
+- ~~Tesla itself has no internet on this Wi-Fi (the Pi has none to share).~~ As of 2026-08-14 the Pi shares its uplink when it has one, and falls back to the walled garden when it doesn't. Tesla map tiles and traffic use the Wi-Fi when it is live and LTE otherwise.
 - Pi 4 sits in a drawer as known-good fallback.

@@ -1,25 +1,25 @@
 [Unit]
 Description=Headless Wayland compositor (cage) hosting a native RetroArch session
-Documentation=https://github.com/elwinchia/mytesla/blob/main/docs/retroarch-addon.md
-# Unlike the Waydroid cage, RetroArch is a plain native app — no container to
-# wait on. The only host prerequisite (the snd-aloop capture loopback) is loaded
-# at boot via /etc/modules-load.d, so there is nothing to order against here.
+Documentation=https://github.com/elwinchia/tesla-pi/blob/main/docs/retroarch-addon.md
+# RetroArch is a plain native app — no container to wait on. The only host
+# prerequisite (the snd-aloop capture loopback) is loaded at boot via
+# /etc/modules-load.d, so there is nothing to order against here.
 
 [Service]
-# Runs as the mytesla service user (install-retroarch-addon.sh rewrites this and
-# the runtime dir to the configured user). Lingering — already enabled for the
-# Android addon — keeps /run/user/<uid> alive for the Wayland socket.
-User=__MYTESLA_USER__
-# wlroots headless backend, GPU (V3D, gles2) compositing — same proven path as
-# cage-headless.service. RetroArch then renders on the V3D GPU with no Android
-# stack in the way. Needs the user in render + video groups + /dev/dri/renderD128.
+# Runs as the tesla-pi service user (install-retroarch-addon.sh rewrites this and
+# the runtime dir to the configured user). Lingering — enabled by that same
+# installer — keeps /run/user/<uid> alive for the Wayland socket.
+User=__TESLAPI_USER__
+# wlroots headless backend with GPU (V3D, gles2) compositing: on the Pi 4 the
+# software (pixman) path costs ~half a core, so we composite on the otherwise
+# idle GPU. Needs the user in render + video groups + /dev/dri/renderD128.
 Environment=WLR_BACKENDS=headless
 Environment=WLR_LIBINPUT_NO_DEVICES=1
 Environment=WLR_RENDERER=gles2
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 # The output mode + an optional core/ROM are applied by the session launcher
 # (it runs inside the session, so it can wlr-randr before RetroArch starts).
-ExecStart=/usr/bin/cage -- /usr/local/bin/mytesla-retroarch-session
+ExecStart=/usr/bin/cage -- /usr/local/bin/tesla-pi-retroarch-session
 Restart=on-failure
 RestartSec=3
 # RetroArch must never threaten the CarPlay service: if it misbehaves, the OOM
@@ -27,6 +27,6 @@ RestartSec=3
 OOMScoreAdjust=500
 
 [Install]
-# Intentionally no WantedBy: started on demand by /usr/local/sbin/mytesla-retroarch
+# Intentionally no WantedBy: started on demand by /usr/local/sbin/tesla-pi-retroarch
 # and torn down fully when the player leaves (RetroArch runs the core at 60 fps
-# even unwatched, so we don't keep it warm like Waydroid).
+# even unwatched, so it is never kept warm).

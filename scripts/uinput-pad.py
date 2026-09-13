@@ -4,7 +4,7 @@
 # retroarch-bridge.js spawns this and writes one JSON object per line to our
 # stdin; we translate each into a Linux evdev event on a /dev/uinput device.
 # RetroArch's `udev` joypad driver enumerates that device and binds it to a
-# RetroPad via the shipped autoconfig (conf/retroarch/autoconfig/mytesla-pad.cfg),
+# RetroPad via the shipped autoconfig (conf/retroarch/autoconfig/tesla-pi-pad.cfg),
 # which matches our name + VID/PID. The browser's on-screen overlay drives this
 # over the /retroarch/input WebSocket; a Bluetooth pad paired to the Pi is read
 # by the same udev driver directly, no code here.
@@ -16,7 +16,7 @@
 #   action ∈ down | up
 # Anything else is ignored (defensive — the WS is allowlisted on the JS side too).
 #
-# Needs /dev/uinput writable by group `input` (99-mytesla-uinput.rules) — the
+# Needs /dev/uinput writable by group `input` (99-tesla-pi-uinput.rules) — the
 # service user is already in that group.
 
 import sys
@@ -28,7 +28,7 @@ from evdev import UInput, ecodes as e
 # (a safe, non-colliding vendor); product/name are ours.
 VENDOR = 0x1d6b
 PRODUCT = 0x1337
-NAME = "mytesla-virtual-pad"
+NAME = "tesla-pi-virtual-pad"
 
 # Overlay/RetroPad button name → evdev key code. Note the RetroArch convention:
 # RetroPad "B" is the SOUTH button (confirm) and "A" is EAST — we expose the

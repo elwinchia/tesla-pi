@@ -1,0 +1,49 @@
+[Unit]
+Description=Nightingale karaoke server (self-hosted web mode)
+Documentation=https://github.com/elwinchia/tesla-pi/blob/main/docs/karaoke-addon.md
+# No network dependency worth ordering against: the server binds loopback only
+# and nginx (already up) is what the Tesla actually talks to. The AP may come
+# and go underneath us without this unit caring.
+
+[Service]
+Type=simple
+# Rewritten to the configured service user by scripts/install-karaoke-addon.sh.
+User=__TESLAPI_USER__
+Group=__TESLAPI_USER__
+
+# Loopback only. TLS is terminated by nginx on :8443 with the CarPlay-domain
+# cert (conf/nginx-karaoke.conf) — the karaoke app MUST be a secure context or
+# the browser refuses getUserMedia and pitch scoring is dead in the water.
+# 8088, not 8080: the CarPlay Node server already owns 8080.
+Environment=NIGHTINGALE_BIND=127.0.0.1:8088
+Environment=NIGHTINGALE_DATA_PATH=/var/lib/nightingale
+# Pinning the library makes the server configure a folder source and scan it on
+# startup, which also hides the in-app folder/Plex/Jellyfin pickers — a browser
+# file picker cannot hand the server an absolute path anyway, and there is no
+# keyboard in the car worth typing one on.
+Environment=NIGHTINGALE_LIBRARY_PATH=/var/lib/nightingale/songs
+# uv/pip/HuggingFace caches land next to the data instead of in a home dir the
+# sandbox below makes read-only.
+Environment=HOME=/var/lib/nightingale
+Environment=RUST_LOG=info,tower_http=warn,server=info
+
+ExecStart=/usr/local/bin/nightingale
+Restart=on-failure
+RestartSec=2s
+# Vendor downloads and analyser children want more than the default 1024.
+LimitNOFILE=65536
+
+# Karaoke must never threaten CarPlay: if memory gets tight the OOM killer
+# takes this unit first.
+OOMScoreAdjust=500
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/nightingale
+
+[Install]
+# Intentionally no WantedBy: started on demand by /usr/local/sbin/tesla-pi-karaoke
+# when the Karaoke tile is tapped, and stopped when the room goes quiet. Boot
+# time and idle RAM stay untouched for everyone who never sings.

@@ -3,6 +3,14 @@ node_modules/
 *.log
 .DS_Store
 
+# Image build: multi-GB working files and release artifacts. Never commit these
+# — a built image contains the shared certificate's PRIVATE KEY and the device
+# token (see SECURITY.md). They belong in GitHub Releases, not in git.
+/.image-build/
+/out/
+*.img
+*.img.xz
+
 # Claude Code workspace config (local tooling, absolute paths — not portable)
 .claude/
 
@@ -14,6 +22,10 @@ settings.local.json
 
 # Live AP config (contains real PSK / SSID); commit hostapd.conf.template instead
 conf/hostapd.conf
+
+# Builder's own first-boot config (real AP passphrase, home Wi-Fi, SSH password).
+# build-image.sh prefers this over the blank tracked tesla-pi.txt.
+image/overlay/boot/tesla-pi.local.txt
 
 # Documents the live AP credentials — keep on disk, do not push
 docs/hotspot-credentials.md
@@ -30,3 +42,16 @@ docs/*.apkm
 
 # Internal release checklist — local only
 /TODO.md
+
+# Certificate material and ACME state — NEVER commit (contains private keys).
+# Working files land here when issuing a cert by hand; the real copies live in
+# Workers KV and on the devices.
+*.pem
+*.key
+infra/cert-service/out/
+infra/cert-service/version.json
+infra/cert-service/.wrangler/
+
+# Python bytecode (scripts/*.py are run in place on the Pi)
+__pycache__/
+*.pyc

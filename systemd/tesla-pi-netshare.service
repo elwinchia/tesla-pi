@@ -1,0 +1,16 @@
+[Unit]
+Description=Internet sharing for AP clients (uplink-tracking DNS mode)
+After=hostapd.service dnsmasq.service network.target
+Wants=dnsmasq.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/tesla-pi
+ExecStart=/opt/tesla-pi/scripts/net-share.sh
+Restart=always
+RestartSec=15
+
+# Needs root to write /etc/dnsmasq.d and restart dnsmasq.
+
+[Install]
+WantedBy=multi-user.target

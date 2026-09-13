@@ -18,7 +18,7 @@ Status: **Phase 1 complete.** All validation gates green on bench (Pi Zero 2 W �
 
 - **DietPi** on Debian 13 (trixie), kernel `6.12.75+rpt-rpi-v8`, aarch64.
 - **Node 20.19.2** + npm 9.2.0, installed via Debian apt (`apt install nodejs npm`). NodeSource was attempted but DNS resolution to `deb.nodesource.com` failed at the time; Debian's packaged Node 20 LTS turned out to match the plan's recommendation, so no follow-up was needed.
-- Hostname `mytesla`, accessed at `<pi-lan-ip>` over LAN SSH with key auth.
+- Hostname `tesla-pi`, accessed at `<pi-lan-ip>` over LAN SSH with key auth.
 
 ### Installed apt packages (relevant)
 
@@ -38,7 +38,7 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="1314", MODE="0660", GROUP="plugdev"
 
 ### Application
 
-Repo: `~/mytesla/` on the Pi. Forked from `marcraft2/mytesla` and rewritten against `node-carplay@4.x`.
+Repo: `~/tesla-pi/` on the Pi. Forked from `marcraft2/tesla-pi` and rewritten against `node-carplay@4.x`.
 
 - `package.json` — ESM (`"type": "module"`), Node ≥20. Deps: `node-carplay@^4.1.0`, `ws@^8.18.0`. **`bluez` removed** (see *Audio routing* below).
 - `index.js` — full ESM rewrite using `CarplayNode` v4 API (`onmessage` event sink + `sendTouch({type, x, y})`); also serves `static/` over plain HTTP and proxies WS upgrades for both `/control`+`/video` and `/ws/control`+`/ws/video` (the latter for the original nginx-fronted layout, kept for forward compatibility).
@@ -58,7 +58,7 @@ const config = {
 ### Run
 
 ```bash
-cd ~/mytesla && npm start          # foreground
+cd ~/tesla-pi && npm start          # foreground
 # Browser: http://<pi-lan-ip>:8080/
 ```
 
@@ -101,7 +101,7 @@ The dongle does NOT brown out — `dmesg` shows no `over-current`/`under-voltage
 
 ### `node-carplay@2.x` (the upstream fork's pin) is dead on modern Node
 
-`mytesla` (marcraft2 fork) pinned `node-carplay@^2.0.9` and a transitive `usb@1.7.2`. The latter does not compile against any Node ≥18 V8 headers — `std::string_view` and `Template::Set` API drift. Confirmed by hitting it on Node 25 *and* the build chain stayed broken until we bumped to `node-carplay@4.1.0`.
+`tesla-pi` (marcraft2 fork) pinned `node-carplay@^2.0.9` and a transitive `usb@1.7.2`. The latter does not compile against any Node ≥18 V8 headers — `std::string_view` and `Template::Set` API drift. Confirmed by hitting it on Node 25 *and* the build chain stayed broken until we bumped to `node-carplay@4.1.0`.
 
 The plan's "alternative path" (mine the handler from `react-carplay`) was avoided — the v4 API is clean enough that a direct rewrite of `marcraft2`'s `index.js` against `CarplayNode` was ~130 lines and worked the same evening. Approximate cost: 30 minutes once the API was understood (vs the plan's 4–8 h budget).
 

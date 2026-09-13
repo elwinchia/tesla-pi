@@ -1,33 +1,37 @@
 #!/bin/bash
-# Long-running watcher: when no STA is associated for IDLE_THRESHOLD seconds,
-# flip wlan0 from AP to client mode, join home Wi-Fi, pull a fresh shared cert
-# from the cert service (scripts/cert-sync.sh), then restore the AP. Triggered
-# by physically moving the Pi indoors and powering it on; in the car the Tesla
-# associates within minutes so the idle timer never reaches threshold.
+# Long-running watcher with two ways to pick up a fresh shared cert from the
+# cert service (scripts/cert-sync.sh):
+#
+#   1. Whenever the device has an uplink that isn't its own AP — eth0, a second
+#      Wi-Fi adapter, a USB tether — sync in place. Nothing is torn down, so
+#      this runs on every transition to online (and again every backoff window
+#      while it stays online). This is the normal path for a Pi that is docked,
+#      plugged in, or otherwise on a network.
+#   2. Otherwise, when no STA has been associated for IDLE_THRESHOLD seconds,
+#      flip wlan0 from AP to client mode, join home Wi-Fi, sync, restore the AP.
+#      Triggered by physically moving the Pi indoors and powering it on; in the
+#      car the Tesla associates within minutes so the idle timer never reaches
+#      threshold.
 #
 # The device holds no Cloudflare credential — issuance happens centrally
 # (.github/workflows/renew-cert.yml). See docs/turnkey-shared-domain-plan.md.
 
 set -uo pipefail
 
-: "${CARPLAY_DOMAIN:?CARPLAY_DOMAIN must be set in /etc/default/mytesla}"
+LOG_TAG=cert-renew-watch
+. "$(dirname "$(readlink -f "$0")")/cert-renew-lib.sh"
 
 CERT="/etc/letsencrypt/live/${CARPLAY_DOMAIN}/fullchain.pem"
-HOME_WPA="/etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf"
-CERT_SYNC="${CERT_SYNC:-/opt/mytesla/scripts/cert-sync.sh}"
-AP_IP="192.168.4.254/24"
 IDLE_THRESHOLD=600                  # 10 min
 POLL_INTERVAL=60
-# How long to wait after a sync attempt before flipping again. Unlike the old
+# How long to wait after a sync attempt before trying again. Unlike the old
 # certbot path we no longer gate on cert file age: the service decides when a
 # new version exists, so an offline-for-months device picks one up on its first
 # idle window instead of waiting out an age threshold.
 RETRY_BACKOFF_S="${CERT_SYNC_BACKOFF_S:-21600}"   # 6 h
-WPA_TIMEOUT=30
-DHCP_TIMEOUT=30
-LOCK_FILE="/var/lock/mytesla-cert-flip"  # shared with scripts/cert-renew-now.sh
-
-log() { logger -t cert-renew-watch -- "$*"; printf '[%s] %s\n' "$(date -Iseconds)" "$*" >&2; }
+# Shorter retry for the in-place path when a sync fails while a route exists
+# (captive portal, DNS not up yet). Nothing is torn down, so retrying is cheap.
+ONLINE_RETRY_S="${CERT_SYNC_ONLINE_RETRY_S:-600}" # 10 min
 
 cert_days_remaining() {
   [ -f "$CERT" ] || { echo -1; return; }
@@ -37,66 +41,93 @@ cert_days_remaining() {
   echo $(( (epoch - $(date +%s)) / 86400 ))
 }
 
+# Prints a bare integer, or NOTHING when hostapd_cli cannot attach (missing
+# ctrl_interface, socket gone, hostapd down). The caller must treat empty as
+# "assume the car is here": this gate is the only thing standing between a
+# connected Tesla and the AP being torn out from under it.
+HOSTAPD_CLI="$(command -v hostapd_cli 2>/dev/null || echo /usr/sbin/hostapd_cli)"
 sta_count() {
-  hostapd_cli -i wlan0 list_sta 2>/dev/null | grep -cE '^[0-9a-f]{2}:' || true
-}
-
-restore_ap() {
-  log "restoring AP"
-  pkill -x dhclient 2>/dev/null || true
-  pkill -x wpa_supplicant 2>/dev/null || true
-  ip addr flush dev wlan0 2>/dev/null || true
-  ip link set wlan0 down 2>/dev/null || true
-  ip link set wlan0 up
-  ip addr add "$AP_IP" dev wlan0
-  systemctl start dnsmasq
-  systemctl start hostapd
-}
-
-attempt_renewal() {
-  log "tearing down AP for renewal"
-  systemctl stop hostapd
-  systemctl stop dnsmasq
-  ip addr flush dev wlan0
-  ip link set wlan0 down
-  ip link set wlan0 up
-
-  log "associating to home Wi-Fi"
-  if ! timeout "$WPA_TIMEOUT" wpa_supplicant -B -i wlan0 -c "$HOME_WPA" -D nl80211 >/dev/null 2>&1; then
-    log "wpa_supplicant failed to start"
-    return 1
-  fi
-  # wpa_supplicant -B forks; give it a moment to associate.
-  sleep 5
-
-  if ! timeout "$DHCP_TIMEOUT" dhclient -1 wlan0 >/dev/null 2>&1; then
-    log "dhcp failed (home Wi-Fi unreachable?)"
-    return 1
-  fi
-
-  log "syncing certificate from the cert service"
-  # cert-sync.sh: 0 = installed a newer cert, 2 = already current, 1 = failed.
-  # It touches /run/cert-renew.deployed on success; the caller reloads nginx.
-  "$CERT_SYNC"
-  local rc=$?
-  case "$rc" in
-    0) log "cert updated" ;;
-    2) log "cert already current" ;;
-    *) log "cert sync failed (rc=$rc)" ;;
-  esac
-  return "$rc"
+  local out
+  out="$("$HOSTAPD_CLI" -i wlan0 list_sta 2>/dev/null)" || return 0
+  printf '%s' "$out" | grep -cE '^[0-9a-f]{2}:'
 }
 
 # ---------- main loop ----------
 
-log "watcher started; idle_threshold=${IDLE_THRESHOLD}s sync_backoff=${RETRY_BACKOFF_S}s"
+log "watcher started; idle_threshold=${IDLE_THRESHOLD}s sync_backoff=${RETRY_BACKOFF_S}s online_retry=${ONLINE_RETRY_S}s"
 
 idle=0
 last_attempt=0
+last_online_sync=0
+online_wait=$RETRY_BACKOFF_S   # how long to wait before the next in-place sync
+was_online=0
+defer_logged=0
+unknown_sta_logged=0
 while true; do
   sleep "$POLL_INTERVAL"
 
-  if [ "$(sta_count)" -gt 0 ]; then
+  # ---- pending reload: retry every tick so a new cert goes live the moment
+  # the screen stops streaming. Costs one loopback GET while the flag exists.
+  if [ -f "$DEPLOYED_FLAG" ]; then
+    ( flock -n 9 || exit 9; reload_nginx_if_deployed ) 9>"$LOCK_FILE"
+    case "$?" in
+      3) [ "$defer_logged" -eq 0 ] && { log "new cert staged; holding the nginx reload while the screen is streaming"; defer_logged=1; } ;;
+      *) defer_logged=0 ;;
+    esac
+  fi
+
+  # ---- path 1: an uplink is up, so sync without touching the AP ----
+  # Every transition offline→online gets an immediate attempt (that is what
+  # "renews whenever it connects to the internet" means), then at most once per
+  # RETRY_BACKOFF_S while the link stays up. Costs nothing visible: hostapd,
+  # dnsmasq and the Tesla's association are all untouched.
+  uplink="$(uplink_iface)"
+  if [ -n "$uplink" ]; then
+    now=$(date +%s)
+    if [ "$was_online" -eq 0 ] || [ $(( now - last_online_sync )) -ge "$online_wait" ]; then
+      [ "$was_online" -eq 0 ] && log "uplink up on ${uplink}; cert has $(cert_days_remaining)d remaining"
+      was_online=1
+      last_online_sync=$now
+      # Same lock as the AP-flip path: both write the cert files and reload
+      # nginx. -n so a manual renewal in flight just defers us.
+      (
+        flock -n 9 || { log "another renewal in flight; skipping online sync"; exit 9; }
+        run_sync
+        src=$?
+        [ "$src" -eq 0 ] && reload_nginx_if_deployed
+        exit "$src"
+      ) 9>"$LOCK_FILE"
+      src=$?
+      # A route is not proof of reachability (captive portal, DNS still coming
+      # up, service down). Don't sit out a full backoff window on a failure.
+      if [ "$src" -eq 0 ] || [ "$src" -eq 2 ]; then
+        online_wait=$RETRY_BACKOFF_S
+      else
+        online_wait=$ONLINE_RETRY_S
+      fi
+    fi
+    # An uplink makes the AP flip pointless — the cert is reachable already.
+    idle=0
+    continue
+  fi
+  if [ "$was_online" -eq 1 ]; then
+    log "uplink lost; falling back to the idle AP-flip path"
+    was_online=0
+  fi
+
+  # ---- path 2: no uplink — flip the AP once the Tesla has been gone a while ----
+  sta="$(sta_count)"
+  if [ -z "$sta" ]; then
+    # Unknown, not zero. Never flip the AP on a number we could not read.
+    if [ "$unknown_sta_logged" -eq 0 ]; then
+      log "cannot read hostapd station count; holding the AP up (check ctrl_interface in hostapd.conf)"
+      unknown_sta_logged=1
+    fi
+    idle=0
+    continue
+  fi
+  unknown_sta_logged=0
+  if [ "$sta" -gt 0 ]; then
     if [ "$idle" -gt 0 ]; then
       log "STA reconnected; idle counter reset"
     fi
@@ -129,11 +160,7 @@ while true; do
     attempt_renewal
     arc=$?
     restore_ap
-    if [ "$arc" -eq 0 ] && [ -f /run/cert-renew.deployed ]; then
-      rm -f /run/cert-renew.deployed
-      log "reloading nginx"
-      nginx -s reload || log "nginx reload failed"
-    fi
+    [ "$arc" -eq 0 ] && reload_nginx_if_deployed
     exit "$arc"
   ) 9>"$LOCK_FILE"
   idle=0

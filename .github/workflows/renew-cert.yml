@@ -3,13 +3,13 @@
 # This is the ONLY place the Cloudflare DNS token exists. Devices never hold it —
 # they pull the finished cert from the Worker (infra/cert-service).
 #
-# Stateless by design: each run reads the currently published expiry from R2 and
+# Stateless by design: each run reads the currently published expiry from KV and
 # only issues a fresh cert when remaining life drops below RENEW_BEFORE_DAYS.
-# Nothing is persisted between runs except the artefacts in R2.
+# Nothing is persisted between runs except the artefacts in KV.
 #
 # Required repository secrets:
 #   CLOUDFLARE_DNS_TOKEN  - Zone/DNS/Edit on humblebees.co ONLY (for DNS-01)
-#   CLOUDFLARE_API_TOKEN  - Workers R2 read/write (used by wrangler)
+#   CLOUDFLARE_API_TOKEN  - Workers KV read/write (used by wrangler)
 #   CLOUDFLARE_ACCOUNT_ID - Cloudflare account id
 #   ACME_EMAIL            - contact address for the Let's Encrypt account
 
@@ -26,8 +26,10 @@ on:
         default: false
 
 env:
-  CERT_DOMAIN: device.mytesla.humblebees.co
-  R2_BUCKET: mytesla-certs
+  CERT_DOMAIN: device.tesla-pi.humblebees.co
+  # Workers KV namespace holding the published cert (binding CERTS in
+  # infra/cert-service/wrangler.toml). Set to the namespace id.
+  KV_NAMESPACE_ID: 77bd43b9a2304b369a0f0e8173bcaf33
   # Renewal cadence. CA lifetimes are shrinking industry-wide (~47 days by 2029),
   # so this is a config value rather than an assumption. Must stay comfortably
   # below the cert's total lifetime to leave devices a wide catch-up window.
@@ -49,8 +51,9 @@ jobs:
           due=yes
           if [ "${{ inputs.force }}" = "true" ]; then
             echo "forced via workflow_dispatch"
-          elif npx --yes wrangler@3 r2 object get "$R2_BUCKET/version.json" \
-                 --file=current.json --remote 2>/dev/null && [ -s current.json ]; then
+          elif npx --yes wrangler@4 kv key get version.json \
+                 --namespace-id "$KV_NAMESPACE_ID" --remote > current.json 2>/dev/null \
+                 && [ -s current.json ]; then
             not_after=$(jq -r '.not_after // empty' current.json)
             if [ -n "$not_after" ]; then
               remaining=$(( ( $(date -u -d "$not_after" +%s) - $(date -u +%s) ) / 86400 ))
@@ -99,12 +102,15 @@ jobs:
           sudo chmod -R a+rX out
           # Fail loudly rather than publishing a mismatched pair that would stop
           # nginx from starting on every device.
-          c=$(sudo openssl x509 -in "$live/fullchain.pem" -noout -pubkey | openssl sha256)
-          k=$(sudo openssl pkey -in "$live/privkey.pem" -pubout | openssl sha256)
+          c=$(sudo openssl x509 -in "$live/fullchain.pem" -noout -pubkey | openssl sha256 | awk '{print $NF}')
+          k=$(sudo openssl pkey -in "$live/privkey.pem" -pubout | openssl sha256 | awk '{print $NF}')
+          # Require both to be NON-EMPTY as well as equal: if both openssl calls
+          # fail, two empty strings compare equal and a broken pair sails through.
+          [ -n "$c" ] && [ -n "$k" ] || { echo "could not read cert or key — refusing to publish"; exit 1; }
           [ "$c" = "$k" ] || { echo "cert/key mismatch — refusing to publish"; exit 1; }
           sudo openssl x509 -in "$live/fullchain.pem" -noout -subject -dates
 
-      - name: Publish to R2
+      - name: Publish to KV
         if: steps.check.outputs.due == 'yes'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -126,7 +132,8 @@ jobs:
           # mid-publish then sees the old version and simply retries later,
           # rather than fetching a half-updated pair.
           for f in fullchain.pem privkey.pem version.json; do
-            npx --yes wrangler@3 r2 object put "$R2_BUCKET/$f" \
-              --file="$f" --remote
+            npx --yes wrangler@4 kv key put "$f" \
+              --path="$f" --namespace-id "$KV_NAMESPACE_ID" --remote \
+              --metadata "{\"version\":\"$version\"}"
           done
           echo "published version $version (expires $not_after_iso)"

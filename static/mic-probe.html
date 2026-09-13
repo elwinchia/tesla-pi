@@ -1,0 +1,1053 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Cabin mic probe</title>
+<!--
+  Diagnostic page, not part of the product UI. Served from static/ so it needs
+  no route of its own: https://<device>/mic-probe.html
+
+  Tesla software 2026.26 gave the in-car browser access to the cabin microphone
+  ("Tap to grant permissions when a website requests access"). The camera is
+  documented as parked-only; the microphone is not — which, if true, means this
+  page can hand CarPlay the microphone it has been missing, with no Bluetooth
+  pairing, no HFP gateway, and no USB hardware.
+
+  That "if true" is the whole point of this page. It answers, in the car:
+    * which Chromium the car actually runs
+    * whether getUserMedia resolves at all, and what the grant prompt does
+    * whether it still works IN DRIVE (the critical unknown)
+    * what the stream really is — rate, channels, and whether the echo
+      cancellation we would need is honoured
+    * whether real audio flows, measured, not assumed
+    * whether the grant survives reload / sleep, and sticks to our origin
+
+  Everything is measured client-side and shown large enough to read from the
+  driver's seat. "Send to the Pi" is there so none of it has to be transcribed
+  off the screen by hand.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 40px;
+    background: #0b0c0e; color: #f2f3f5;
+    font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #8a8f97; font-size: 14px; margin-bottom: 18px; }
+  .card {
+    background: #16181c; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #8a8f97; font-weight: 500;
+             text-transform: uppercase; letter-spacing: 0.06em; }
+  button {
+    -webkit-appearance: none; appearance: none;
+    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px; padding: 16px 20px; font-size: 17px; font-weight: 500;
+    width: 100%; margin-bottom: 10px; touch-action: manipulation;
+  }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; }
+  button:disabled { opacity: 0.45; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row button { width: auto; flex: 1 1 140px; }
+  .kv { display: grid; grid-template-columns: minmax(120px, 34%) 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: #8a8f97; }
+  .kv dd { margin: 0; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .verdict { font-size: 30px; font-weight: 600; margin: 8px 0 2px; }
+  .v-AUDIO  { color: #46a758; }
+  .v-FAINT  { color: #e8a13a; }
+  .v-SILENT { color: #e5484d; }
+  .v-none   { color: #8a8f97; }
+  .meter { height: 26px; border-radius: 8px; background: #24262b; overflow: hidden; margin: 10px 0; }
+  .meter > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg,#46a758,#e8a13a); }
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg button { flex: 1; font-size: 15px; padding: 12px; }
+  .seg button[aria-pressed="true"] { background: #3b5bdb; border-color: #4c6ef5; }
+  pre {
+    background: #0e1013; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 12px; font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 0;
+  }
+  .hint { color: #8a8f97; font-size: 13px; margin: 6px 0 0; }
+  .big { font-size: 18px; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>Cabin mic probe</h1>
+<div class="sub" id="origin"></div>
+
+<div class="card">
+  <h2>1 · Conditions</h2>
+  <p class="hint" style="margin-top:0">Tap what the car is doing right now — it goes in the report.
+     The interesting run is <b>in Drive</b>: the camera is parked-only, and nobody has
+     confirmed whether the microphone is too.</p>
+  <div class="seg" id="gear">
+    <button data-gear="park" aria-pressed="true">Parked</button>
+    <button data-gear="drive" aria-pressed="false">Driving</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2 · Microphone</h2>
+  <button class="go" id="ask">Ask for the microphone</button>
+  <p class="hint">The car should show a permission prompt. Choose <b>Allow</b>.</p>
+  <dl class="kv" id="stream-info"></dl>
+</div>
+
+<div class="card">
+  <h2>3 · Does it actually hear you?</h2>
+  <button class="go" id="record" disabled>Record 5 seconds — then talk</button>
+  <div class="meter"><i id="meter-fill"></i></div>
+  <div class="verdict v-none" id="verdict">not run</div>
+  <dl class="kv" id="capture-info"></dl>
+</div>
+
+<div class="card">
+  <h2>4 · Can it cancel our own audio?</h2>
+  <p class="hint" style="margin-top:0">The car plays a tone out loud for a few seconds,
+     twice over. Set the media volume to a normal listening level first — if the
+     microphone cannot hear the tone at all, the measurement means nothing.</p>
+  <button class="go" id="aec" disabled>Measure echo cancellation</button>
+  <div class="verdict v-none" id="aec-verdict">not run</div>
+  <dl class="kv" id="aec-info"></dl>
+  <p class="hint">This is the test that decides whether the browser microphone can carry
+     a call at all. With no cancellation the far end hears their own voice coming back
+     out of the cabin speakers.</p>
+</div>
+
+<div class="card">
+  <h2>5 · Does it survive leaving the page?</h2>
+  <button class="go" id="bgwatch" disabled>Start background watch</button>
+  <p class="hint">Then switch to navigation or the media player for ~15 seconds and come
+     back here. If the microphone stops when the page isn't on screen, a phone call
+     can't be held no matter what else works.</p>
+  <dl class="kv" id="bg-info"></dl>
+</div>
+
+<div class="card">
+  <h2>6 · Does the permission stick?</h2>
+  <div class="row">
+    <button id="reload">Reload page</button>
+    <button id="recheck">Re-check state</button>
+  </div>
+  <p class="hint">After a reload it should say <b>granted</b> without prompting again.
+     Worth repeating after the car has slept.</p>
+  <dl class="kv" id="perm-info"></dl>
+</div>
+
+<div class="card">
+  <h2>7 · The cancellation modes this Chromium offers</h2>
+  <p class="hint" style="margin-top:0">Section 4 only asks for <code>echoCancellation: true</code>,
+     which cancels the far end of a WebRTC call and nothing else. This car also offers
+     <code>"all"</code> — cancel everything the system renders, which is what our own
+     audio is. Each mode gets the same tone, then a few seconds where you talk, so a
+     mode that cancels our audio can be told apart from one that returns a dead stream.
+     Keep the media volume where you had it for section 4.</p>
+  <button class="go" id="modes" disabled>Test every cancellation mode</button>
+  <div class="verdict v-none" id="modes-verdict">not run</div>
+  <dl class="kv" id="modes-info"></dl>
+  <p class="hint">A mode is usable for calls only if it hears <b>you</b> and not <b>us</b>.</p>
+</div>
+
+<div class="card">
+  <h2>8 · Send it back</h2>
+  <button id="send">Send results to the Pi</button>
+  <p class="hint" id="send-hint">Saves the report (and the recording) on the Pi so nothing
+     has to be read off this screen. Needs <code>MIC_PROBE_DIR</code> set on the server.</p>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <pre id="log"></pre>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Same thresholds as scripts/bt-probe-util.py, deliberately: the browser mic
+  // and the Bluetooth mic get judged by one yardstick, so their results are
+  // directly comparable.
+  const SILENT_DBFS = -60;
+  const FAINT_DBFS = -45;
+  const CAPTURE_SECONDS = 5;
+
+  // Ask for what SendAudio ultimately wants (16 kHz mono) but treat the
+  // constraints as a preference, not a demand — Chromium is free to hand back
+  // 48 kHz and let us resample, and a hard constraint would just fail.
+  const MIC_CONSTRAINTS = {
+    audio: {
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 16000 },
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+    },
+  };
+
+  const report = {
+    startedAt: new Date().toISOString(),
+    origin: location.origin,
+    userAgent: navigator.userAgent,
+    gear: 'park',
+    steps: [],
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+
+  function log(msg, data) {
+    const line = new Date().toISOString().slice(11, 19) + '  ' + msg
+      + (data === undefined ? '' : '  ' + JSON.stringify(data));
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+    report.steps.push({ t: new Date().toISOString(), msg, data: data ?? null });
+  }
+
+  function kv(el, pairs) {
+    el.innerHTML = '';
+    for (const [k, v] of pairs) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      el.append(dt, dd);
+    }
+  }
+
+  $('origin').textContent = location.origin;
+  log('page loaded', { ua: navigator.userAgent });
+
+  // Chromium version is the other half of the peer's question: 2026.14 moved the
+  // engine 136 -> 140, which raises the floor for everything else we stream.
+  const chrome = /Chrome\/([\d.]+)/.exec(navigator.userAgent);
+  report.chromium = chrome ? chrome[1] : null;
+  log('chromium', report.chromium || 'not a Chrome UA');
+  if (!window.isSecureContext) {
+    log('WARNING: not a secure context — getUserMedia will refuse regardless of the car');
+  }
+
+  // ── conditions ───────────────────────────────────────────────────────────
+  for (const b of document.querySelectorAll('#gear button')) {
+    b.addEventListener('click', () => {
+      for (const o of document.querySelectorAll('#gear button')) o.setAttribute('aria-pressed', 'false');
+      b.setAttribute('aria-pressed', 'true');
+      report.gear = b.dataset.gear;
+      log('condition', report.gear);
+    });
+  }
+
+  // ── permission state ─────────────────────────────────────────────────────
+  async function permState() {
+    if (!navigator.permissions || !navigator.permissions.query) return 'unsupported';
+    try {
+      const st = await navigator.permissions.query({ name: 'microphone' });
+      return st.state;
+    } catch (err) {
+      return 'query-failed: ' + err.name;
+    }
+  }
+
+  async function devices(tag) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    const list = await navigator.mediaDevices.enumerateDevices();
+    // Labels are blank until a grant exists — that transition is itself the
+    // evidence that the grant took effect.
+    const out = list.map((d) => ({ kind: d.kind, label: d.label || '(hidden)', id: d.deviceId.slice(0, 8) }));
+    log('devices ' + tag, out);
+    return out;
+  }
+
+  async function refreshPerm() {
+    const state = await permState();
+    report.permissionState = state;
+    kv($('perm-info'), [
+      ['Permission', state],
+      ['Secure context', String(window.isSecureContext)],
+      ['Origin', location.origin],
+    ]);
+    log('permission state', state);
+    return state;
+  }
+
+  $('recheck').addEventListener('click', refreshPerm);
+  $('reload').addEventListener('click', () => location.reload());
+
+  // ── getUserMedia ─────────────────────────────────────────────────────────
+  let stream = null;
+
+  async function ask() {
+    $('ask').disabled = true;
+    report.devicesBefore = await devices('before');
+    const before = await refreshPerm();
+    report.permissionBefore = before;
+
+    log('requesting getUserMedia', MIC_CONSTRAINTS);
+    const t0 = performance.now();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+    } catch (err) {
+      report.getUserMediaError = { name: err.name, message: err.message };
+      log('getUserMedia FAILED', report.getUserMediaError);
+      kv($('stream-info'), [['Result', err.name], ['Detail', err.message]]);
+      $('ask').disabled = false;
+      // NotAllowedError after a visible prompt is a refusal; without one it is
+      // usually policy. Worth saying, because they mean different things for us.
+      if (err.name === 'NotAllowedError') {
+        log('note', 'denied — if no prompt appeared, the car blocked it rather than you');
+      }
+      return;
+    }
+    const ms = Math.round(performance.now() - t0);
+    const track = stream.getAudioTracks()[0];
+    const settings = track.getSettings ? track.getSettings() : {};
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    report.grantMs = ms;
+    report.track = { label: track.label, settings, capabilities: caps };
+    report.devicesAfter = await devices('after');
+    report.permissionAfter = await permState();
+
+    kv($('stream-info'), [
+      ['Result', 'granted in ' + ms + ' ms'],
+      ['Device', track.label || '(unlabelled)'],
+      ['Sample rate', (settings.sampleRate || '?') + ' Hz'],
+      ['Channels', settings.channelCount || '?'],
+      ['Echo cancel', settings.echoCancellation ?? '?'],
+      ['Noise suppress', settings.noiseSuppression ?? '?'],
+      ['Auto gain', settings.autoGainControl ?? '?'],
+    ]);
+    log('granted', { ms, label: track.label, settings });
+    $('record').disabled = false;
+    $('aec').disabled = false;
+    $('bgwatch').disabled = false;
+    $('modes').disabled = !(navigator.mediaDevices.getSupportedConstraints() || {}).echoCancellation;
+  }
+
+  $('ask').addEventListener('click', ask);
+
+  // ── capture ──────────────────────────────────────────────────────────────
+  // Float32 frames are collected through an AudioWorklet where available, since
+  // that is what a production mic path would use, and through the deprecated
+  // ScriptProcessor otherwise — a diagnostic that refuses to run on the one
+  // browser it was written for would be useless.
+  const WORKLET = `
+    class Tap extends AudioWorkletProcessor {
+      process(inputs) {
+        const ch = inputs[0][0];
+        if (ch) this.port.postMessage(ch.slice(0));
+        return true;
+      }
+    }
+    registerProcessor('tap', Tap);
+  `;
+
+  // Frame bookkeeping, shared with the backgrounding test below: whether audio
+  // keeps arriving when the driver switches to navigation is the difference
+  // between "we can hold a call" and "we cannot".
+  const tap = { frames: 0, samples: 0, lastFrameAt: 0 };
+
+  async function captureFrames(src, ctx, seconds, onLevel, mode) {
+    const chunks = [];
+    let node = null;
+    let usingWorklet = false;
+    let collected = 0;
+    let check = () => {};
+    const note = (n) => {
+      collected += n;
+      tap.frames++;
+      tap.samples += n;
+      tap.lastFrameAt = Date.now();
+      check();
+    };
+
+    if (ctx.audioWorklet) {
+      try {
+        const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+        await ctx.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+        node = new AudioWorkletNode(ctx, 'tap');
+        node.port.onmessage = (e) => { chunks.push(e.data); note(e.data.length); onLevel(rms(e.data)); };
+        usingWorklet = true;
+      } catch (err) {
+        log('AudioWorklet unavailable, falling back', { name: err.name });
+        node = null;
+      }
+    }
+    if (!node) {
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = (e) => {
+        const d = e.inputBuffer.getChannelData(0).slice(0);
+        chunks.push(d); note(d.length); onLevel(rms(d));
+      };
+    }
+    report.captureMethod = usingWorklet ? 'AudioWorklet' : 'ScriptProcessorNode';
+    log('capture via', report.captureMethod);
+
+    src.connect(node);
+    // ScriptProcessor needs a sink to pump; a zero-gain one keeps it silent so
+    // the car does not play the driver's own voice back at them.
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    node.connect(sink);
+    sink.connect(ctx.destination);
+
+    // Finishing is driven by audio frames and by the page coming back on
+    // screen — never by a timer alone. A hidden tab has its timers throttled to
+    // roughly once a minute, so a clock-based capture hangs at "recording…"
+    // exactly when it matters most: the moment the driver glances at
+    // navigation. The timer below is only a backstop for the case where audio
+    // never arrives at all.
+    const target = Math.floor(seconds * ctx.sampleRate);
+    const startedAt = Date.now();
+    let sawHidden = document.visibilityState === 'hidden';
+    let settled = false;
+    let finish = () => {};
+    let cleanup = () => {};
+
+    const why = await new Promise((resolve) => {
+      finish = (reason) => { if (!settled) { settled = true; resolve(reason); } };
+      check = () => { if (mode !== 'return' && collected >= target) finish('complete'); };
+      const backstop = setTimeout(() => finish('timeout'), seconds * 1000 + 5000);
+      const onVis = () => {
+        if (document.visibilityState === 'hidden') { sawHidden = true; return; }
+        // Back on screen. In 'return' mode give it a few more seconds so the
+        // resumed stream is visible in the numbers; otherwise stop now and
+        // report the truth about what was collected while away.
+        if (mode === 'return') setTimeout(() => finish('returned'), 3000);
+        else if (sawHidden) finish('returned');
+      };
+      document.addEventListener('visibilitychange', onVis);
+      cleanup = () => { clearTimeout(backstop); document.removeEventListener('visibilitychange', onVis); };
+      check();
+    });
+    cleanup();
+
+    try { src.disconnect(node); node.disconnect(); sink.disconnect(); } catch (e) {}
+    const shortfall = mode !== 'return' && collected < target;
+    if (shortfall) {
+      log('capture cut short', {
+        why, got: collected, want: target, contextState: ctx.state,
+        hidden: sawHidden, elapsedS: +((Date.now() - startedAt) / 1000).toFixed(1),
+      });
+      if (collected === 0) {
+        log('NOTE: no audio frames arrived at all. Keep this page on screen while'
+            + ' recording — a backgrounded tab has its audio suspended.');
+      }
+    }
+    report.captureOutcome = { why, shortfall, frames: tap.frames };
+    return chunks;
+  }
+
+  function rms(buf) {
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    return Math.sqrt(sum / buf.length);
+  }
+
+  function dbfs(v) { return v > 0 ? 20 * Math.log10(v) : -Infinity; }
+
+  function verdictFor(rmsDb, zeroFrac) {
+    if (!isFinite(rmsDb) || zeroFrac > 0.99) return ['SILENT', 'digital silence — the stream carried nothing'];
+    if (rmsDb < SILENT_DBFS) return ['SILENT', 'essentially silent'];
+    if (rmsDb < FAINT_DBFS) return ['FAINT', 'something is there, but it could be road noise'];
+    return ['AUDIO', 'the car is hearing you'];
+  }
+
+  function toWav(float32, rate) {
+    const n = float32.length;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const view = new DataView(buf);
+    const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); view.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    str(36, 'data'); view.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  // Browsers only start audio from a user gesture, and a resume() that has no
+  // gesture behind it can simply never settle — which would leave this page
+  // frozen at "recording…" with nothing on screen to explain why. Race it, then
+  // carry on and report the context's real state either way.
+  async function openContext() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    if (ctx.state === 'suspended') {
+      const how = await Promise.race([
+        ctx.resume().then(() => 'resumed', (e) => 'resume failed: ' + e.name),
+        new Promise((r) => setTimeout(() => r('resume did not settle'), 1500)),
+      ]);
+      log('audio context', { state: ctx.state, resume: how, sampleRate: ctx.sampleRate });
+    }
+    if (ctx.state !== 'running') {
+      log('WARNING: audio context is ' + ctx.state
+          + ' — tap the button again. Audio only starts from a tap, and only'
+          + ' while this page is on screen.');
+    }
+    return ctx;
+  }
+
+  let wavBlob = null;
+
+  async function record() {
+    $('record').disabled = true;
+    $('verdict').textContent = 'recording…';
+    $('verdict').className = 'verdict v-none';
+
+    const ctx = await openContext();
+    const src = ctx.createMediaStreamSource(stream);
+
+    let peakLive = 0;
+    const chunks = await captureFrames(src, ctx, CAPTURE_SECONDS, (level) => {
+      peakLive = Math.max(peakLive * 0.92, level);
+      $('meter-fill').style.width = Math.min(100, peakLive * 300) + '%';
+    });
+
+    const total = chunks.reduce((a, c) => a + c.length, 0);
+    const all = new Float32Array(total);
+    let off = 0;
+    for (const c of chunks) { all.set(c, off); off += c.length; }
+
+    let peak = 0, zeros = 0;
+    for (let i = 0; i < all.length; i++) {
+      const a = Math.abs(all[i]);
+      if (a > peak) peak = a;
+      if (all[i] === 0) zeros++;
+    }
+    const rmsDb = dbfs(rms(all));
+    const peakDb = dbfs(peak);
+    const zeroFrac = total ? zeros / total : 1;
+    const [tag, why] = verdictFor(rmsDb, zeroFrac);
+
+    report.capture = {
+      seconds: +(total / ctx.sampleRate).toFixed(2),
+      contextSampleRate: ctx.sampleRate,
+      frames: total,
+      peakDbfs: isFinite(peakDb) ? +peakDb.toFixed(1) : null,
+      rmsDbfs: isFinite(rmsDb) ? +rmsDb.toFixed(1) : null,
+      zeroFraction: +zeroFrac.toFixed(4),
+      verdict: tag,
+      gear: report.gear,
+    };
+
+    $('verdict').textContent = tag;
+    $('verdict').className = 'verdict v-' + tag;
+    kv($('capture-info'), [
+      ['Meaning', why],
+      ['Length', report.capture.seconds + ' s'],
+      ['Context rate', ctx.sampleRate + ' Hz'],
+      ['Peak', (report.capture.peakDbfs ?? '−∞') + ' dBFS'],
+      ['RMS', (report.capture.rmsDbfs ?? '−∞') + ' dBFS'],
+      ['Zero samples', (zeroFrac * 100).toFixed(1) + ' %'],
+      ['Condition', report.gear],
+    ]);
+    log('capture', report.capture);
+
+    wavBlob = toWav(all, ctx.sampleRate);
+    log('wav built', { bytes: wavBlob.size });
+    try { ctx.close(); } catch (e) {}
+    $('record').disabled = false;
+  }
+
+  $('record').addEventListener('click', record);
+
+  // ── echo cancellation ────────────────────────────────────────────────────
+  // Whether this microphone can carry a call comes down to this section, not to
+  // the permission prompt. The cabin mic shares an enclosure with the speakers
+  // CarPlay audio comes out of, so with no cancellation the far end hears itself
+  // back. `getSettings().echoCancellation` in section 2 only reports that the
+  // constraint was accepted — it says nothing about whether Chromium's canceller
+  // can see audio *this page* renders through an AudioWorklet, which is how our
+  // audio reaches the car. That has to be measured:
+  //
+  //   1. record the cabin with the speakers silent           -> floor
+  //   2. play a tone out of the car and record it, AEC on    -> echo, cancelled
+  //   3. the same tone again, AEC explicitly off             -> echo, raw
+  //
+  // The gap between 3 and 2 is ERLE: how much of our own audio the canceller
+  // took out. Step 3 needs a second getUserMedia call because cancellation
+  // cannot be toggled on a track that is already running.
+  //
+  // The tone is snapped to an exact bin of the analysis window, so a Goertzel
+  // reads its level with no spectral leakage and no windowing correction.
+  const AEC_SECONDS = 3;
+  const AEC_TONE_HZ = 1000;
+  const AEC_TONE_GAIN = 0.2;
+  const AEC_SETTLE_MS = 800;   // let the canceller converge before the scored window
+  const AEC_GOOD_DB = 15;      // ERLE at or above this and a call is viable
+  const AEC_WEAK_DB = 6;
+  const AEC_AUDIBLE_DB = 10;   // the uncancelled tone must clear the floor by this much
+
+  const AEC_CLASS = { WORKING: 'AUDIO', WEAK: 'FAINT', NONE: 'SILENT', INCONCLUSIVE: 'none' };
+
+  let syntheticStream = false;
+
+  const round1 = (v) => (isFinite(v) ? +v.toFixed(1) : null);
+
+  function settingsOf(s) {
+    const t = s && s.getAudioTracks()[0];
+    return t && t.getSettings ? t.getSettings() : null;
+  }
+
+  function stopStream(s) {
+    if (!s) return;
+    for (const t of s.getTracks()) { try { t.stop(); } catch (e) {} }
+  }
+
+  function flatten(chunks, limit) {
+    const total = chunks.reduce((a, c) => a + c.length, 0);
+    const n = limit ? Math.min(limit, total) : total;
+    const out = new Float32Array(n);
+    let off = 0;
+    for (const c of chunks) {
+      if (off >= n) break;
+      const take = Math.min(c.length, n - off);
+      out.set(take === c.length ? c : c.subarray(0, take), off);
+      off += take;
+    }
+    return out;
+  }
+
+  // Level of one frequency, as a peak amplitude in dBFS. Goertzel rather than a
+  // full FFT because we only ever care about the one bin we put the tone in.
+  function goertzelDbfs(buf, hz, rate) {
+    const N = buf.length;
+    if (!N) return -Infinity;
+    const bin = Math.round((N * hz) / rate);
+    const w = (2 * Math.PI * bin) / N;
+    const cosw = Math.cos(w), sinw = Math.sin(w), coeff = 2 * cosw;
+    let s1 = 0, s2 = 0;
+    for (let i = 0; i < N; i++) {
+      const s0 = buf[i] + coeff * s1 - s2;
+      s2 = s1; s1 = s0;
+    }
+    return dbfs((2 * Math.hypot(s1 - s2 * cosw, s2 * sinw)) / N);
+  }
+
+  // Ramped so the cabin gets a tone rather than a click at each end.
+  function playTone(ctx, hz) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = hz;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(AEC_TONE_GAIN, ctx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    return () => {
+      try {
+        const now = ctx.currentTime;
+        gain.gain.cancelScheduledValues(now);
+        gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+        osc.stop(now + 0.08);
+      } catch (e) {}
+      setTimeout(() => { try { gain.disconnect(); } catch (e) {} }, 200);
+    };
+  }
+
+  async function measureTone(ctx, srcStream, hz, rate, withTone) {
+    const src = ctx.createMediaStreamSource(srcStream);
+    const stopTone = withTone ? playTone(ctx, hz) : null;
+    if (withTone) await new Promise((r) => setTimeout(r, AEC_SETTLE_MS));
+    const chunks = await captureFrames(src, ctx, AEC_SECONDS, () => {});
+    if (stopTone) stopTone();
+    try { src.disconnect(); } catch (e) {}
+    const buf = flatten(chunks, Math.floor(AEC_SECONDS * rate));
+    return {
+      tone: goertzelDbfs(buf, hz, rate),
+      rms: dbfs(rms(buf)),
+      samples: buf.length,
+    };
+  }
+
+  async function aecTest() {
+    $('aec').disabled = true;
+    $('aec-verdict').textContent = 'measuring…';
+    $('aec-verdict').className = 'verdict v-none';
+
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    if (ctx.state === 'suspended') await ctx.resume();
+    const rate = ctx.sampleRate;
+    const N = Math.floor(AEC_SECONDS * rate);
+    const toneHz = (Math.round((N * AEC_TONE_HZ) / rate) * rate) / N;
+    log('aec: tone snapped to an exact bin', { requested: AEC_TONE_HZ, using: +toneHz.toFixed(3), rate });
+
+    const res = { toneHz: +toneHz.toFixed(3), seconds: AEC_SECONDS, gear: report.gear };
+    let tag = 'INCONCLUSIVE';
+    let why = 'the measurement did not finish';
+
+    try {
+      log('aec: measuring the cabin with the speakers silent');
+      const floor = await measureTone(ctx, stream, toneHz, rate, false);
+      res.floorDbfs = round1(floor.tone);
+
+      log('aec: playing the tone with cancellation ON — the car will beep');
+      const on = await measureTone(ctx, stream, toneHz, rate, true);
+      res.echoAecOnDbfs = round1(on.tone);
+      res.aecOnSettings = settingsOf(stream);
+
+      if (syntheticStream) {
+        log('aec: self test — skipping the cancellation-off run');
+        res.aecOffError = { name: 'SelfTest', message: 'no real microphone to re-open' };
+      } else {
+        let offStream = null;
+        try {
+          log('aec: re-opening the microphone with cancellation OFF');
+          stopStream(stream);
+          offStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          });
+          res.aecOffSettings = settingsOf(offStream);
+          const off = await measureTone(ctx, offStream, toneHz, rate, true);
+          res.echoAecOffDbfs = round1(off.tone);
+        } catch (err) {
+          res.aecOffError = { name: err.name, message: err.message };
+          log('aec: no cancellation-off stream', res.aecOffError);
+        } finally {
+          stopStream(offStream);
+          // Hand the later sections a working stream back, whatever happened.
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+            log('aec: microphone re-acquired with cancellation on');
+          } catch (err) {
+            log('aec: FAILED to re-acquire the microphone — reload before section 5',
+                { name: err.name, message: err.message });
+          }
+        }
+      }
+
+      const floorDb = res.floorDbfs;
+      const onDb = res.echoAecOnDbfs;
+      const offDb = res.echoAecOffDbfs;
+
+      if (offDb === undefined || offDb === null) {
+        why = 'no cancellation-off reference, so there is nothing to compare against';
+      } else if (floorDb === null || offDb - floorDb < AEC_AUDIBLE_DB) {
+        // Almost always the media volume, and worth saying plainly: a silent car
+        // and a perfect canceller look identical from here.
+        why = 'the microphone never heard the tone even with cancellation off — turn the media volume up and run it again';
+        res.erleDb = null;
+      } else {
+        res.erleDb = round1(offDb - onDb);
+        res.floorMarginDb = round1(onDb - floorDb);
+        if (res.erleDb >= AEC_GOOD_DB) {
+          tag = 'WORKING';
+          why = 'the canceller removed our own audio — the microphone can carry a call';
+        } else if (res.erleDb >= AEC_WEAK_DB) {
+          tag = 'WEAK';
+          why = 'partial cancellation — the far end would hear itself faintly';
+        } else {
+          tag = 'NONE';
+          why = 'our audio came back untouched — the far end would hear itself';
+        }
+      }
+    } catch (err) {
+      res.error = { name: err.name, message: err.message };
+      log('aec: failed', res.error);
+      why = 'the measurement failed: ' + err.message;
+    } finally {
+      try { ctx.close(); } catch (e) {}
+    }
+
+    res.verdict = tag;
+    report.aec = res;
+    $('aec-verdict').textContent = tag;
+    $('aec-verdict').className = 'verdict v-' + (AEC_CLASS[tag] || 'none');
+    kv($('aec-info'), [
+      ['Meaning', why],
+      ['Tone', res.toneHz + ' Hz for ' + AEC_SECONDS + ' s'],
+      ['Cabin floor', (res.floorDbfs ?? '−∞') + ' dBFS'],
+      ['Echo, AEC on', (res.echoAecOnDbfs ?? '−∞') + ' dBFS'],
+      ['Echo, AEC off', (res.echoAecOffDbfs ?? 'not measured') + (res.echoAecOffDbfs == null ? '' : ' dBFS')],
+      ['ERLE', res.erleDb == null ? 'n/a' : res.erleDb + ' dB'],
+      ['Above floor, AEC on', res.floorMarginDb == null ? 'n/a' : res.floorMarginDb + ' dB'],
+      ['Condition', res.gear],
+    ]);
+    log('aec result', res);
+    $('aec').disabled = false;
+  }
+
+  $('aec').addEventListener('click', aecTest);
+
+  // ── background survival ──────────────────────────────────────────────────
+  // A stream that dies the moment the driver glances at navigation is no use for
+  // a call, however healthy it looks while the page is on screen. Nothing in
+  // Tesla's release notes addresses this, so it has to be measured: keep
+  // capturing, watch the frame counter across the visibility change, and report
+  // the gap. The counter is the evidence — `track.readyState` can still say
+  // "live" while the audio thread has been suspended underneath it.
+  async function backgroundWatch() {
+    $('bgwatch').disabled = true;
+    const t0 = Date.now();
+    const timeline = [];
+    const mark = (what, extra) => {
+      const row = Object.assign({ at: +((Date.now() - t0) / 1000).toFixed(2), what }, extra || {});
+      timeline.push(row);
+      log('background: ' + what, extra);
+    };
+
+    const track = stream.getAudioTracks()[0];
+    let hiddenAt = 0, hiddenFrames = 0, visibleAgainAt = 0, framesOnReturn = 0;
+
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now(); hiddenFrames = tap.frames; visibleAgainAt = 0;
+        mark('page hidden', { frames: tap.frames });
+      } else {
+        visibleAgainAt = Date.now(); framesOnReturn = tap.frames;
+        mark('page visible', {
+          frames: tap.frames,
+          framesWhileHidden: tap.frames - hiddenFrames,
+          msSinceLastFrame: tap.lastFrameAt ? Date.now() - tap.lastFrameAt : null,
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    const onEnded = () => mark('track ENDED');
+    const onMute = () => mark('track muted');
+    const onUnmute = () => mark('track unmuted');
+    track.addEventListener('ended', onEnded);
+    track.addEventListener('mute', onMute);
+    track.addEventListener('unmute', onUnmute);
+
+    mark('watching — switch away now, then come back');
+    const ctx = await openContext();
+    const src = ctx.createMediaStreamSource(stream);
+
+    // Finishes on its own three seconds after the page comes back, so nobody has
+    // to press anything while looking at the road. 90s is the hard ceiling.
+    await captureFrames(src, ctx, 90, () => {}, 'return');
+
+    document.removeEventListener('visibilitychange', onVis);
+    track.removeEventListener('ended', onEnded);
+    track.removeEventListener('mute', onMute);
+    track.removeEventListener('unmute', onUnmute);
+
+    const framesWhileHidden = framesOnReturn - hiddenFrames;
+    const survived = hiddenAt !== 0 && framesWhileHidden > 0 && track.readyState === 'live';
+    report.background = {
+      timeline,
+      wentHidden: hiddenAt !== 0,
+      framesWhileHidden,
+      trackReadyState: track.readyState,
+      trackMuted: track.muted,
+      survived,
+    };
+    kv($('bg-info'), [
+      ['Went hidden', hiddenAt ? 'yes' : 'no — nothing was tested'],
+      ['Frames while hidden', framesWhileHidden],
+      ['Track state', track.readyState + (track.muted ? ' (muted)' : '')],
+      ['Verdict', !hiddenAt ? 'inconclusive — the page never left the screen'
+        : survived ? 'audio kept flowing in the background'
+        : 'audio STOPPED when the page was hidden'],
+    ]);
+    log('background result', report.background);
+    try { ctx.close(); } catch (e) {}
+    $('bgwatch').disabled = false;
+  }
+
+  $('bgwatch').addEventListener('click', backgroundWatch);
+
+  // ── cancellation modes ───────────────────────────────────────────────────
+  // The measurement in section 4 answers "does `echoCancellation: true` remove
+  // our own audio", and on this car the answer was no — plus the reference run
+  // with cancellation off came back as digital silence, which says the raw
+  // capture path is not something the car will hand over.
+  //
+  // getCapabilities() reported four values though: true, false, "remote-only"
+  // and "all". "all" is Chromium's system-wide mode — it cancels what the
+  // machine is rendering, not just a WebRTC peer — and page-rendered audio is
+  // exactly what we would need cancelled. That is worth measuring rather than
+  // assuming, because a mode can fail in two very different ways:
+  //
+  //   * it leaks  — our tone is still plainly in the stream
+  //   * it is dead — nothing is in the stream at all, ours or yours
+  //
+  // Those look identical if you only play a tone, so each mode gets a talk
+  // window too. Usable means: hears you, does not hear us.
+  const MODE_TONE_SECONDS = 2;
+  const MODE_IDLE_SECONDS = 1.5;
+  const MODE_SETTLE_MS = 700;   // the previous mode's tone has to stop ringing
+  const MODE_TALK_SECONDS = 3;
+  const MODE_LEAK_DB = 6;    // tone this far above idle counts as leaking
+  const MODE_ALIVE_DB = 8;   // speech this far above idle counts as a live stream
+  const MODE_CANDIDATES = ['all', 'remote-only', true];
+
+  function modeLabel(m) { return typeof m === 'string' ? '"' + m + '"' : String(m); }
+
+  async function measureWindow(ctx, srcStream, seconds, hz, rate, withTone) {
+    const src = ctx.createMediaStreamSource(srcStream);
+    const stopTone = withTone ? playTone(ctx, hz) : null;
+    if (withTone) await new Promise((r) => setTimeout(r, AEC_SETTLE_MS));
+    const chunks = await captureFrames(src, ctx, seconds, () => {});
+    if (stopTone) stopTone();
+    try { src.disconnect(); } catch (e) {}
+    const buf = flatten(chunks, Math.floor(seconds * rate));
+    return { tone: goertzelDbfs(buf, hz, rate), rms: dbfs(rms(buf)), samples: buf.length };
+  }
+
+  async function modesTest() {
+    $('modes').disabled = true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    if (ctx.state === 'suspended') await ctx.resume();
+    const rate = ctx.sampleRate;
+    const N = Math.floor(MODE_TONE_SECONDS * rate);
+    const toneHz = (Math.round((N * AEC_TONE_HZ) / rate) * rate) / N;
+
+    const caps = (stream && stream.getAudioTracks()[0].getCapabilities)
+      ? (stream.getAudioTracks()[0].getCapabilities().echoCancellation || []) : [];
+    const results = [];
+    log('modes: capabilities reported by the track', caps);
+
+    for (const mode of MODE_CANDIDATES) {
+      const row = { mode: String(mode), offered: caps.length ? caps.includes(mode) : null };
+      $('modes-verdict').textContent = 'testing ' + modeLabel(mode) + '…';
+      $('modes-verdict').className = 'verdict v-none';
+      let s2 = null;
+      try {
+        // exact, not ideal: an ideal constraint the car does not implement is
+        // silently downgraded to true, and we would measure the wrong thing.
+        stopStream(stream);
+        s2 = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: { exact: mode }, channelCount: { ideal: 1 } },
+        });
+        row.accepted = true;
+        row.settings = settingsOf(s2);
+        row.reported = row.settings ? row.settings.echoCancellation : null;
+
+        // Two baselines, and they are not interchangeable. The tone is read as
+        // a single Goertzel bin, so "did our audio leak" has to be compared
+        // against the same bin with the speakers silent — a broadband RMS
+        // always sits higher than one narrow bin, which made an early version
+        // of this score every mode as cancelling. Speech is broadband, so that
+        // one is RMS against RMS.
+        await new Promise((r) => setTimeout(r, MODE_SETTLE_MS));   // let the last tone die away
+        const idle = await measureWindow(ctx, s2, MODE_IDLE_SECONDS, toneHz, rate, false);
+        row.idleDbfs = round1(idle.rms);
+        row.idleToneDbfs = round1(idle.tone);
+
+        log('modes: ' + modeLabel(mode) + ' — playing the tone');
+        const tone = await measureWindow(ctx, s2, MODE_TONE_SECONDS, toneHz, rate, true);
+        row.toneDbfs = round1(tone.tone);
+
+        $('modes-verdict').textContent = 'TALK NOW — ' + modeLabel(mode);
+        $('modes-verdict').className = 'verdict v-FAINT';
+        const talk = await measureWindow(ctx, s2, MODE_TALK_SECONDS, toneHz, rate, false);
+        row.talkDbfs = round1(talk.rms);
+
+        const leak = row.toneDbfs - row.idleToneDbfs;   // bin vs bin
+        const alive = row.talkDbfs - row.idleDbfs;      // rms vs rms
+        row.leakDb = round1(leak);
+        row.aliveDb = round1(alive);
+        row.verdict = alive < MODE_ALIVE_DB ? 'DEAD'
+                    : leak >= MODE_LEAK_DB ? 'LEAKS'
+                    : 'USABLE';
+      } catch (err) {
+        row.accepted = false;
+        row.error = { name: err.name, message: err.message };
+        row.verdict = err.name === 'OverconstrainedError' ? 'NOT OFFERED' : 'FAILED';
+        log('modes: ' + modeLabel(mode) + ' rejected', row.error);
+      } finally {
+        stopStream(s2);
+      }
+      results.push(row);
+      log('modes: ' + modeLabel(mode) + ' result', row);
+    }
+
+    // Whatever happened, hand the page a working stream back.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+      log('modes: microphone re-acquired with the default constraints');
+    } catch (err) {
+      log('modes: FAILED to re-acquire the microphone — reload the page',
+          { name: err.name, message: err.message });
+    }
+    try { ctx.close(); } catch (e) {}
+
+    report.modes = { capabilities: caps, toneHz: +toneHz.toFixed(3), results };
+    const winner = results.find((r) => r.verdict === 'USABLE');
+    $('modes-verdict').textContent = winner ? 'USABLE: ' + modeLabel(winner.mode) : 'NONE USABLE';
+    $('modes-verdict').className = 'verdict v-' + (winner ? 'AUDIO' : 'SILENT');
+    kv($('modes-info'), results.map((r) => [
+      modeLabel(r.mode),
+      r.accepted === false ? r.verdict + ' — ' + (r.error ? r.error.name : '?')
+        : r.verdict + '  ·  reported ' + r.reported
+          + '  ·  us ' + r.leakDb + ' dB, you ' + r.aliveDb + ' dB above idle'
+          + '  ·  tone ' + r.toneDbfs + ' dBFS',
+    ]).concat([['Meaning', winner
+      ? 'this mode hears you and not us — a call is viable with it'
+      : 'no mode both cancelled our audio and still heard you']]));
+    $('modes').disabled = false;
+  }
+
+  $('modes').addEventListener('click', modesTest);
+
+  // ── send back ────────────────────────────────────────────────────────────
+  async function send() {
+    $('send').disabled = true;
+    report.finishedAt = new Date().toISOString();
+    const post = async (name, body, type) => {
+      const res = await fetch('/debug/mic-probe?f=' + name, {
+        method: 'POST', headers: { 'Content-Type': type }, body,
+      });
+      const text = await res.text();
+      log('upload ' + name, { status: res.status, body: text.slice(0, 120) });
+      return res.ok;
+    };
+    try {
+      let ok = await post('report.json', JSON.stringify(report, null, 2), 'application/json');
+      if (wavBlob) ok = (await post('capture.wav', wavBlob, 'audio/wav')) && ok;
+      $('send-hint').textContent = ok
+        ? 'Sent. Nothing else to do here.'
+        : 'The Pi refused it — most likely MIC_PROBE_DIR is not set on the server.';
+    } catch (err) {
+      log('upload failed', { name: err.name, message: err.message });
+      $('send-hint').textContent = 'Upload failed: ' + err.message;
+    }
+    $('send').disabled = false;
+  }
+
+  $('send').addEventListener('click', send);
+
+  // ── self test ────────────────────────────────────────────────────────────
+  // ?selftest=1 swaps the cabin microphone for an oscillator, so the capture,
+  // measurement, WAV and upload paths can be exercised on a desk without
+  // touching anyone's microphone. It proves the plumbing, never the car.
+  if (new URLSearchParams(location.search).get('selftest') === '1') {
+    log('SELF TEST — using a synthetic 440 Hz stream, not a microphone');
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    const osc = ctx.createOscillator();
+    const dest = ctx.createMediaStreamDestination();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.25;
+    osc.frequency.value = 440;
+    osc.connect(gain); gain.connect(dest); osc.start();
+    stream = dest.stream;
+    syntheticStream = true;
+    $('record').disabled = false;
+    $('aec').disabled = false;
+    $('bgwatch').disabled = false;
+    $('ask').textContent = 'Ask for the microphone (skipped in self test)';
+    kv($('stream-info'), [['Result', 'synthetic stream'], ['Sample rate', ctx.sampleRate + ' Hz']]);
+    window.__micProbe = { report, record, backgroundWatch, aecTest, verdictFor, toWav,
+                         rms, dbfs, goertzelDbfs,
+                         get wav() { return wavBlob; } };
+  }
+
+  refreshPerm();
+  devices('at load');
+})();
+</script>
+</body>
+</html>

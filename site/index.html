@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla-Pi — CarPlay and retro games on your Tesla's screen</title>
+<meta name="description" content="Tesla-Pi puts Apple CarPlay on the Tesla's own screen — maps, music, messages, Siri — and turns it into a retro games console when you're parked. Open source, no subscription.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%238e9bff'/%3E%3Crect x='13' y='19' width='38' height='26' rx='5' fill='none' stroke='%230b0c0e' stroke-width='4'/%3E%3Cpath d='M27 37V27l10 5z' fill='%230b0c0e'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tesla-Pi — CarPlay and retro games on your Tesla's screen">
+<meta property="og:description" content="Apple CarPlay on the Tesla's own screen, and a retro games console when you're parked. Open source, no subscription.">
+<meta property="og:url" content="https://elwinchia.github.io/tesla-pi/">
+<meta name="twitter:card" content="summary_large_image">
+
+<style>
+/* ══════════════════════════  TOKENS  ══════════════════════════
+   Lifted from the device UI's own --mcu-* system (static/index.html)
+   so the site and the thing it describes look like one product.    */
+:root {
+  --bg:        #f4f4f1;
+  --surface:   #fbfbf9;
+  --surface-hi:#ffffff;
+  --stroke:    rgba(0,0,0,0.09);
+  --stroke-hi: rgba(0,0,0,0.18);
+  --ink:       #16171a;
+  --ink-dim:   #5b5f66;
+  --ink-faint: #8c9099;
+  --accent:    #6b7bf5;
+  --accent-soft: rgba(142,155,255,0.14);
+  --ok:        #3f9a50;
+  --screen-bg: #f4f4f1;
+  --screen-boot:#0b0c0e;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 24px 60px -24px rgba(0,0,0,.28);
+  --r-lg: 14px; --r-md: 10px; --r-sm: 7px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+             system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo,
+               Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #0b0c0e;
+    --surface:   #16181c;
+    --surface-hi:#1d2026;
+    --stroke:    rgba(255,255,255,0.09);
+    --stroke-hi: rgba(255,255,255,0.18);
+    --ink:       #f2f3f5;
+    --ink-dim:   #8a8f97;
+    --ink-faint: #565b62;
+    --accent:    #8e9bff;
+    --accent-soft: rgba(142,155,255,0.16);
+    --ok:        #46a758;
+    --screen-bg: #0b0c0e;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 28px 70px -28px rgba(0,0,0,.9);
+  }
+}
+/* The Day/Night control stamps the root — it must win over the media query
+   in both directions, so every token is redefined in both blocks. */
+:root[data-theme="dark"] {
+  --bg:#0b0c0e; --surface:#16181c; --surface-hi:#1d2026;
+  --stroke:rgba(255,255,255,0.09); --stroke-hi:rgba(255,255,255,0.18);
+  --ink:#f2f3f5; --ink-dim:#8a8f97; --ink-faint:#565b62;
+  --accent:#8e9bff; --accent-soft:rgba(142,155,255,0.16); --ok:#46a758;
+  --screen-bg:#0b0c0e;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 28px 70px -28px rgba(0,0,0,.9);
+}
+:root[data-theme="light"] {
+  --bg:#f4f4f1; --surface:#fbfbf9; --surface-hi:#ffffff;
+  --stroke:rgba(0,0,0,0.09); --stroke-hi:rgba(0,0,0,0.18);
+  --ink:#16171a; --ink-dim:#5b5f66; --ink-faint:#8c9099;
+  --accent:#6b7bf5; --accent-soft:rgba(142,155,255,0.14); --ok:#3f9a50;
+  --screen-bg:#f4f4f1;
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 24px 60px -24px rgba(0,0,0,.28);
+}
+
+/* ══════════════════════════  BASE  ══════════════════════════ */
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+p { margin: 0; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+::selection { background: var(--accent-soft); }
+
+.wrap { width: 100%; max-width: 1080px; margin-inline: auto; padding-inline: clamp(1.15rem, 4vw, 2.5rem); }
+.prose { max-width: 63ch; }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: .6875rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+/* ══════════════════════════  HERO  ══════════════════════════ */
+.hero { padding-block: clamp(3rem, 8vw, 5.5rem) clamp(2.5rem, 6vw, 4rem); }
+.hero-grid { display: flex; flex-direction: column; gap: 1.5rem; }
+.hero h1 {
+  font-size: clamp(2.45rem, 6.4vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.036em;
+  font-weight: 700;
+  max-width: 15ch;
+}
+.hero h1 .stop { color: var(--accent); }
+.hero-lede { font-size: clamp(1.05rem, 1.9vw, 1.3rem); color: var(--ink-dim); max-width: 56ch; letter-spacing: -0.011em; }
+.hero-lede strong { color: var(--ink); font-weight: 600; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .68rem 1.15rem;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-hi);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit; font-size: .95rem; font-weight: 550;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.btn:hover { background: var(--surface-hi); border-color: var(--ink-faint); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.primary:hover { opacity: .88; background: var(--ink); }
+.btn svg { width: 17px; height: 17px; }
+.free { font-size: .875rem; color: var(--ink-faint); }
+
+/* ══════════════════════════  THE SCREEN  ══════════════════════════
+   A scale replica of what the car shows. Sized in cqw so the whole
+   mock scales as one unit, exactly like a real display.            */
+.screen-stage { padding-bottom: clamp(3rem, 7vw, 5rem); }
+.bezel {
+  position: relative;
+  border-radius: clamp(14px, 1.6vw, 22px);
+  padding: clamp(6px, .9vw, 12px);
+  background: linear-gradient(180deg, var(--stroke) 0%, transparent 60%), var(--surface);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadow);
+}
+.screen {
+  position: relative;
+  container-type: inline-size;
+  aspect-ratio: 16 / 10;
+  border-radius: clamp(9px, 1.1vw, 14px);
+  overflow: hidden;
+  background: var(--screen-bg);
+  border: 1px solid var(--stroke);
+}
+.mock {
+  position: absolute; inset: 0;
+  font-size: clamp(8px, 1.42cqw, 15px);
+  display: flex; flex-direction: column;
+}
+
+/* — start-up splash — */
+.boot {
+  position: absolute; inset: 0; z-index: 3;
+  background: var(--screen-boot);
+  color: #f2f3f5;
+  padding: 2.2em 2.6em;
+  display: flex; flex-direction: column; justify-content: center; gap: .9em;
+  transition: opacity .45s ease;
+}
+.boot[hidden] { display: none; }
+.boot.out { opacity: 0; pointer-events: none; }
+.boot ul { margin: 0; padding: 0; display: flex; flex-direction: column; gap: .9em; }
+.boot li {
+  list-style: none;
+  display: flex; align-items: center; gap: .8em;
+  font-size: 1.45em; letter-spacing: -0.015em;
+  opacity: 0; transform: translateY(.35em);
+  transition: opacity .3s ease, transform .3s ease;
+}
+.boot li.on { opacity: 1; transform: none; }
+.boot .tick {
+  width: 1.1em; height: 1.1em; flex: 0 0 auto;
+  border-radius: 50%; background: rgba(70,167,88,.16);
+  display: grid; place-items: center; color: #46a758;
+}
+.boot .tick svg { width: .7em; height: .7em; }
+
+/* — top bar — */
+.mock-bar {
+  display: flex; align-items: center; gap: 1em;
+  padding: 1.15em 1.5em;
+  border-bottom: 1px solid var(--stroke);
+  flex: 0 0 auto;
+}
+.url {
+  display: flex; align-items: center; gap: .55em;
+  font-family: var(--font-mono); font-size: .95em;
+  color: var(--ink-dim);
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  padding: .38em 1em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.url svg { width: 1em; height: 1em; flex: 0 0 auto; color: var(--ok); }
+.chips { display: flex; align-items: center; gap: .5em; margin-left: auto; }
+.chip {
+  display: inline-flex; align-items: center; gap: .45em;
+  font-family: var(--font-mono); font-size: .85em;
+  color: var(--ink-dim);
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  padding: .3em .75em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.chip .dot { width: .45em; height: .45em; border-radius: 50%; background: var(--ok); }
+@container (max-width: 620px) { .chip.opt { display: none; } }
+
+.daynight {
+  font-family: var(--font-mono); font-size: .85em;
+  display: inline-flex; align-items: center; gap: .45em;
+  border: 1px solid var(--stroke-hi); border-radius: 999px;
+  background: none; color: var(--ink); cursor: pointer;
+  padding: .3em .8em;
+}
+.daynight:hover { background: var(--surface-hi); }
+.daynight svg { width: 1.05em; height: 1.05em; }
+
+/* — tile grid — */
+.mock-body { flex: 1 1 auto; min-height: 0; padding: 1.5em; display: flex; }
+.tiles {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: 1.35fr 1fr;
+  gap: 1em;
+}
+.tile {
+  position: relative;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  text-align: left; text-decoration: none;
+  gap: 1em;
+  padding: 1.2em;
+  border-radius: 1em;
+  border: 1px solid var(--stroke);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.tile:hover { background: var(--surface-hi); border-color: var(--stroke-hi); transform: translateY(-2px); }
+.tile:active { transform: translateY(0); }
+.tile.featured { grid-column: span 2; grid-row: span 2; border-color: var(--stroke-hi); }
+.tile.wide { grid-column: span 2; }
+.tile-meta { display: flex; flex-direction: column; gap: .2em; }
+.tile-corner {
+  position: absolute; top: 1.1em; right: 1.2em;
+  display: inline-flex; align-items: center; gap: .45em;
+  font-family: var(--font-mono); font-size: .78em; color: var(--ink-dim);
+}
+.tile-corner .dot { width: .45em; height: .45em; border-radius: 50%; background: var(--ok); }
+.tile-corner.muted { color: var(--ink-faint); }
+.tile-corner.muted .dot { background: var(--ink-faint); }
+.tile-icon {
+  width: 2.9em; height: 2.9em;
+  border-radius: .7em;
+  border: 1px solid var(--stroke);
+  display: grid; place-items: center;
+  color: var(--ink-dim);
+}
+.tile.featured .tile-icon { width: 3.6em; height: 3.6em; }
+.tile-icon svg { width: 55%; height: 55%; }
+.tile-name { font-size: 1.35em; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.tile.featured .tile-name { font-size: 1.75em; }
+.tile-sub { font-size: .95em; color: var(--ink-faint); line-height: 1.35; }
+
+@container (max-width: 620px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); grid-template-rows: 1.35fr 1fr 1fr; }
+  .tile.featured { grid-column: span 2; grid-row: span 1; }
+  .tile.wide { grid-column: span 2; }
+  .tile-sub { display: none; }
+}
+
+.screen-caption {
+  display: flex; flex-wrap: wrap; gap: .5rem 1.25rem;
+  margin-top: 1rem;
+  font-family: var(--font-mono); font-size: .75rem;
+  color: var(--ink-faint);
+  letter-spacing: .02em;
+}
+
+/* ══════════════════════════  SECTIONS  ══════════════════════════ */
+.section { border-top: 1px solid var(--stroke); padding-block: clamp(3.5rem, 8vw, 6rem); scroll-margin-top: 1rem; }
+.section-head { display: flex; flex-direction: column; gap: .9rem; margin-bottom: 2.5rem; }
+.section-head h2 {
+  font-size: clamp(1.65rem, 3.4vw, 2.6rem);
+  line-height: 1.1; letter-spacing: -0.028em; font-weight: 650;
+  max-width: 20ch;
+}
+.section-head .prose { color: var(--ink-dim); font-size: 1.05rem; }
+
+.badges { display: flex; flex-wrap: wrap; gap: .4rem .55rem; margin-bottom: 2.25rem; }
+.badges span {
+  font-family: var(--font-mono); font-size: .74rem;
+  letter-spacing: .02em;
+  color: var(--ink-dim);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  padding: .3rem .6rem;
+}
+
+.points { display: grid; gap: 1.75rem 2.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.points.pair { grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); }
+.point { display: flex; flex-direction: column; gap: .45rem; }
+.point h3 { font-size: 1.02rem; font-weight: 600; letter-spacing: -0.012em; }
+.point p { color: var(--ink-dim); font-size: .965rem; }
+
+/* ══════════════════════════  KIT  ══════════════════════════ */
+.kit { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); margin-bottom: 2.5rem; }
+.kit > div {
+  background: var(--surface); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 1.2rem 1.35rem;
+  display: flex; flex-direction: column; gap: .3rem;
+}
+.kit .what { font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+.kit strong { font-size: 1rem; font-weight: 600; letter-spacing: -0.012em; }
+.kit p { font-size: .9rem; color: var(--ink-dim); }
+
+/* ══════════════════════════  STEPS  ══════════════════════════ */
+.steps { display: grid; gap: 0; }
+.step {
+  display: grid; grid-template-columns: 3.25rem 1fr; gap: 1rem;
+  padding: 1.2rem 0;
+  border-bottom: 1px solid var(--stroke);
+}
+.step:first-child { border-top: 1px solid var(--stroke); }
+.step .num {
+  font-family: var(--font-mono); font-size: .75rem; color: var(--ink-faint);
+  letter-spacing: .08em; padding-top: .3rem;
+}
+.step h3 { font-size: 1.02rem; font-weight: 600; letter-spacing: -0.012em; margin-bottom: .2rem; }
+.step p { font-size: .95rem; color: var(--ink-dim); }
+
+/* ══════════════════════════  FOOTER  ══════════════════════════ */
+.footer { border-top: 1px solid var(--stroke); padding-block: 3rem 4rem; }
+.footer-grid { display: grid; gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.footer h3 {
+  font-family: var(--font-mono); font-size: .7rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-faint); font-weight: 400; margin-bottom: .8rem;
+}
+.footer ul { margin: 0; padding: 0; list-style: none; display: grid; gap: .4rem; font-size: .93rem; }
+.footer a { color: var(--ink-dim); text-decoration: none; }
+.footer a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.footer-note { margin-top: 2.75rem; padding-top: 1.5rem; border-top: 1px solid var(--stroke); }
+.disclaimer { font-size: .8125rem; color: var(--ink-faint); max-width: 70ch; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════  HERO  ═══════════════════════ -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <p class="eyebrow">CarPlay · Retro games · On the car's own screen</p>
+    <h1>Your Tesla already has the screen<span class="stop">.</span></h1>
+    <p class="hero-lede">Tesla-Pi puts <strong>Apple CarPlay</strong> on it — maps, music, messages
+      and Siri, full-screen and wireless. Parked, the same screen becomes a
+      <strong>retro games console</strong>. Nothing to unscrew, nothing to replace, no subscription.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/elwinchia/tesla-pi">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        Get it on GitHub
+      </a>
+      <a class="btn" href="#start">How it's set up</a>
+      <span class="free">Free and open source</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════  THE SCREEN  ═══════════════════════ -->
+<section class="screen-stage">
+  <div class="wrap">
+    <div class="bezel">
+      <div class="screen">
+        <div class="mock">
+
+          <div class="mock-bar">
+            <div class="url">
+              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 6.5V5a3.5 3.5 0 1 1 7 0v1.5H12A1.5 1.5 0 0 1 13.5 8v5A1.5 1.5 0 0 1 12 14.5H4A1.5 1.5 0 0 1 2.5 13V8A1.5 1.5 0 0 1 4 6.5h.5zm1.5 0h4V5a2 2 0 1 0-4 0v1.5z"/></svg>
+              device.tesla-pi.humblebees.co
+            </div>
+            <div class="chips">
+              <span class="chip"><span class="dot"></span>CarPlay ready</span>
+              <span class="chip opt" id="chip-fps">60 fps</span>
+              <span class="chip opt" id="chip-up">on 01:10:13</span>
+              <button class="daynight" type="button" id="daynight" aria-label="Switch between the car's day and night look">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" id="dn-icon"><path d="M8 1.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5zm0 9.25a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5zM8 12a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12zM2.25 7.25h1a.75.75 0 0 1 0 1.5h-1a.75.75 0 0 1 0-1.5zm10.5 0h1a.75.75 0 0 1 0 1.5h-1a.75.75 0 0 1 0-1.5zM3.7 3.7a.75.75 0 0 1 1.06 0l.7.7A.75.75 0 0 1 4.4 5.46l-.7-.7a.75.75 0 0 1 0-1.06zm6.54 6.54a.75.75 0 0 1 1.06 0l.7.7a.75.75 0 1 1-1.06 1.06l-.7-.7a.75.75 0 0 1 0-1.06zm2.06-6.54a.75.75 0 0 1 0 1.06l-.7.7a.75.75 0 1 1-1.06-1.06l.7-.7a.75.75 0 0 1 1.06 0zM5.46 10.24a.75.75 0 0 1 0 1.06l-.7.7A.75.75 0 0 1 3.7 10.94l.7-.7a.75.75 0 0 1 1.06 0z"/></svg>
+                <span id="dn-label">Day</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="mock-body">
+            <div class="tiles">
+              <a class="tile featured" href="#carplay">
+                <span class="tile-corner"><span class="dot"></span>Ready</span>
+                <span class="tile-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2.5"/><path d="M10 9.2v3.6L13.5 11z"/><path d="M8 21h8"/></svg>
+                </span>
+                <span class="tile-meta">
+                  <span class="tile-name">CarPlay</span>
+                  <span class="tile-sub">Maps, music, messages, Siri</span>
+                </span>
+              </a>
+
+              <a class="tile" href="#games">
+                <span class="tile-corner muted"><span class="dot"></span>Off</span>
+                <span class="tile-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 7h9a4.5 4.5 0 0 1 4.4 3.6l.8 4A3.2 3.2 0 0 1 18.6 18c-1 0-1.9-.5-2.5-1.3l-.6-.7H8.5l-.6.7A3.1 3.1 0 0 1 5.4 18a3.2 3.2 0 0 1-3.1-3.4l.8-4A4.5 4.5 0 0 1 7.5 7z"/><path d="M7 11v2.5M5.75 12.25h2.5"/><circle cx="16" cy="11.5" r=".6" fill="currentColor"/><circle cx="17.8" cy="13.2" r=".6" fill="currentColor"/></svg>
+                </span>
+                <span class="tile-meta">
+                  <span class="tile-name">Games</span>
+                  <span class="tile-sub">For when you're parked</span>
+                </span>
+              </a>
+
+              <a class="tile" href="#everyday">
+                <span class="tile-corner"><span class="dot"></span>Live</span>
+                <span class="tile-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13h4l2.5-6.5L12.5 18l2.5-7 1.6 2h4.9"/></svg>
+                </span>
+                <span class="tile-meta">
+                  <span class="tile-name">Monitor</span>
+                  <span class="tile-sub">How it's doing</span>
+                </span>
+              </a>
+
+              <a class="tile wide" href="#everyday">
+                <span class="tile-corner muted"><span class="dot"></span>System</span>
+                <span class="tile-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h11M18 7h3M3 17h4M11 17h10"/><circle cx="16" cy="7" r="2.3"/><circle cx="9" cy="17" r="2.3"/></svg>
+                </span>
+                <span class="tile-meta">
+                  <span class="tile-name">Settings</span>
+                  <span class="tile-sub">Hotspot · Wi-Fi · display</span>
+                </span>
+              </a>
+            </div>
+          </div>
+
+          <!-- start-up splash -->
+          <div class="boot" id="boot">
+            <ul id="boot-lines">
+              <li><span class="tick"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>Starting up</li>
+              <li><span class="tick"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>Hotspot ready</li>
+              <li><span class="tick"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>iPhone connected</li>
+              <li><span class="tick"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>CarPlay ready</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    <p class="screen-caption">
+      <span>↑ the home screen, as it appears in the car</span>
+      <span>tiles are live — tap one</span>
+      <span>Day / Night follows the car</span>
+    </p>
+  </div>
+</section>
+
+<!-- ═══════════════════════  CARPLAY  ═══════════════════════ -->
+<section class="section" id="carplay">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">CarPlay</p>
+      <h2>Everything your iPhone does, on the big screen.</h2>
+      <p class="prose">Maps, music, podcasts, messages, calls and Siri — arranged by CarPlay itself,
+        filling the Tesla's display. It connects the moment you get in, with the phone still in your
+        pocket.</p>
+    </div>
+
+    <div class="badges">
+      <span>wireless</span><span>full screen</span><span>60 fps</span>
+      <span>touch</span><span>night mode</span><span>Siri &amp; calls</span>
+    </div>
+
+    <div class="points pair">
+      <div class="point">
+        <h3>Connects on its own</h3>
+        <p>Unlock the car and CarPlay is waiting. No cable, no menu to dig through, no pairing dance
+          every time you drive.</p>
+      </div>
+      <div class="point">
+        <h3>Touch that feels like the car's own</h3>
+        <p>Tap, swipe and scroll straight on the Tesla's screen. Dragging a map or scrubbing a
+          playlist tracks your finger the way it should.</p>
+      </div>
+      <div class="point">
+        <h3>Goes dark when the car does</h3>
+        <p>Switch the Tesla to its night look and CarPlay follows in the same moment — no glare on a
+          night drive, no setting to remember.</p>
+      </div>
+      <div class="point">
+        <h3>Sound, calls and Siri through the car</h3>
+        <p>Audio rides the Bluetooth link the car already has with your phone, so music, calls and
+          Siri come out of the car's speakers exactly as they should.</p>
+      </div>
+      <div class="point">
+        <h3>Picks itself back up</h3>
+        <p>If the connection ever drops, it reconnects on its own and carries on. Nothing to reset
+          from the driver's seat.</p>
+      </div>
+      <div class="point">
+        <h3>Bookmark it once</h3>
+        <p>It lives at the same address every time. Save it as a favourite and CarPlay is one tap
+          from the Tesla's home screen.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════  GAMES  ═══════════════════════ -->
+<section class="section" id="games">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Games</p>
+      <h2>Parked, it's a games console.</h2>
+      <p class="prose">Charging stops are long. Tap Games and the screen fills with the classics —
+        full-size, in colour, with sound through the car's speakers.</p>
+    </div>
+
+    <div class="badges">
+      <span>on-screen controls</span><span>Bluetooth gamepad</span><span>sound in the car</span>
+      <span>starts in seconds</span>
+    </div>
+
+    <div class="points pair">
+      <div class="point">
+        <h3>Play on the touchscreen</h3>
+        <p>A D-pad, buttons and shoulders appear over the game — everything you need is on the glass,
+          nothing extra to bring along.</p>
+      </div>
+      <div class="point">
+        <h3>Or bring a real controller</h3>
+        <p>Pair a Bluetooth gamepad and play properly, with the thumbsticks and triggers the games
+          were made for.</p>
+      </div>
+      <div class="point">
+        <h3>Sound through the speakers</h3>
+        <p>Music and effects come through the car's audio, so a parked car turns into a surprisingly
+          good place to play.</p>
+      </div>
+      <div class="point">
+        <h3>There when you want it, gone when you don't</h3>
+        <p>Games stay off until you tap them, and shut down completely when you leave — CarPlay is
+          never waiting behind them.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════  EVERYDAY  ═══════════════════════ -->
+<section class="section" id="everyday">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Every day</p>
+      <h2>One address. No account. No subscription.</h2>
+      <p class="prose">It behaves like part of the car: on when the car is on, in the same place
+        every time, and adjustable without ever getting out or reaching for a laptop.</p>
+    </div>
+
+    <div class="points pair">
+      <div class="point">
+        <h3>Ready before you've pulled out</h3>
+        <p>It starts with the car and is up in seconds — the screen is ready by the time you've done
+          your seatbelt.</p>
+      </div>
+      <div class="point">
+        <h3>Doesn't need a signal</h3>
+        <p>Everything on the screen comes from the car and your phone. Underground car parks and dead
+          spots make no difference.</p>
+      </div>
+      <div class="point">
+        <h3>Set it up from the driver's seat</h3>
+        <p>Rename its hotspot, choose a password, join a Wi-Fi network — all from the same screen, on
+          the touchscreen, with no keyboard or laptop involved.</p>
+      </div>
+      <div class="point">
+        <h3>See how it's doing</h3>
+        <p>A Monitor screen shows what's connected, how long it's been running and how it's holding
+          up — a glance tells you everything is fine.</p>
+      </div>
+      <div class="point">
+        <h3>Day and night, automatically</h3>
+        <p>The whole interface — not just CarPlay — follows the car between its light and dark looks.</p>
+      </div>
+      <div class="point">
+        <h3>Yours to change</h3>
+        <p>Free, open source, and nothing phones home. Use it as it comes or make it your own.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════  GET STARTED  ═══════════════════════ -->
+<section class="section" id="start">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Getting one</p>
+      <h2>Three things and an afternoon.</h2>
+      <p class="prose">Everything runs on a small computer that lives in the glovebox. The setup
+        guide walks the whole thing end to end.</p>
+    </div>
+
+    <div class="kit">
+      <div>
+        <span class="what">The computer</span>
+        <strong>Raspberry Pi 4</strong>
+        <p>Small enough for the glovebox, powered from the car.</p>
+      </div>
+      <div>
+        <span class="what">The adapter</span>
+        <strong>Carlinkit CPC200-CCPA</strong>
+        <p>The wireless CarPlay adapter the Pi talks to.</p>
+      </div>
+      <div>
+        <span class="what">The phone</span>
+        <strong>Your iPhone</strong>
+        <p>iOS 16 or later. Nothing to install on it.</p>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <span class="num">01</span>
+        <div>
+          <h3>Set up the Pi</h3>
+          <p>Follow the setup guide once, at your desk. It covers every step from a blank memory card
+            to a working box.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="num">02</span>
+        <div>
+          <h3>Put it in the car</h3>
+          <p>It powers from the car and needs nothing else — no wiring into the dash, no parts
+            removed, nothing that can't be undone.</p>
+        </div>
+      </div>
+      <div class="step">
+        <span class="num">03</span>
+        <div>
+          <h3>Join its Wi-Fi and open the address</h3>
+          <p>Bookmark it on the Tesla's home screen. From then on it's one tap, every time you drive.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions" style="margin-top:2.25rem">
+      <a class="btn primary" href="https://github.com/elwinchia/tesla-pi/blob/main/docs/setup-guide.md">Open the setup guide</a>
+      <a class="btn" href="https://github.com/elwinchia/tesla-pi">Browse the project</a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════  FOOTER  ═══════════════════════ -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h3>Project</h3>
+        <ul>
+          <li><a href="https://github.com/elwinchia/tesla-pi">Source on GitHub</a></li>
+          <li><a href="https://github.com/elwinchia/tesla-pi/blob/main/docs/setup-guide.md">Setup guide</a></li>
+          <li><a href="https://github.com/elwinchia/tesla-pi/blob/main/docs/retroarch-addon.md">Games add-on</a></li>
+          <li><a href="https://github.com/elwinchia/tesla-pi/blob/main/SECURITY.md">Security model</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Good to know</h3>
+        <ul>
+          <li>Free and open source, BSD 3-Clause</li>
+          <li>No account, no subscription</li>
+          <li>Nothing removed or modified in the car</li>
+          <li>Steering-wheel controls aren't supported</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Standing on</h3>
+        <ul>
+          <li><a href="https://github.com/rhysmorgan134/node-CarPlay">node-carplay</a></li>
+          <li><a href="https://github.com/marcraft2/tesla-carplay">tesla-carplay</a> — the project this forks</li>
+          <li><a href="https://github.com/darreal44">darreal44</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      <p class="disclaimer">
+        Tesla-Pi is an independent open-source project. It is not affiliated with, endorsed by, or
+        connected to Tesla, Inc. or Apple Inc. Tesla is a trademark of Tesla, Inc.; CarPlay and Siri
+        are trademarks of Apple Inc. Fitting equipment to a vehicle is your own responsibility —
+        check your local regulations and your warranty first, and don't operate the screen while
+        driving.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ── Day / Night — the car's look, and the page's ────────────── */
+  var media = window.matchMedia('(prefers-color-scheme: dark)');
+  var btn = document.getElementById('daynight');
+  var label = document.getElementById('dn-label');
+  var icon = document.getElementById('dn-icon');
+  var SUN = 'M8 1.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5zm0 9.25a2.75 2.75 0 1 0 0-5.5 2.75 2.75 0 0 0 0 5.5zM8 12a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12zM2.25 7.25h1a.75.75 0 0 1 0 1.5h-1a.75.75 0 0 1 0-1.5zm10.5 0h1a.75.75 0 0 1 0 1.5h-1a.75.75 0 0 1 0-1.5zM3.7 3.7a.75.75 0 0 1 1.06 0l.7.7A.75.75 0 0 1 4.4 5.46l-.7-.7a.75.75 0 0 1 0-1.06zm6.54 6.54a.75.75 0 0 1 1.06 0l.7.7a.75.75 0 1 1-1.06 1.06l-.7-.7a.75.75 0 0 1 0-1.06zm2.06-6.54a.75.75 0 0 1 0 1.06l-.7.7a.75.75 0 1 1-1.06-1.06l.7-.7a.75.75 0 0 1 1.06 0zM5.46 10.24a.75.75 0 0 1 0 1.06l-.7.7A.75.75 0 0 1 3.7 10.94l.7-.7a.75.75 0 0 1 1.06 0z';
+  var MOON = 'M13.2 9.9A5.6 5.6 0 0 1 6.1 2.8a5.75 5.75 0 1 0 7.1 7.1z';
+
+  function isDark() {
+    var set = root.getAttribute('data-theme');
+    return set ? set === 'dark' : media.matches;
+  }
+  function paint() {
+    var dark = isDark();
+    label.textContent = dark ? 'Night' : 'Day';
+    icon.firstElementChild.setAttribute('d', dark ? MOON : SUN);
+    btn.setAttribute('aria-pressed', String(dark));
+  }
+  btn.addEventListener('click', function () {
+    root.setAttribute('data-theme', isDark() ? 'light' : 'dark');
+    paint();
+  });
+  media.addEventListener('change', paint);
+  paint();
+
+  /* ── Start-up splash, then live status ───────────────────────── */
+  var boot = document.getElementById('boot');
+  var lines = Array.prototype.slice.call(document.querySelectorAll('#boot-lines li'));
+
+  function startTicker() {
+    var t = 4213;                        // seconds since start, as shown in the mock
+    var up = document.getElementById('chip-up');
+    var fps = document.getElementById('chip-fps');
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+    function tick() {
+      t += 1;
+      var h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+      up.textContent = 'on ' + pad(h) + ':' + pad(m) + ':' + pad(s);
+      fps.textContent = (Math.random() > 0.85 ? 59 : 60) + ' fps';
+    }
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  if (reduce) {
+    boot.hidden = true;
+    startTicker();
+  } else {
+    lines.forEach(function (li, i) {
+      setTimeout(function () { li.classList.add('on'); }, 250 + i * 240);
+    });
+    setTimeout(function () {
+      boot.classList.add('out');
+      setTimeout(function () { boot.hidden = true; }, 500);
+      startTicker();
+    }, 250 + lines.length * 240 + 360);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Telemetry probe</title>
+<!--
+  Diagnostic page, not part of the product UI. Served from static/ so it needs
+  no route of its own: https://<device>/telemetry-probe.html
+
+  The cheapest possible source of car telemetry is the browser's own GPS.
+  navigator.geolocation has worked in the Tesla browser since firmware 5.9 —
+  it is how web maps locate the car — so position is close to a given.
+
+  The question worth measuring is narrower: does this build populate
+  `coords.speed` and `coords.heading`, or leave them null? Many Chromium
+  configurations derive location from network signals and return null for both,
+  which would be useless for the thing we actually want it for.
+
+  That thing is speed-gating. RetroArch currently runs regardless of whether the
+  car is moving, and a retro console playable at speed is a liability. Gating it
+  needs one number, and this page decides whether the browser can supply it
+  without a BLE stack or a CAN harness.
+
+  Section 4 therefore measures two answers, not one:
+    * the reported speed, straight from coords.speed
+    * a *derived* speed, computed from successive fixes
+  because if speed is null but positions arrive often enough and accurately
+  enough, derived speed still gates just fine. A null in section 3 is not the
+  end of the question.
+
+  Run it twice — once parked, once in Drive. Have a second person drive.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 40px;
+    background: #0b0c0e; color: #f2f3f5;
+    font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #8a8f97; font-size: 14px; margin-bottom: 18px; }
+  .card {
+    background: #16181c; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #8a8f97; font-weight: 500;
+             text-transform: uppercase; letter-spacing: 0.06em; }
+  button {
+    -webkit-appearance: none; appearance: none;
+    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px; padding: 16px 20px; font-size: 17px; font-weight: 500;
+    width: 100%; margin-bottom: 10px; touch-action: manipulation;
+  }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; }
+  button:disabled { opacity: 0.45; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row button { width: auto; flex: 1 1 140px; }
+  .seg { display: flex; gap: 8px; margin-bottom: 12px; }
+  .seg button { flex: 1; font-size: 15px; padding: 12px; }
+  .seg button[aria-pressed="true"] { background: #3b5bdb; border-color: #4c6ef5; }
+  .kv { display: grid; grid-template-columns: minmax(150px, 42%) 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: #8a8f97; }
+  .kv dd { margin: 0; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .verdict { font-size: 30px; font-weight: 600; margin: 8px 0 2px; }
+  .v-YES  { color: #46a758; }
+  .v-WARN { color: #e8a13a; }
+  .v-NO   { color: #e5484d; }
+  .v-none { color: #8a8f97; }
+  .ok { color: #46a758; } .warn { color: #e8a13a; } .bad { color: #e5484d; }
+  .live { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 6px 0; }
+  pre {
+    background: #0e1013; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 12px; font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 0;
+  }
+  .hint { color: #8a8f97; font-size: 13px; margin: 6px 0 0; }
+  label.chk { display: flex; gap: 10px; align-items: center; font-size: 14px; color: #8a8f97; margin-top: 10px; }
+  label.chk input { width: 20px; height: 20px; }
+</style>
+</head>
+<body>
+
+<h1>Telemetry probe</h1>
+<div class="sub" id="origin"></div>
+
+<div class="card">
+  <h2>1 · Conditions</h2>
+  <p class="hint" style="margin-top:0">Tap what the car is doing — it goes in the
+     report. <b>The run that matters is in Drive</b>, because a parked car cannot
+     tell you whether speed is reported.</p>
+  <div class="seg" id="gear">
+    <button data-gear="park" aria-pressed="true">Parked</button>
+    <button data-gear="drive" aria-pressed="false">Driving</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2 · Is the API there?</h2>
+  <dl class="kv" id="env-info"></dl>
+</div>
+
+<div class="card">
+  <h2>3 · One fix</h2>
+  <p class="hint" style="margin-top:0">Asks once, with high accuracy. The car should
+     prompt for permission the first time.</p>
+  <button class="go" id="once">Get my position</button>
+  <div class="verdict v-none" id="once-verdict">not run</div>
+  <dl class="kv" id="once-info"></dl>
+</div>
+
+<div class="card">
+  <h2>4 · Can it gate on speed?</h2>
+  <p class="hint" style="margin-top:0">Watches for 30 seconds. Reports the speed the
+     browser <i>claims</i>, and separately a speed <i>derived</i> from successive
+     fixes — because if <code>coords.speed</code> is null but positions arrive often
+     and accurately enough, derived speed still gates RetroArch perfectly well.</p>
+  <button class="go" id="watch" disabled>Watch for 30 seconds</button>
+  <div class="live" id="live">—</div>
+  <div class="verdict v-none" id="watch-verdict">not run</div>
+  <dl class="kv" id="watch-info"></dl>
+</div>
+
+<div class="card">
+  <h2>5 · Report</h2>
+  <div class="row">
+    <button class="go" id="send">Send to the Pi</button>
+    <button id="copy">Copy report</button>
+    <button id="reload">Reload page</button>
+  </div>
+  <label class="chk">
+    <input type="checkbox" id="exact">
+    Include exact coordinates in the report
+  </label>
+  <p class="hint" id="send-hint">Coordinates are rounded to ~100 m in the report
+     unless you tick the box — a probe result should not carry your driveway by
+     default. On-screen values are always full precision.</p>
+  <pre id="report-text">not run</pre>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <pre id="log"></pre>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const WATCH_SECONDS = 30;
+  // Below this, derived speed is noise rather than signal: a 5 m accuracy fix
+  // wobbling once a second looks like walking pace even when parked.
+  const USABLE_ACCURACY_M = 25;
+  // A gate wants to know "moving or not" within a second or two.
+  const USABLE_RATE_HZ = 0.5;
+  // Measured on the car 2026-08-27: a parked Tesla reports accuracy 9999.99,
+  // which is a placeholder, not a 10 km error bound. Treat anything at or above
+  // this as "no accuracy reported" rather than a very bad one.
+  const ACCURACY_SENTINEL_M = 9999;
+  // Also measured: pos.timestamp came back ~101x too small to be epoch ms (it
+  // reads as 1970) and was frozen identical across every sample. So the source
+  // clock is not trustworthy and we timestamp arrivals ourselves.
+  const EPOCH_MS_FLOOR = 1e12;
+
+  const report = {
+    startedAt: new Date().toISOString(),
+    origin: location.origin,
+    userAgent: navigator.userAgent,
+    gear: 'park',
+    steps: [],
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+
+  // Full-precision fix, kept OUT of `report` so it is never serialised by
+  // accident. The report's coordinates are always derived from this, so
+  // toggling the exact-coordinates box recomputes rather than re-rounds an
+  // already-rounded number — which cannot recover precision and would leave the
+  // report claiming exact values it no longer has.
+  let rawFix = null;
+
+  function log(msg, data) {
+    const line = new Date().toISOString().slice(11, 19) + '  ' + msg
+      + (data === undefined ? '' : '  ' + JSON.stringify(data));
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+    report.steps.push({ t: new Date().toISOString(), msg, data: data ?? null });
+    renderReport();
+  }
+
+  function kv(el, pairs) {
+    el.innerHTML = '';
+    for (const [k, v, cls] of pairs) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      if (cls) dd.className = cls;
+      el.append(dt, dd);
+    }
+  }
+
+  function verdict(el, word, why) {
+    const e = $(el);
+    e.className = 'verdict v-' + word;
+    e.textContent = why ? word + ' — ' + why : word;
+  }
+
+  // Coordinates are the one genuinely personal thing this page touches, so the
+  // report gets them rounded unless asked otherwise. 3 dp is about 100 m.
+  function coarse(n) {
+    if (n === null || n === undefined) return null;
+    return $('exact').checked ? n : Math.round(n * 1000) / 1000;
+  }
+
+  function renderReport() {
+    $('report-text').textContent = JSON.stringify(report, null, 2);
+  }
+
+  const ms = (n) => (n === null || n === undefined) ? '—' : n.toFixed(1) + ' m/s  (' + (n * 3.6).toFixed(1) + ' km/h)';
+  const num = (n, unit, dp) => (n === null || n === undefined) ? 'null' : n.toFixed(dp ?? 1) + (unit || '');
+
+  $('origin').textContent = location.origin;
+
+  for (const b of document.querySelectorAll('#gear button')) {
+    b.addEventListener('click', () => {
+      for (const o of document.querySelectorAll('#gear button')) o.setAttribute('aria-pressed', 'false');
+      b.setAttribute('aria-pressed', 'true');
+      report.gear = b.dataset.gear;
+      log('condition', report.gear);
+    });
+  }
+
+  // ── 2 · environment ──────────────────────────────────────────────────────
+  (async () => {
+    const env = {
+      chromium: (/Chrome\/([\d.]+)/.exec(navigator.userAgent) || [])[1] || null,
+      secureContext: window.isSecureContext,
+      hasGeolocation: !!navigator.geolocation,
+    };
+    if (navigator.permissions && navigator.permissions.query) {
+      try { env.permission = (await navigator.permissions.query({ name: 'geolocation' })).state; }
+      catch (err) { env.permission = 'query-failed: ' + err.name; }
+    }
+    report.env = env;
+    kv($('env-info'), [
+      ['Chromium', env.chromium || 'not a Chrome UA'],
+      ['secure context', env.secureContext ? 'yes' : 'NO — geolocation will refuse', env.secureContext ? 'ok' : 'bad'],
+      ['navigator.geolocation', env.hasGeolocation ? 'present' : 'ABSENT', env.hasGeolocation ? 'ok' : 'bad'],
+      ['permission state', env.permission ?? '—'],
+    ]);
+    log('env', env);
+    if (env.hasGeolocation) $('once').disabled = false;
+  })();
+
+  // ── 3 · one fix ──────────────────────────────────────────────────────────
+  function describe(pos) {
+    const c = pos.coords;
+    const acc = c.accuracy ?? null;
+    return {
+      accuracy: acc,
+      accuracyIsSentinel: acc !== null && acc >= ACCURACY_SENTINEL_M,
+      srcTimestamp: pos.timestamp,
+      srcTimestampLooksEpochMs: pos.timestamp >= EPOCH_MS_FLOOR,
+      receivedAt: Date.now(),
+      altitude: c.altitude ?? null,
+      altitudeAccuracy: c.altitudeAccuracy ?? null,
+      heading: c.heading ?? null,
+      speed: c.speed ?? null,
+      hasSpeed: c.speed !== null && c.speed !== undefined,
+      hasHeading: c.heading !== null && c.heading !== undefined,
+      timestamp: pos.timestamp,
+    };
+  }
+
+  $('once').addEventListener('click', () => {
+    $('once').disabled = true;
+    const t0 = performance.now();
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const d = describe(pos);
+      d.elapsedMs = Math.round(performance.now() - t0);
+      rawFix = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      report.once = Object.assign({}, d, {
+        latitude: coarse(rawFix.lat),
+        longitude: coarse(rawFix.lon),
+      });
+      verdict('once-verdict', 'YES', 'fix in ' + d.elapsedMs + ' ms, ±' + num(d.accuracy, ' m', 0));
+      kv($('once-info'), [
+        ['latitude', pos.coords.latitude.toFixed(6)],
+        ['longitude', pos.coords.longitude.toFixed(6)],
+        ['accuracy', d.accuracyIsSentinel ? num(d.accuracy, ' m', 2) + '  — placeholder, not a real bound' : num(d.accuracy, ' m', 1),
+          d.accuracyIsSentinel ? 'bad' : d.accuracy <= USABLE_ACCURACY_M ? 'ok' : 'warn'],
+        ['pos.timestamp', d.srcTimestamp + (d.srcTimestampLooksEpochMs ? '' : '  — NOT epoch ms'),
+          d.srcTimestampLooksEpochMs ? 'ok' : 'bad'],
+        ['altitude', num(d.altitude, ' m')],
+        // These two are the reason this page exists.
+        ['coords.speed', d.hasSpeed ? ms(d.speed) : 'null', d.hasSpeed ? 'ok' : 'warn'],
+        ['coords.heading', d.hasHeading ? num(d.heading, '°') : 'null', d.hasHeading ? 'ok' : 'warn'],
+        ['time to fix', d.elapsedMs + ' ms'],
+      ]);
+      log('fix', report.once);
+      $('once').disabled = false;
+      $('watch').disabled = false;
+    }, (err) => {
+      report.once = { error: err.code + ': ' + err.message };
+      verdict('once-verdict', 'NO', err.message);
+      kv($('once-info'), [
+        ['error', err.message, 'bad'],
+        ['code', err.code + (err.code === 1 ? ' (permission denied)' : err.code === 2 ? ' (position unavailable)' : ' (timeout)')],
+      ]);
+      log('fix failed', report.once);
+      $('once').disabled = false;
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+
+  // ── 4 · the gating question ──────────────────────────────────────────────
+  // Great-circle distance. At these ranges a flat approximation would do, but
+  // this costs nothing and cannot be wrong near the poles or the date line.
+  function haversine(a, b) {
+    const R = 6371000, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+    const la1 = a.lat * rad, la2 = b.lat * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  $('watch').addEventListener('click', () => {
+    $('watch').disabled = true;
+    $('once').disabled = true;
+    const samples = [];
+    let last = null;
+    const started = performance.now();
+
+    const id = navigator.geolocation.watchPosition((pos) => {
+      const c = pos.coords;
+      // rx, not pos.timestamp: the car's clock is not epoch-based and does not
+      // advance between fixes, so deriving speed from it divides by zero or by
+      // nonsense. Our own arrival time is the only usable interval here.
+      const rx = Date.now();
+      const cur = { lat: c.latitude, lon: c.longitude, t: rx };
+      let derived = null;
+      if (last && cur.t > last.t) {
+        derived = haversine(last, cur) / ((cur.t - last.t) / 1000);
+      }
+      last = cur;
+      samples.push({
+        rx,
+        srcT: pos.timestamp,
+        accuracy: c.accuracy ?? null,
+        speed: (c.speed === null || c.speed === undefined) ? null : c.speed,
+        heading: (c.heading === null || c.heading === undefined) ? null : c.heading,
+        derived,
+      });
+      const shown = (c.speed !== null && c.speed !== undefined) ? c.speed : derived;
+      $('live').textContent = shown === null ? '—' : (shown * 3.6).toFixed(1) + ' km/h';
+      const left = Math.max(0, WATCH_SECONDS - (performance.now() - started) / 1000);
+      $('watch').textContent = 'Watching… ' + left.toFixed(0) + ' s';
+    }, (err) => {
+      log('watch error', err.message);
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+
+    setTimeout(() => {
+      navigator.geolocation.clearWatch(id);
+      $('watch').textContent = 'Watch for 30 seconds';
+      $('watch').disabled = false;
+      $('once').disabled = false;
+
+      const n = samples.length;
+      const spanS = n > 1 ? (samples[n - 1].rx - samples[0].rx) / 1000 : 0;
+      const rate = spanS > 0 ? (n - 1) / spanS : 0;
+      const withSpeed = samples.filter((s) => s.speed !== null).length;
+      const withHeading = samples.filter((s) => s.heading !== null).length;
+      const accs = samples.map((s) => s.accuracy).filter((a) => a !== null);
+      const medAcc = accs.length ? accs.slice().sort((a, b) => a - b)[Math.floor(accs.length / 2)] : null;
+      const accSentinel = medAcc !== null && medAcc >= ACCURACY_SENTINEL_M;
+      const srcClockOK = samples.every((s) => s.srcT >= EPOCH_MS_FLOOR)
+        && new Set(samples.map((s) => s.srcT)).size > 1;
+      const derivs = samples.map((s) => s.derived).filter((d) => d !== null);
+      const maxDerived = derivs.length ? Math.max(...derivs) : null;
+      const maxReported = withSpeed ? Math.max(...samples.filter((s) => s.speed !== null).map((s) => s.speed)) : null;
+
+      const out = {
+        samples: n, spanS: Math.round(spanS), rateHz: rate,
+        withSpeed, withHeading, medianAccuracyM: medAcc,
+        maxReportedSpeed: maxReported, maxDerivedSpeed: maxDerived,
+        // Full series, so a later question about this run does not need another drive.
+        series: samples,
+      };
+      report.watch = out;
+
+      const reportedOK = withSpeed > 0;
+      // Derived speed needs a real accuracy figure, so a sentinel disqualifies it
+      // outright — a 9999.99 tells us nothing about whether the wobble is motion.
+      const derivedOK = rate >= USABLE_RATE_HZ && medAcc !== null && !accSentinel && medAcc <= USABLE_ACCURACY_M;
+      // A populated speed is necessary but not sufficient: a gate that only hears
+      // about movement every ten seconds is not a gate. Rate is judged either way.
+      const rateOK = rate >= USABLE_RATE_HZ;
+      out.rateOK = rateOK; out.accuracySentinel = accSentinel; out.srcClockUsable = srcClockOK;
+      verdict('watch-verdict',
+        reportedOK && rateOK ? 'YES' : (reportedOK || derivedOK) ? 'WARN' : 'NO',
+        reportedOK && rateOK ? 'coords.speed is populated and updates fast enough'
+          : reportedOK ? 'coords.speed is populated, but only ' + rate.toFixed(2) + ' Hz — gate would lag'
+          : derivedOK ? 'speed is null, but fixes are good enough to derive it'
+          : 'neither reported nor derivable speed is usable');
+      kv($('watch-info'), [
+        ['samples', n + ' over ' + Math.round(spanS) + ' s'],
+        ['update rate', rate.toFixed(2) + ' Hz', rate >= USABLE_RATE_HZ ? 'ok' : 'warn'],
+        ['median accuracy', accSentinel ? num(medAcc, ' m', 2) + '  — placeholder' : num(medAcc, ' m', 1),
+          (medAcc !== null && !accSentinel && medAcc <= USABLE_ACCURACY_M) ? 'ok' : 'warn'],
+        ['source clock usable', srcClockOK ? 'yes' : 'NO — pos.timestamp not epoch ms or frozen; using arrival time',
+          srcClockOK ? 'ok' : 'warn'],
+        ['fixes with speed', withSpeed + ' / ' + n, reportedOK ? 'ok' : 'warn'],
+        ['fixes with heading', withHeading + ' / ' + n, withHeading > 0 ? 'ok' : 'warn'],
+        ['max reported speed', maxReported === null ? 'null' : ms(maxReported)],
+        ['max derived speed', maxDerived === null ? '—' : ms(maxDerived)],
+        ['gating verdict', reportedOK ? 'use coords.speed' + (rateOK ? '' : ' (but check rate in Drive)')
+          : derivedOK ? 'derive from fixes' : 'browser GPS cannot gate — use BLE or CAN',
+          (reportedOK && rateOK) || derivedOK ? 'ok' : reportedOK ? 'warn' : 'bad'],
+      ]);
+      log('watch', { samples: n, rateHz: rate, withSpeed, withHeading, medAcc, maxReported, maxDerived });
+    }, WATCH_SECONDS * 1000);
+  });
+
+  // ── 5 · report ───────────────────────────────────────────────────────────
+  $('exact').addEventListener('change', () => {
+    // Recompute from the untouched fix, never from the value already in the
+    // report — see rawFix above.
+    if (report.once && rawFix) {
+      report.once.latitude = coarse(rawFix.lat);
+      report.once.longitude = coarse(rawFix.lon);
+    }
+    report.exactCoordinates = $('exact').checked;
+    renderReport();
+  });
+
+  $('send').addEventListener('click', async () => {
+    const hint = $('send-hint');
+    hint.textContent = 'Sending…';
+    try {
+      const r = await fetch('/debug/telemetry-probe?f=report.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(report),
+      });
+      const body = await r.text();
+      hint.textContent = r.ok ? 'Saved on the Pi: ' + body
+        : r.status === 404 ? 'Refused (404) — PROBE_DIR is not set on the server.'
+        : 'Refused (' + r.status + '): ' + body;
+      log('send', { status: r.status });
+    } catch (err) {
+      hint.textContent = 'Send failed (' + err.name + ') — use Copy instead.';
+      log('send failed', err.message);
+    }
+  });
+
+  $('copy').addEventListener('click', async () => {
+    const text = JSON.stringify(report, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      $('send-hint').textContent = 'Copied ' + text.length + ' characters.';
+    } catch (err) {
+      $('send-hint').textContent = 'Clipboard refused (' + err.name + ') — select the text below.';
+    }
+  });
+
+  $('reload').addEventListener('click', () => location.reload());
+
+  log('page loaded', { ua: navigator.userAgent });
+  renderReport();
+})();
+</script>
+</body>
+</html>

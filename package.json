@@ -1,13 +1,13 @@
 {
-  "name": "mytesla",
+  "name": "tesla-pi",
   "version": "0.4.0",
-  "description": "Stream Apple CarPlay (plus optional Android/Waydroid and RetroArch) into the Tesla in-car browser from a Raspberry Pi.",
+  "description": "Stream Apple CarPlay (plus an optional native RetroArch session) into the Tesla in-car browser from a Raspberry Pi.",
   "type": "module",
   "main": "index.js",
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "https://github.com/elwinchia/mytesla.git"
+    "url": "https://github.com/elwinchia/tesla-pi.git"
   },
   "scripts": {
     "start": "node index.js"

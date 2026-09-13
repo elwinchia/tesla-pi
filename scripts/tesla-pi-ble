@@ -1,0 +1,114 @@
+#!/bin/bash
+# tesla-pi-ble — read vehicle state from the car over BLE.
+#
+# Wraps teslamotors/vehicle-command's tesla-control so that the two things easy
+# to get wrong are handled here rather than remembered:
+#
+#   1. Bluetooth ships rfkill SOFT-BLOCKED on this device, and that is
+#      deliberate: the Pi's Bluetooth shares silicon with the wlan0 radio
+#      running the AP, and the AP is the product. Every subcommand below
+#      unblocks, does its work, and restores whatever the block state was on
+#      entry — including on Ctrl-C or error.
+#   2. The signing key is enrolled as `vehicle_monitor`, NOT `driver`. See
+#      docs/telemetry-options.md: a driver-role key on a box whose own security
+#      model is "the WPA2 password of the in-car AP" would make a compromised
+#      Pi into a car key. A monitor key reads state and cannot unlock or drive.
+#
+# Usage:
+#   tesla-pi-ble scan                 # is the car advertising? (no key needed)
+#   tesla-pi-ble enroll               # request key approval — then tap the NFC card
+#   tesla-pi-ble state charge         # charge climate drive location closures tire-pressure ...
+#   tesla-pi-ble bcs                  # body-controller-state; works with infotainment asleep
+#
+# If every call returns "the vehicle is already connected to the maximum number
+# of BLE devices": the car accepts only THREE simultaneous BLE connections and
+# phone keys hold them. Turn Bluetooth off on a phone/tablet/watch near the car
+# and try again. This is why nothing here holds a connection open.
+#
+# The VIN comes from $TESLA_VIN or /etc/default/tesla-pi. It is needed because
+# the car's BLE name is a SHA1 of the VIN and cannot be reversed.
+
+set -euo pipefail
+
+DIR="${TESLA_BLE_DIR:-$HOME/tesla-ble}"
+CTL="$DIR/tesla-control"
+export TESLA_KEY_FILE="${TESLA_KEY_FILE:-$DIR/private.pem}"
+
+[[ -x "$CTL" ]] || { echo "tesla-control not found at $CTL" >&2; exit 1; }
+
+# VIN: explicit env wins, else the service's env file.
+if [[ -z "${TESLA_VIN:-}" && -r /etc/default/tesla-pi ]]; then
+    TESLA_VIN="$(sudo -n grep -sh '^TESLA_VIN=' /etc/default/tesla-pi 2>/dev/null | cut -d= -f2- || true)"
+fi
+
+# ── Bluetooth, borrowed and returned ───────────────────────────────────────
+# rfkill and hciconfig live in /usr/sbin, which is not on a non-root PATH on
+# Debian. Resolve them explicitly rather than relying on the caller's PATH.
+RFKILL="$(command -v rfkill || echo /usr/sbin/rfkill)"
+HCICONFIG="$(command -v hciconfig || echo /usr/bin/hciconfig)"
+
+was_blocked=""
+restore_bt() {
+    [[ "$was_blocked" == "yes" ]] || return 0
+    sudo "$HCICONFIG" hci0 down 2>/dev/null || true
+    sudo "$RFKILL" block bluetooth 2>/dev/null || true
+}
+trap restore_bt EXIT INT TERM
+
+borrow_bt() {
+    was_blocked="$(sudo "$RFKILL" list bluetooth | awk '/Soft blocked/{print ($3=="yes")?"yes":"no"; exit}')"
+    if [[ "$was_blocked" == "yes" ]]; then
+        sudo "$RFKILL" unblock bluetooth
+        sleep 1
+    fi
+    sudo "$HCICONFIG" hci0 up 2>/dev/null || true
+    # tesla-control manages the HCI device itself and needs CAP_NET_ADMIN to do
+    # it; without it every call dies with "can't down device: operation not
+    # permitted". Re-applying is idempotent and costs a millisecond, which is
+    # cheaper than the twenty minutes it takes to rediscover this after copying
+    # a fresh binary over — file capabilities do not survive the copy.
+    sudo setcap 'cap_net_admin=eip' "$CTL" 2>/dev/null || true
+}
+
+need_vin() {
+    [[ -n "${TESLA_VIN:-}" ]] || {
+        echo "No VIN. Set TESLA_VIN=... or add TESLA_VIN= to /etc/default/tesla-pi." >&2
+        exit 2
+    }
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+scan)
+    borrow_bt
+    echo "Scanning 15 s for a Tesla (local name shaped S<16 hex>C)…"
+    # Only the name shape is printed. The name is a SHA1 of the VIN, so it is
+    # not something to echo into logs or bug reports.
+    if sudo timeout 20 bluetoothctl --timeout 15 scan le 2>/dev/null \
+        | grep -aoE 'Device [0-9A-F:]{17} S[0-9a-f]{16}C' | sort -u | grep -q .; then
+        echo "FOUND — a Tesla is advertising in range."
+    else
+        echo "Not found. The car may be asleep, out of range, or already BLE-saturated."
+    fi
+    ;;
+enroll)
+    need_vin; borrow_bt
+    echo "Requesting vehicle_monitor (read-only) approval for $DIR/private.pem"
+    echo ">>> Tap your NFC key card on the centre console within ~30 seconds. <<<"
+    "$CTL" -ble -vin "$TESLA_VIN" add-key-request "$DIR/public.pem" vehicle_monitor cloud_key
+    echo "If that returned without error, check the car's key list to confirm."
+    ;;
+state)
+    need_vin; borrow_bt
+    [[ $# -ge 1 ]] || { echo "usage: tesla-pi-ble state CATEGORY" >&2; exit 2; }
+    "$CTL" -ble -vin "$TESLA_VIN" state "$1"
+    ;;
+bcs)
+    need_vin; borrow_bt
+    "$CTL" -ble -vin "$TESLA_VIN" body-controller-state
+    ;;
+*)
+    sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

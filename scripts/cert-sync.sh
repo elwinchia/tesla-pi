@@ -13,18 +13,18 @@
 #   1  error (network, auth, verification) — existing cert left untouched
 #   2  already up to date, nothing to do
 #
-# Config (from /etc/default/mytesla):
+# Config (from /etc/default/tesla-pi):
 #   CARPLAY_DOMAIN    cert subject + /etc/letsencrypt/live/<domain> path
 #   CERT_SYNC_URL     base URL of the cert service (no trailing slash)
 #   CERT_SYNC_TOKEN   bearer token baked into the image
 
 set -uo pipefail
 
-[ -r /etc/default/mytesla ] && . /etc/default/mytesla
+[ -r /etc/default/tesla-pi ] && . /etc/default/tesla-pi
 
-: "${CARPLAY_DOMAIN:?CARPLAY_DOMAIN must be set in /etc/default/mytesla}"
-: "${CERT_SYNC_URL:?CERT_SYNC_URL must be set in /etc/default/mytesla}"
-: "${CERT_SYNC_TOKEN:?CERT_SYNC_TOKEN must be set in /etc/default/mytesla}"
+: "${CARPLAY_DOMAIN:?CARPLAY_DOMAIN must be set in /etc/default/tesla-pi}"
+: "${CERT_SYNC_URL:?CERT_SYNC_URL must be set in /etc/default/tesla-pi}"
+: "${CERT_SYNC_TOKEN:?CERT_SYNC_TOKEN must be set in /etc/default/tesla-pi}"
 
 LIVE_DIR="/etc/letsencrypt/live/${CARPLAY_DOMAIN}"
 VERSION_FILE="${LIVE_DIR}/version"
@@ -55,9 +55,8 @@ if [ -z "$remote_version" ]; then
   exit 1
 fi
 
-local_version=0
-[ -r "$VERSION_FILE" ] && local_version=$(tr -cd '0-9' < "$VERSION_FILE")
-: "${local_version:=0}"
+local_version=$(tr -cd '0-9' < "$VERSION_FILE" 2>/dev/null)
+local_version=${local_version:-0}
 
 if [ "$remote_version" -le "$local_version" ]; then
   log "up to date (local=$local_version remote=$remote_version)"
@@ -114,8 +113,31 @@ install -m 0600 "$TMP/privkey.pem"   "${LIVE_DIR}/.privkey.pem.new"   || { log "
 mv -f "${LIVE_DIR}/.fullchain.pem.new" "${LIVE_DIR}/fullchain.pem"
 mv -f "${LIVE_DIR}/.privkey.pem.new"   "${LIVE_DIR}/privkey.pem"
 
-# cert.pem / chain.pem for configs that reference the certbot layout.
-cp -f "${LIVE_DIR}/fullchain.pem" "${LIVE_DIR}/cert.pem" 2>/dev/null || true
+# Reproduce the rest of certbot's live/ layout, because configs written against
+# it reference these by name — conf/nginx-carplay.conf points
+# ssl_trusted_certificate at chain.pem, and nginx refuses to start if it is
+# missing. fullchain = leaf + intermediates, so:
+#   cert.pem  = the leaf only        (first certificate in the file)
+#   chain.pem = the intermediates    (everything after the leaf)
+awk 'BEGIN{n=0}
+     /-----BEGIN CERTIFICATE-----/{n++}
+     n==1{print > cert}
+     n>1 {print > chain}' \
+    cert="${LIVE_DIR}/.cert.pem.new" chain="${LIVE_DIR}/.chain.pem.new" \
+    "${LIVE_DIR}/fullchain.pem"
+
+# The leaf always exists — fullchain parsed as a certificate above.
+chmod 0644 "${LIVE_DIR}/.cert.pem.new"
+mv -f "${LIVE_DIR}/.cert.pem.new" "${LIVE_DIR}/cert.pem"
+
+if [ -s "${LIVE_DIR}/.chain.pem.new" ]; then
+  chmod 0644 "${LIVE_DIR}/.chain.pem.new"
+  mv -f "${LIVE_DIR}/.chain.pem.new" "${LIVE_DIR}/chain.pem"
+else
+  # A self-signed / single-cert fullchain has no intermediates to split out.
+  rm -f "${LIVE_DIR}/.chain.pem.new"
+  log "warn: fullchain had no intermediates; chain.pem not written"
+fi
 
 # Version last: if anything above failed we retry next cycle rather than
 # recording a version we did not actually install.

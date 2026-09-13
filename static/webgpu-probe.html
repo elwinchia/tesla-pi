@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>WebGPU probe</title>
+<!--
+  Diagnostic page, not part of the product UI. Served from static/ so it needs
+  no route of its own: https://<device>/webgpu-probe.html
+
+  Two separate plans are blocked on the same unanswered question:
+
+    * docs/retroarch-webgpu-plan.md §6 — a compute upscaler of the xBR class
+      running on the car's GPU, so the Pi can encode fewer pixels.
+    * docs/llm-companion-options.md — WebLLM running the companion model on the
+      car's GPU, so the Pi never does inference at all.
+
+  Both rest on "does the Tesla browser expose a *working* WebGPU". The plan doc
+  is explicit that `navigator.gpu` existing is not the answer: a blocklisted
+  driver presents as requestAdapter() returning null, and an adapter that
+  refuses requestDevice(), or a device that compiles nothing, is a third and
+  fourth way to fail. So this page does not stop at feature detection — it
+  dispatches a real compute shader and checks the numbers that come back.
+
+  Sections 6 and 8 are the ones that decide the LLM question specifically.
+  Decode speed is memory-bandwidth bound, not ALU bound, so §6 measures
+  bandwidth and converts it to a tokens/sec ceiling. §8 asks whether the
+  browser will even let us cache a model: WebLLM stores ~1-1.5 GB in the Cache
+  API, and a small quota kills the plan before the GPU gets a say.
+
+  Unlike mic-probe.html there is no upload to the Pi. That page had a 5-second
+  WAV to move; this one fits on a screen, and the report copies to the
+  clipboard. Nothing here needs MIC_PROBE_DIR or any server route.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px 20px 40px;
+    background: #0b0c0e; color: #f2f3f5;
+    font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #8a8f97; font-size: 14px; margin-bottom: 18px; }
+  .card {
+    background: #16181c; border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 10px; color: #8a8f97; font-weight: 500;
+             text-transform: uppercase; letter-spacing: 0.06em; }
+  button {
+    -webkit-appearance: none; appearance: none;
+    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px; padding: 16px 20px; font-size: 17px; font-weight: 500;
+    width: 100%; margin-bottom: 10px; touch-action: manipulation;
+  }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; }
+  button:disabled { opacity: 0.45; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row button { width: auto; flex: 1 1 140px; }
+  .kv { display: grid; grid-template-columns: minmax(150px, 40%) 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: #8a8f97; }
+  .kv dd { margin: 0; word-break: break-word; font-variant-numeric: tabular-nums; }
+  .verdict { font-size: 30px; font-weight: 600; margin: 8px 0 2px; }
+  .v-YES  { color: #46a758; }
+  .v-WARN { color: #e8a13a; }
+  .v-NO   { color: #e5484d; }
+  .v-none { color: #8a8f97; }
+  .ok   { color: #46a758; }
+  .warn { color: #e8a13a; }
+  .bad  { color: #e5484d; }
+  pre {
+    background: #0e1013; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 12px; font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; margin: 0;
+  }
+  .hint { color: #8a8f97; font-size: 13px; margin: 6px 0 0; }
+  .big { font-size: 18px; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>WebGPU probe</h1>
+<div class="sub" id="origin"></div>
+
+<div class="card">
+  <h2>Run everything</h2>
+  <button class="go" id="all">Run the whole probe</button>
+  <p class="hint">Takes a few seconds. Sections 4, 6 and 8 do real work on the car's
+     GPU and storage; each can also be run on its own below.</p>
+  <div class="verdict v-none" id="headline">not run</div>
+  <div class="big" id="headline-why"></div>
+</div>
+
+<div class="card">
+  <h2>1 · Environment</h2>
+  <dl class="kv" id="env-info"></dl>
+</div>
+
+<div class="card">
+  <h2>2 · Is there an adapter at all?</h2>
+  <p class="hint" style="margin-top:0">A blocklisted driver does not hide
+     <code>navigator.gpu</code> — it hands back a null adapter. Both power
+     preferences are tried, because a car may expose only one.</p>
+  <button id="adapter">Request adapter</button>
+  <div class="verdict v-none" id="adapter-verdict">not run</div>
+  <dl class="kv" id="adapter-info"></dl>
+</div>
+
+<div class="card">
+  <h2>3 · Limits that decide whether a model fits</h2>
+  <p class="hint" style="margin-top:0">WebLLM uploads model weights as storage
+     buffers. <code>maxStorageBufferBindingSize</code> is the one that bites: at
+     the 128 MB spec floor, weights must be split into many more shards, and some
+     MLC builds simply refuse.</p>
+  <dl class="kv" id="limits-info"></dl>
+</div>
+
+<div class="card">
+  <h2>4 · Does a compute shader actually run?</h2>
+  <p class="hint" style="margin-top:0">Objects existing proves nothing. This
+     dispatches a kernel and checks the values that come back.</p>
+  <button id="compute" disabled>Dispatch a compute shader</button>
+  <div class="verdict v-none" id="compute-verdict">not run</div>
+  <dl class="kv" id="compute-info"></dl>
+</div>
+
+<div class="card">
+  <h2>5 · 16-bit float</h2>
+  <p class="hint" style="margin-top:0">Not a nicety. Without <code>shader-f16</code>
+     the model runs in f32 and both bandwidth and memory roughly double, which is
+     the difference between a usable companion and a slideshow.</p>
+  <button id="f16" disabled>Compile an f16 shader</button>
+  <div class="verdict v-none" id="f16-verdict">not run</div>
+  <dl class="kv" id="f16-info"></dl>
+</div>
+
+<div class="card">
+  <h2>6 · How fast, really</h2>
+  <p class="hint" style="margin-top:0">Token decode is bandwidth bound — every
+     generated token reads the whole model once. So this streams a large storage
+     buffer through the GPU and reports GB/s, then divides by a model size to get
+     the ceiling. Treat the tokens/sec figures as an upper bound; a real engine
+     lands somewhere near half.</p>
+  <button id="bench" disabled>Measure GPU bandwidth</button>
+  <div class="verdict v-none" id="bench-verdict">not run</div>
+  <dl class="kv" id="bench-info"></dl>
+</div>
+
+<div class="card">
+  <h2>7 · Does it work inside a Worker?</h2>
+  <p class="hint" style="margin-top:0"><code>static/worker.js</code> is where this
+     project renders from. A WebGPU that only works on the main thread is not
+     usable for the RetroArch upscaler without restructuring — though an LLM,
+     which needs no canvas, would still be fine.</p>
+  <button id="worker" disabled>Test Worker + OffscreenCanvas</button>
+  <div class="verdict v-none" id="worker-verdict">not run</div>
+  <dl class="kv" id="worker-info"></dl>
+</div>
+
+<div class="card">
+  <h2>8 · Will it let us cache a model?</h2>
+  <p class="hint" style="margin-top:0">WebLLM keeps ~1–1.5 GB of weights in the
+     Cache API and reads from there on every later boot. If the car's browser
+     caps us well under that, the LLM plan dies here regardless of the GPU. The
+     write test moves 64 MB and cleans up after itself.</p>
+  <button id="storage" disabled>Check quota and write 64 MB</button>
+  <div class="verdict v-none" id="storage-verdict">not run</div>
+  <dl class="kv" id="storage-info"></dl>
+</div>
+
+<div class="card">
+  <h2>9 · BLE — can the browser reach the car?</h2>
+  <p class="hint" style="margin-top:0">Vehicle state (charge, climate, doors, lock)
+     is what turns a chatbot into a <i>driving</i> companion. Tesla exposes it over
+     BLE with no internet and no Fleet API — the open question is whether the
+     <b>browser</b> can speak it, which would move that whole leg off the Pi.
+     <b>Expect no.</b> Web Bluetooth is only partially implemented on Chromium for
+     Linux and needs an experimental flag we cannot set on a car. A cheap no is
+     still worth having, and a yes is a real simplification.</p>
+  <button id="ble">Check for the API</button>
+  <div class="verdict v-none" id="ble-verdict">not run</div>
+  <dl class="kv" id="ble-info"></dl>
+  <p class="hint">The two buttons below open the car's native device chooser, so they
+     need their own tap — they cannot run as part of "run everything", which has
+     already spent the user gesture the API requires.</p>
+  <div class="row">
+    <button id="ble-scan" disabled>Look for the car</button>
+    <button id="ble-any" disabled>Look for any BLE device</button>
+  </div>
+  <dl class="kv" id="ble-scan-info"></dl>
+  <p class="hint">Two buttons because one failure looks like the other: filtered
+     scan finding nothing and Web Bluetooth being broken both raise
+     <code>NotFoundError</code>. If "any device" also finds nothing, the API is the
+     problem, not the car.<br><br>
+     Even a full pass only proves the <b>transport</b> exists. Reading state needs a
+     key pair enrolled in the car and signed commands, which no probe should do.
+     If this section says no, the fallback is unchanged and already the plan of
+     record: run BLE on the Pi, and check it there with
+     <code>bluetoothctl scan on</code> looking for a name shaped <code>S…C</code>.</p>
+</div>
+
+<div class="card">
+  <h2>10 · Report</h2>
+  <div class="row">
+    <button class="go" id="send">Send to the Pi</button>
+    <button id="copy">Copy report</button>
+    <button id="reload">Reload page</button>
+  </div>
+  <p class="hint" id="send-hint">Saves the report on the Pi so nothing has to be read
+     off this screen. Needs <code>PROBE_DIR</code> set on the server; without it the
+     route does not exist and this returns 404.</p>
+  <p class="hint" id="copy-hint">Copy is the fallback. The text below is selectable
+     either way.</p>
+  <pre id="report-text">not run</pre>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <pre id="log"></pre>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // Section 6 converts bandwidth to a tokens/sec ceiling for these. Sizes are
+  // 4-bit weights plus the usual f16 embedding/head overhead, i.e. what the
+  // engine actually re-reads per token.
+  const MODELS = [
+    { name: 'Qwen3.5-0.8B q4', gb: 0.6 },
+    { name: 'Gemma 4 e2b q4', gb: 1.5 },
+    { name: 'LFM2.5 2.6B q4', gb: 1.8 },
+  ];
+
+  // Cache API write test. Big enough that a tight quota refuses it, small
+  // enough that a car with 8 GB shrugs.
+  const CACHE_TEST_BYTES = 64 * 1024 * 1024;
+  const CACHE_NAME = 'webgpu-probe-scratch';
+
+  // Tesla's vehicle BLE service, from teslamotors/vehicle-command's protocol.md.
+  // 0212 is written to, 0213 indicates back. The advertised local name is
+  // "S" + first 8 bytes of SHA1(VIN) in lower-case hex + "C", which is why the
+  // scan below reports the name shape rather than trying to match a VIN.
+  const TESLA_SVC = '00000211-b2d1-43f0-9b88-960cebf8b91e';
+  const TESLA_WRITE = '00000212-b2d1-43f0-9b88-960cebf8b91e';
+  const TESLA_READ = '00000213-b2d1-43f0-9b88-960cebf8b91e';
+
+  // What WebLLM wants. Below these it still runs, just worse or not at all.
+  const WANT_STORAGE_BINDING = 128 * 1024 * 1024;
+  const WANT_BUFFER = 256 * 1024 * 1024;
+  const WANT_QUOTA_GB = 2;
+
+  const report = {
+    startedAt: new Date().toISOString(),
+    origin: location.origin,
+    userAgent: navigator.userAgent,
+    steps: [],
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+
+  function log(msg, data) {
+    const line = new Date().toISOString().slice(11, 19) + '  ' + msg
+      + (data === undefined ? '' : '  ' + JSON.stringify(data));
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+    report.steps.push({ t: new Date().toISOString(), msg, data: data ?? null });
+    renderReport();
+  }
+
+  function kv(el, pairs) {
+    el.innerHTML = '';
+    for (const [k, v, cls] of pairs) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = String(v);
+      if (cls) dd.className = cls;
+      el.append(dt, dd);
+    }
+  }
+
+  function verdict(el, word, why) {
+    const e = $(el);
+    e.className = 'verdict v-' + word;
+    e.textContent = why ? word + ' — ' + why : word;
+  }
+
+  function renderReport() {
+    $('report-text').textContent = JSON.stringify(report, null, 2);
+  }
+
+  const mb = (n) => (n === undefined || n === null) ? '—' : (n / 1048576).toFixed(0) + ' MB';
+  const gb = (n) => (n === undefined || n === null) ? '—' : (n / 1073741824).toFixed(2) + ' GB';
+
+  $('origin').textContent = location.origin;
+
+  // ── 1 · environment ──────────────────────────────────────────────────────
+  const chrome = /Chrome\/([\d.]+)/.exec(navigator.userAgent);
+  report.env = {
+    chromium: chrome ? chrome[1] : null,
+    secureContext: window.isSecureContext,
+    hardwareConcurrency: navigator.hardwareConcurrency ?? null,
+    deviceMemoryGB: navigator.deviceMemory ?? null,
+    hasWebGPU: !!navigator.gpu,
+    hasOffscreenCanvas: typeof OffscreenCanvas !== 'undefined',
+    hasCacheAPI: typeof caches !== 'undefined',
+    hasStorageManager: !!(navigator.storage && navigator.storage.estimate),
+  };
+  kv($('env-info'), [
+    ['Chromium', report.env.chromium || 'not a Chrome UA'],
+    ['secure context', report.env.secureContext ? 'yes' : 'NO — getUserMedia and WebGPU both refuse',
+      report.env.secureContext ? 'ok' : 'bad'],
+    ['CPU threads', report.env.hardwareConcurrency ?? '—'],
+    // Advisory only: some builds clamp this to 8 and some report the real
+    // figure, so treat it as a floor for the model-size decision, not a budget.
+    ['navigator.deviceMemory', report.env.deviceMemoryGB ? report.env.deviceMemoryGB + ' GB (advisory)' : 'not reported'],
+    ['navigator.gpu', report.env.hasWebGPU ? 'present' : 'ABSENT', report.env.hasWebGPU ? 'ok' : 'bad'],
+    ['OffscreenCanvas', report.env.hasOffscreenCanvas ? 'present' : 'absent'],
+    ['Cache API', report.env.hasCacheAPI ? 'present' : 'absent'],
+  ]);
+  log('env', report.env);
+
+  // ── 2 · adapter ──────────────────────────────────────────────────────────
+  let adapter = null;
+  let device = null;
+
+  async function adapterInfoOf(a) {
+    // Sync `adapter.info` landed in Chrome 133; older builds only have the
+    // async requestAdapterInfo(). Try both rather than guessing the car's age.
+    let info = a.info || null;
+    if (!info && typeof a.requestAdapterInfo === 'function') {
+      try { info = await a.requestAdapterInfo(); } catch { info = null; }
+    }
+    if (!info) return null;
+    return {
+      vendor: info.vendor ?? null,
+      architecture: info.architecture ?? null,
+      device: info.device ?? null,
+      description: info.description ?? null,
+      subgroupMinSize: info.subgroupMinSize ?? null,
+      subgroupMaxSize: info.subgroupMaxSize ?? null,
+    };
+  }
+
+  // Only the limits that actually bear on running a model or an upscaler.
+  const LIMIT_KEYS = [
+    'maxBufferSize',
+    'maxStorageBufferBindingSize',
+    'maxUniformBufferBindingSize',
+    'maxStorageBuffersPerShaderStage',
+    'maxComputeWorkgroupSizeX',
+    'maxComputeInvocationsPerWorkgroup',
+    'maxComputeWorkgroupStorageSize',
+    'maxComputeWorkgroupsPerDimension',
+    'maxTextureDimension2D',
+  ];
+
+  async function doAdapter() {
+    if (!navigator.gpu) {
+      verdict('adapter-verdict', 'NO', 'navigator.gpu is absent');
+      log('adapter', 'navigator.gpu absent');
+      report.adapter = { present: false };
+      return null;
+    }
+    const tries = {};
+    for (const pref of ['high-performance', 'low-power', undefined]) {
+      try {
+        const a = await navigator.gpu.requestAdapter(pref ? { powerPreference: pref } : undefined);
+        tries[pref || 'default'] = !!a;
+        if (a && !adapter) adapter = a;
+      } catch (err) {
+        tries[pref || 'default'] = 'threw: ' + err.name;
+      }
+    }
+    log('requestAdapter', tries);
+
+    if (!adapter) {
+      // The documented shape of a driver blocklist.
+      verdict('adapter-verdict', 'NO', 'adapter is null — blocklisted driver');
+      kv($('adapter-info'), [['requestAdapter', JSON.stringify(tries)]]);
+      report.adapter = { present: true, adapter: false, tries };
+      return null;
+    }
+
+    const info = await adapterInfoOf(adapter);
+    const features = [...adapter.features].sort();
+    const limits = {};
+    for (const k of LIMIT_KEYS) limits[k] = adapter.limits[k] ?? null;
+    report.adapter = { present: true, adapter: true, tries, info, features, limits };
+
+    // Ask for every byte the adapter admits to, or the device silently gets
+    // spec-minimum limits and section 3's numbers become a lie.
+    const requiredLimits = {};
+    for (const k of ['maxBufferSize', 'maxStorageBufferBindingSize']) {
+      if (adapter.limits[k]) requiredLimits[k] = adapter.limits[k];
+    }
+    const wantF16 = adapter.features.has('shader-f16');
+    try {
+      device = await adapter.requestDevice({
+        requiredFeatures: wantF16 ? ['shader-f16'] : [],
+        requiredLimits,
+      });
+    } catch (err) {
+      // An adapter that refuses a device is a distinct failure from a null
+      // adapter, and worth naming as such.
+      verdict('adapter-verdict', 'NO', 'requestDevice failed: ' + err.name);
+      log('requestDevice failed', err.message);
+      report.adapter.device = 'failed: ' + err.message;
+      return null;
+    }
+    report.adapter.device = 'ok';
+    device.lost.then((e) => {
+      log('DEVICE LOST', { reason: e.reason, message: e.message });
+      report.adapter.deviceLost = { reason: e.reason, message: e.message };
+    });
+
+    verdict('adapter-verdict', 'YES', (info && (info.vendor || info.description)) || 'adapter + device');
+    kv($('adapter-info'), [
+      ['vendor', info?.vendor || '(blank — Chromium redacts this on some builds)'],
+      ['architecture', info?.architecture || '—'],
+      ['device', info?.device || '—'],
+      ['description', info?.description || '—'],
+      ['requestDevice', 'ok', 'ok'],
+      ['shader-f16', wantF16 ? 'available' : 'NOT available', wantF16 ? 'ok' : 'warn'],
+      ['features', features.join(', ') || '(none)'],
+    ]);
+    log('adapter', { info, features });
+
+    // ── 3 · limits ─────────────────────────────────────────────────────────
+    const rows = [];
+    for (const k of LIMIT_KEYS) {
+      const v = limits[k];
+      let shown = v === null ? '—' : (v > 1048576 ? mb(v) + '  (' + v + ')' : String(v));
+      let cls = '';
+      if (k === 'maxStorageBufferBindingSize') cls = v >= WANT_STORAGE_BINDING ? 'ok' : 'warn';
+      if (k === 'maxBufferSize') cls = v >= WANT_BUFFER ? 'ok' : 'warn';
+      rows.push([k, shown, cls]);
+    }
+    kv($('limits-info'), rows);
+
+    for (const id of ['compute', 'f16', 'bench', 'worker']) $(id).disabled = false;
+    return adapter;
+  }
+
+  // ── 4 · a kernel that has to produce the right answer ────────────────────
+  async function doCompute() {
+    if (!device) { log('compute skipped', 'no device'); return false; }
+    const N = 1024;
+    const src = new Float32Array(N);
+    for (let i = 0; i < N; i++) src[i] = i;
+
+    const inBuf = device.createBuffer({ size: src.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(inBuf, 0, src);
+    const outBuf = device.createBuffer({ size: src.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const stage = device.createBuffer({ size: src.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+
+    const module = device.createShaderModule({ code: `
+@group(0) @binding(0) var<storage, read> src : array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst : array<f32>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  let i = gid.x;
+  if (i >= ${N}u) { return; }
+  dst[i] = src[i] * 2.0 + 1.0;
+}
+` });
+    // Compilation diagnostics are the clearest signal when a driver is present
+    // but its shader compiler is not.
+    const cinfo = await module.getCompilationInfo();
+    const errs = cinfo.messages.filter((m) => m.type === 'error').map((m) => m.message);
+    if (errs.length) {
+      verdict('compute-verdict', 'NO', 'shader failed to compile');
+      kv($('compute-info'), [['errors', errs.join(' | ')]]);
+      report.compute = { ok: false, errors: errs };
+      return false;
+    }
+
+    const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    const bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: inBuf } }, { binding: 1, resource: { buffer: outBuf } }],
+    });
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind);
+    pass.dispatchWorkgroups(N / 64);
+    pass.end();
+    enc.copyBufferToBuffer(outBuf, 0, stage, 0, src.byteLength);
+    device.queue.submit([enc.finish()]);
+
+    await stage.mapAsync(GPUMapMode.READ);
+    const got = new Float32Array(stage.getMappedRange().slice(0));
+    stage.unmap();
+
+    let bad = 0;
+    for (let i = 0; i < N; i++) if (got[i] !== i * 2 + 1) bad++;
+    for (const b of [inBuf, outBuf, stage]) b.destroy();
+
+    const ok = bad === 0;
+    verdict('compute-verdict', ok ? 'YES' : 'NO', ok ? 'all ' + N + ' values correct' : bad + ' wrong values');
+    kv($('compute-info'), [
+      ['elements', N],
+      ['wrong', bad, ok ? 'ok' : 'bad'],
+      ['sample dst[7]', got[7] + ' (expected 15)'],
+    ]);
+    report.compute = { ok, wrong: bad };
+    log('compute', report.compute);
+    return ok;
+  }
+
+  // ── 5 · f16 ──────────────────────────────────────────────────────────────
+  async function doF16() {
+    if (!device) return false;
+    const has = adapter.features.has('shader-f16');
+    if (!has) {
+      verdict('f16-verdict', 'NO', 'shader-f16 not offered by the adapter');
+      kv($('f16-info'), [['consequence', 'model runs f32 — roughly 2x the weights and 2x the bandwidth', 'warn']]);
+      report.f16 = { feature: false };
+      return false;
+    }
+    // The feature being listed and the compiler accepting `enable f16` are not
+    // the same claim. Check the second one.
+    const module = device.createShaderModule({ code: `
+enable f16;
+@group(0) @binding(0) var<storage, read_write> dst : array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+  let a : vec4<f16> = vec4<f16>(1.5h, 2.5h, 3.5h, 4.5h);
+  let b = a * 2.0h;
+  dst[0] = f32(b.x + b.y + b.z + b.w);
+}
+` });
+    const cinfo = await module.getCompilationInfo();
+    const errs = cinfo.messages.filter((m) => m.type === 'error').map((m) => m.message);
+    const ok = errs.length === 0;
+    verdict('f16-verdict', ok ? 'YES' : 'WARN', ok ? 'feature present and compiles' : 'feature listed but will not compile');
+    kv($('f16-info'), [
+      ['adapter feature', 'shader-f16 present', 'ok'],
+      ['compiles', ok ? 'yes' : errs.join(' | '), ok ? 'ok' : 'bad'],
+    ]);
+    report.f16 = { feature: true, compiles: ok, errors: errs };
+    log('f16', report.f16);
+    return ok;
+  }
+
+  // ── 6 · bandwidth, because decode is bandwidth bound ─────────────────────
+  async function doBench() {
+    if (!device) return null;
+    // Stay inside whatever the adapter admitted to in section 3.
+    const cap = Math.min(adapter.limits.maxStorageBufferBindingSize || 0, adapter.limits.maxBufferSize || 0);
+    const bytes = Math.min(64 * 1024 * 1024, Math.floor(cap / (16 * 1024 * 1024)) * 16 * 1024 * 1024) || 16 * 1024 * 1024;
+    const vec4Count = bytes / 16;
+    const WG = 256;
+    const groups = Math.min(1024, adapter.limits.maxComputeWorkgroupsPerDimension || 1024);
+    const threads = WG * groups;
+
+    const inBuf = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // Fill in slices; one 64 MB JS allocation on a car is not worth the risk.
+    const chunk = new Float32Array(1024 * 1024);
+    for (let i = 0; i < chunk.length; i++) chunk[i] = 1.0;
+    for (let off = 0; off < bytes; off += chunk.byteLength) {
+      device.queue.writeBuffer(inBuf, off, chunk, 0, Math.min(chunk.length, (bytes - off) / 4));
+    }
+    const outBuf = device.createBuffer({ size: threads * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+
+    // Grid-stride sum: every invocation walks the buffer, so one dispatch reads
+    // every byte exactly once. Result is written out so nothing is optimised away.
+    const module = device.createShaderModule({ code: `
+@group(0) @binding(0) var<storage, read> src : array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> dst : array<f32>;
+const N : u32 = ${vec4Count}u;
+const STRIDE : u32 = ${threads}u;
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
+  var acc : vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  var i : u32 = gid.x;
+  loop {
+    if (i >= N) { break; }
+    acc = acc + src[i];
+    i = i + STRIDE;
+  }
+  dst[gid.x] = acc.x + acc.y + acc.z + acc.w;
+}
+` });
+    const cinfo = await module.getCompilationInfo();
+    if (cinfo.messages.some((m) => m.type === 'error')) {
+      verdict('bench-verdict', 'NO', 'benchmark shader failed to compile');
+      return null;
+    }
+    const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+    const bind = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: inBuf } }, { binding: 1, resource: { buffer: outBuf } }],
+    });
+
+    const run = (passes) => {
+      const enc = device.createCommandEncoder();
+      for (let i = 0; i < passes; i++) {
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bind);
+        pass.dispatchWorkgroups(groups);
+        pass.end();
+      }
+      device.queue.submit([enc.finish()]);
+      return device.queue.onSubmittedWorkDone();
+    };
+
+    await run(2);                       // warm up: first dispatch pays for compile + upload
+    const PASSES = 30;
+    const t0 = performance.now();
+    await run(PASSES);
+    const ms = performance.now() - t0;
+
+    for (const b of [inBuf, outBuf]) b.destroy();
+
+    const gbps = (bytes * PASSES) / (ms / 1000) / 1e9;
+    const rows = [
+      ['buffer', mb(bytes)],
+      ['passes', PASSES],
+      ['elapsed', ms.toFixed(1) + ' ms'],
+      ['read bandwidth', gbps.toFixed(1) + ' GB/s', gbps >= 20 ? 'ok' : gbps >= 8 ? 'warn' : 'bad'],
+    ];
+    for (const m of MODELS) {
+      const ceiling = gbps / m.gb;
+      // Halved, because a real engine spends time on attention, sampling and
+      // dispatch overhead rather than pure streaming.
+      rows.push([m.name, Math.round(ceiling) + ' tok/s ceiling  ·  ~' + Math.round(ceiling * 0.5) + ' tok/s realistic',
+        ceiling * 0.5 >= 10 ? 'ok' : ceiling * 0.5 >= 5 ? 'warn' : 'bad']);
+    }
+    kv($('bench-info'), rows);
+    verdict('bench-verdict', gbps >= 20 ? 'YES' : gbps >= 8 ? 'WARN' : 'NO', gbps.toFixed(1) + ' GB/s');
+    report.bench = { bytes, passes: PASSES, ms, gbps };
+    log('bench', report.bench);
+    return gbps;
+  }
+
+  // ── 7 · Worker + OffscreenCanvas ─────────────────────────────────────────
+  async function doWorker() {
+    if (typeof Worker === 'undefined') {
+      verdict('worker-verdict', 'NO', 'no Worker constructor');
+      return false;
+    }
+    const src = `
+self.onmessage = async () => {
+  const out = { gpuInWorker: !!self.navigator.gpu, offscreen: typeof OffscreenCanvas !== 'undefined' };
+  try {
+    if (!self.navigator.gpu) throw new Error('navigator.gpu absent in worker');
+    const a = await self.navigator.gpu.requestAdapter();
+    out.adapter = !!a;
+    if (!a) throw new Error('null adapter in worker');
+    const d = await a.requestDevice();
+    out.device = true;
+    // The RetroArch path renders from a worker, so the canvas question is the
+    // one that matters here — not just whether compute works.
+    if (typeof OffscreenCanvas !== 'undefined') {
+      const c = new OffscreenCanvas(64, 64);
+      const ctx = c.getContext('webgpu');
+      out.canvasContext = !!ctx;
+      if (ctx) {
+        ctx.configure({ device: d, format: self.navigator.gpu.getPreferredCanvasFormat(), alphaMode: 'opaque' });
+        out.configured = true;
+      }
+    }
+  } catch (err) {
+    out.error = err.message;
+  }
+  self.postMessage(out);
+};
+`;
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    const w = new Worker(url);
+    const res = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ error: 'timed out after 10 s' }), 10000);
+      w.onmessage = (e) => { clearTimeout(timer); resolve(e.data); };
+      w.onerror = (e) => { clearTimeout(timer); resolve({ error: 'worker error: ' + e.message }); };
+      w.postMessage('go');
+    });
+    w.terminate();
+    URL.revokeObjectURL(url);
+
+    const ok = !!res.device;
+    const canvasOk = !!res.configured;
+    verdict('worker-verdict', ok && canvasOk ? 'YES' : ok ? 'WARN' : 'NO',
+      ok && canvasOk ? 'compute and canvas both work off-thread'
+        : ok ? 'compute works, OffscreenCanvas does not'
+        : (res.error || 'no device in worker'));
+    kv($('worker-info'), [
+      ['navigator.gpu in worker', res.gpuInWorker ? 'yes' : 'no', res.gpuInWorker ? 'ok' : 'bad'],
+      ['adapter', res.adapter ? 'yes' : 'no'],
+      ['device', res.device ? 'yes' : 'no'],
+      ['OffscreenCanvas webgpu context', res.canvasContext ? 'yes' : 'no'],
+      ['configured', res.configured ? 'yes' : 'no'],
+      ['error', res.error || '—', res.error ? 'bad' : ''],
+    ]);
+    report.worker = res;
+    log('worker', res);
+    return ok;
+  }
+
+  // ── 8 · storage, the other way this plan can die ─────────────────────────
+  async function doStorage() {
+    const out = {};
+    if (navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      out.quota = est.quota ?? null;
+      out.usage = est.usage ?? null;
+    }
+    if (navigator.storage && navigator.storage.persisted) {
+      try { out.persistedBefore = await navigator.storage.persisted(); } catch { out.persistedBefore = 'threw'; }
+    }
+    if (navigator.storage && navigator.storage.persist) {
+      // Worth asking: a car that evicts the cache overnight re-downloads 1.5 GB
+      // from the Pi on every drive.
+      try { out.persistGranted = await navigator.storage.persist(); } catch { out.persistGranted = 'threw'; }
+    }
+
+    if (typeof caches !== 'undefined') {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const blob = new Uint8Array(CACHE_TEST_BYTES);
+        const t0 = performance.now();
+        await cache.put('/probe-blob', new Response(blob));
+        out.writeMs = Math.round(performance.now() - t0);
+        const back = await cache.match('/probe-blob');
+        const buf = back ? await back.arrayBuffer() : null;
+        out.wroteBytes = buf ? buf.byteLength : 0;
+        out.readBack = out.wroteBytes === CACHE_TEST_BYTES;
+        if (navigator.storage && navigator.storage.estimate) {
+          const est2 = await navigator.storage.estimate();
+          out.usageAfter = est2.usage ?? null;
+        }
+      } catch (err) {
+        out.cacheError = err.name + ': ' + err.message;
+      } finally {
+        try { await caches.delete(CACHE_NAME); } catch {}
+      }
+    } else {
+      out.cacheError = 'Cache API absent';
+    }
+
+    const quotaGB = out.quota ? out.quota / 1073741824 : 0;
+    const wrote = !!out.readBack;
+    const good = wrote && quotaGB >= WANT_QUOTA_GB;
+    verdict('storage-verdict', good ? 'YES' : wrote ? 'WARN' : 'NO',
+      good ? gb(out.quota) + ' quota, 64 MB round-tripped'
+        : wrote ? 'wrote 64 MB but quota is only ' + gb(out.quota)
+        : (out.cacheError || 'write failed'));
+    kv($('storage-info'), [
+      ['quota', gb(out.quota), quotaGB >= WANT_QUOTA_GB ? 'ok' : 'warn'],
+      ['already used', gb(out.usage)],
+      ['persisted before', String(out.persistedBefore ?? '—')],
+      ['persist() granted', String(out.persistGranted ?? '—'), out.persistGranted === true ? 'ok' : 'warn'],
+      ['64 MB write', out.writeMs !== undefined ? out.writeMs + ' ms' : '—'],
+      ['read back intact', wrote ? 'yes' : 'NO', wrote ? 'ok' : 'bad'],
+      ['error', out.cacheError || '—', out.cacheError ? 'bad' : ''],
+    ]);
+    report.storage = out;
+    log('storage', out);
+    return good;
+  }
+
+  // ── 9 · BLE ──────────────────────────────────────────────────────────────
+  // Passive half: no user gesture needed, so "run everything" can include it.
+  async function doBle() {
+    const out = { present: !!navigator.bluetooth };
+    if (!navigator.bluetooth) {
+      verdict('ble-verdict', 'NO', 'navigator.bluetooth is absent');
+      kv($('ble-info'), [
+        ['navigator.bluetooth', 'ABSENT', 'bad'],
+        ['scan buttons', 'stay disabled — there is no API to scan with', 'warn'],
+        ['consequence', 'BLE runs on the Pi, as planned. Nothing is lost.'],
+      ]);
+      report.ble = out;
+      log('ble', out);
+      return false;
+    }
+    if (navigator.bluetooth.getAvailability) {
+      try { out.available = await navigator.bluetooth.getAvailability(); }
+      catch (err) { out.available = 'threw: ' + err.name; }
+    }
+    // Flag-gated almost everywhere; its presence hints at how complete this
+    // build's implementation is.
+    out.hasGetDevices = typeof navigator.bluetooth.getDevices === 'function';
+    if (out.hasGetDevices) {
+      try { out.permittedDevices = (await navigator.bluetooth.getDevices()).map((d) => d.name || '(unnamed)'); }
+      catch (err) { out.permittedDevices = 'threw: ' + err.name; }
+    }
+    const usable = out.available === true;
+    verdict('ble-verdict', usable ? 'WARN' : 'NO',
+      usable ? 'API present with a radio — scan to find out if it works' : 'API present but no radio available');
+    kv($('ble-info'), [
+      ['navigator.bluetooth', 'present', 'ok'],
+      ['getAvailability()', String(out.available ?? '—'), usable ? 'ok' : 'warn'],
+      ['getDevices()', out.hasGetDevices ? 'present' : 'absent (usual — flag-gated)'],
+      ['already permitted', Array.isArray(out.permittedDevices) ? (out.permittedDevices.join(', ') || '(none)') : String(out.permittedDevices ?? '—')],
+    ]);
+    $('ble-scan').disabled = false;
+    $('ble-any').disabled = false;
+    report.ble = out;
+    log('ble', out);
+    return usable;
+  }
+
+  // Active half: opens the native chooser, so it must stay on its own tap.
+  async function doBleScan(filtered) {
+    const out = { filtered };
+    const t0 = performance.now();
+    let device = null;
+    try {
+      device = await navigator.bluetooth.requestDevice(filtered
+        ? { filters: [{ services: [TESLA_SVC] }], optionalServices: [TESLA_SVC] }
+        : { acceptAllDevices: true, optionalServices: [TESLA_SVC] });
+    } catch (err) {
+      out.error = err.name + ': ' + err.message;
+      out.elapsedMs = Math.round(performance.now() - t0);
+      // A cancelled chooser and an empty scan raise the same NotFoundError, so
+      // report the timing and let a human tell them apart rather than guessing.
+      out.note = err.name === 'NotFoundError'
+        ? (out.elapsedMs < 1500
+            ? 'returned too fast to have scanned — the chooser probably never appeared'
+            : 'either nothing was found or the chooser was dismissed')
+        : 'the API rejected the call outright';
+      kv($('ble-scan-info'), [
+        [filtered ? 'filtered scan' : 'any-device scan', 'failed', 'bad'],
+        ['error', out.error],
+        ['elapsed', out.elapsedMs + ' ms'],
+        ['reading', out.note, 'warn'],
+      ]);
+      report.bleScan = Object.assign(report.bleScan || {}, { [filtered ? 'filtered' : 'any']: out });
+      log('ble scan', out);
+      return false;
+    }
+
+    out.name = device.name || '(unnamed)';
+    out.id = device.id ? device.id.slice(0, 8) : null;
+    // Tesla advertises S + 16 hex + C. Matching the shape avoids putting a VIN
+    // hash in a report that gets pasted around.
+    out.looksLikeTesla = /^S[0-9a-f]{16}C$/.test(device.name || '');
+    const rows = [
+      ['device', out.name],
+      ['name shape S…C', out.looksLikeTesla ? 'matches a Tesla' : 'does not match', out.looksLikeTesla ? 'ok' : 'warn'],
+    ];
+
+    try {
+      const gatt = await device.gatt.connect();
+      out.connected = true;
+      const svc = await gatt.getPrimaryService(TESLA_SVC);
+      out.service = true;
+      const chars = await svc.getCharacteristics();
+      out.characteristics = chars.map((c) => ({
+        uuid: c.uuid,
+        write: c.properties.write || c.properties.writeWithoutResponse,
+        indicate: c.properties.indicate || c.properties.notify,
+      }));
+      out.hasWrite = out.characteristics.some((c) => c.uuid === TESLA_WRITE && c.write);
+      out.hasRead = out.characteristics.some((c) => c.uuid === TESLA_READ && c.indicate);
+      rows.push(['GATT connect', 'ok', 'ok']);
+      rows.push(['Tesla service', 'found', 'ok']);
+      rows.push(['0212 writable', out.hasWrite ? 'yes' : 'no', out.hasWrite ? 'ok' : 'warn']);
+      rows.push(['0213 indicates', out.hasRead ? 'yes' : 'no', out.hasRead ? 'ok' : 'warn']);
+      gatt.disconnect();
+    } catch (err) {
+      out.gattError = err.name + ': ' + err.message;
+      rows.push(['GATT', out.gattError, 'bad']);
+    }
+
+    const full = out.hasWrite && out.hasRead;
+    verdict('ble-verdict', full ? 'YES' : 'WARN',
+      full ? 'the browser can talk to the car — key enrolment is the remaining work'
+        : out.connected ? 'found a device but not the full Tesla service'
+        : 'found a device, could not connect');
+    kv($('ble-scan-info'), rows);
+    report.bleScan = Object.assign(report.bleScan || {}, { [filtered ? 'filtered' : 'any']: out });
+    log('ble scan', out);
+    return full;
+  }
+
+  // ── headline ─────────────────────────────────────────────────────────────
+  function headline() {
+    const a = report.adapter;
+    if (!a || !a.adapter || a.device !== 'ok') {
+      verdict('headline', 'NO', 'no usable WebGPU device');
+      $('headline-why').textContent =
+        'Both the RetroArch compute upscaler and the in-browser LLM are dead on this car. '
+        + 'Fall back to WebGL2 for the upscaler, and to a Pi-side accelerator for the companion.';
+      return;
+    }
+    if (!report.compute || !report.compute.ok) {
+      verdict('headline', 'NO', 'device exists but compute produced wrong results');
+      $('headline-why').textContent = 'Worse than no WebGPU — do not build on this.';
+      return;
+    }
+    const gbps = report.bench ? report.bench.gbps : 0;
+    const quotaGB = report.storage && report.storage.quota ? report.storage.quota / 1073741824 : 0;
+    const storageOK = report.storage && report.storage.readBack && quotaGB >= WANT_QUOTA_GB;
+    const f16OK = report.f16 && report.f16.compiles;
+
+    if (gbps >= 20 && storageOK && f16OK) {
+      verdict('headline', 'YES', 'the car can host the model');
+      $('headline-why').textContent =
+        'WebGPU works, f16 compiles, ' + gbps.toFixed(0) + ' GB/s, and there is room to cache weights. '
+        + 'Proceed with WebLLM served off the Pi.';
+    } else if (gbps >= 8 && report.storage && report.storage.readBack) {
+      verdict('headline', 'WARN', 'usable, with caveats');
+      $('headline-why').textContent =
+        'WebGPU works but something is short: '
+        + [!f16OK && 'no f16', gbps < 20 && 'only ' + gbps.toFixed(0) + ' GB/s', !storageOK && 'tight storage quota']
+            .filter(Boolean).join(', ')
+        + '. A 0.6 GB model is the safe target, not a 1.5 GB one.';
+    } else {
+      verdict('headline', 'WARN', 'WebGPU works but is too slow or too cramped for an LLM');
+      $('headline-why').textContent =
+        'Good enough for the RetroArch upscaler (which needs bandwidth, not capacity), '
+        + 'not good enough to host a chat model.';
+    }
+  }
+
+  // ── wiring ───────────────────────────────────────────────────────────────
+  async function guard(fn, btn) {
+    const b = btn && $(btn);
+    if (b) b.disabled = true;
+    try { return await fn(); }
+    catch (err) { log('ERROR in ' + (btn || 'step'), err.message); return null; }
+    finally { if (b) b.disabled = false; }
+  }
+
+  $('adapter').addEventListener('click', () => guard(doAdapter, 'adapter'));
+  $('compute').addEventListener('click', () => guard(doCompute, 'compute'));
+  $('f16').addEventListener('click', () => guard(doF16, 'f16'));
+  $('bench').addEventListener('click', () => guard(doBench, 'bench'));
+  $('worker').addEventListener('click', () => guard(doWorker, 'worker'));
+  $('storage').addEventListener('click', () => guard(doStorage, 'storage'));
+  $('storage').disabled = false;
+  $('ble').addEventListener('click', () => guard(doBle, 'ble'));
+  $('ble').disabled = false;
+  // Not wrapped in guard(): requestDevice needs the user gesture from this very
+  // click, and guard's await chain would spend it before the call is made.
+  $('ble-scan').addEventListener('click', () => doBleScan(true).catch((e) => log('ERROR ble-scan', e.message)));
+  $('ble-any').addEventListener('click', () => doBleScan(false).catch((e) => log('ERROR ble-any', e.message)));
+  $('reload').addEventListener('click', () => location.reload());
+
+  $('all').addEventListener('click', async () => {
+    $('all').disabled = true;
+    try {
+      await guard(doAdapter);
+      if (device) {
+        await guard(doCompute);
+        await guard(doF16);
+        await guard(doBench);
+      }
+      await guard(doWorker);
+      await guard(doStorage);
+      await guard(doBle);
+      headline();
+      renderReport();
+    } finally {
+      $('all').disabled = false;
+    }
+  });
+
+  // The car has no devtools and no good way to paste a screenful of JSON off
+  // itself, so the upload is the primary path and the clipboard is the fallback
+  // — the reverse of how this page started out.
+  $('send').addEventListener('click', async () => {
+    const hint = $('send-hint');
+    hint.textContent = 'Sending…';
+    try {
+      const r = await fetch('/debug/webgpu-probe?f=report.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(report),
+      });
+      const body = await r.text();
+      hint.textContent = r.ok
+        ? 'Saved on the Pi: ' + body
+        : (r.status === 404
+            ? 'Refused (404) — PROBE_DIR is not set on the server, so the route does not exist.'
+            : 'Refused (' + r.status + '): ' + body);
+      log('send', { status: r.status, body: body.slice(0, 200) });
+    } catch (err) {
+      hint.textContent = 'Send failed (' + err.name + ': ' + err.message + ') — use Copy instead.';
+      log('send failed', err.message);
+    }
+  });
+
+  $('copy').addEventListener('click', async () => {
+    const text = JSON.stringify(report, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      $('copy-hint').textContent = 'Copied ' + text.length + ' characters.';
+    } catch (err) {
+      $('copy-hint').textContent = 'Clipboard refused (' + err.name + ') — select the text below instead.';
+    }
+  });
+
+  log('page loaded', { ua: navigator.userAgent });
+  renderReport();
+})();
+</script>
+</body>
+</html>
