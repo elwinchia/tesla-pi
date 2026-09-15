@@ -819,6 +819,7 @@ function requestRedraw(reason) {
 // So: repeat the ask on a short timer and stop the moment a frame is
 // broadcast. Costs nothing in the common case, where the first ask is answered
 // and the second timer never fires.
+const VIDEO_FOCUS = (process.env.CARPLAY_VIDEO_FOCUS ?? 'on') !== 'off'
 const KEYFRAME_KICK_MS = Number(process.env.CARPLAY_KEYFRAME_KICK_MS ?? 400)
 const KEYFRAME_KICK_MAX = Number(process.env.CARPLAY_KEYFRAME_KICK_MAX ?? 8)
 let keyframeKickTimer = null
@@ -838,12 +839,48 @@ function kickKeyframe(reason) {
   // Not plugged means no phone to ask. Frames start on their own when one
   // arrives, so there is nothing to kick and nothing to warn about.
   if (!carplayStarted || !plugged) return
+  // Ask for the video stream itself before asking it to redraw.
+  //
+  // CommandMapping has requestVideoFocus = 500 / releaseVideoFocus = 501, and
+  // until now nothing in this project or in node-carplay ever sent either —
+  // the only video command we used was frame (12). Those do different jobs:
+  // frame asks for a keyframe *within a stream that is already running*, and it
+  // cannot restart one whose focus has gone. That is why the retry added on
+  // 2026-09-08 still came up empty; measured in the car 2026-09-14, twice, as
+  // keyframe_kick_exhausted after 8 asks over 3.2 s with a phone attached and
+  // not one frame arriving. Asking for focus first is the missing half.
+  //
+  // Only ever *request*. releaseVideoFocus would let the phone stop encoding
+  // while nobody watches, which is tempting, but it trades a blank screen we
+  // now understand for a dependency on re-acquisition being reliable — and
+  // that is exactly what just proved not to be.
+  // Switchable, because it is reasoned-from-the-protocol rather than measured:
+  // CARPLAY_VIDEO_FOCUS=off takes it back out of the picture so a session can be
+  // debugged without an unproven command in the mix.
+  if (VIDEO_FOCUS) {
+    try { sendCommand(500) }
+    catch (err) { log('warn', 'request_video_focus_failed', { reason, msg: err.message }) }
+  }
   keyframeKicksLeft = KEYFRAME_KICK_MAX
   const tick = () => {
     keyframeKickTimer = null
     if (!carplayStarted || !plugged) return
     if (keyframeKicksLeft-- <= 0) {
-      log('warn', 'keyframe_kick_exhausted', { reason, ms: KEYFRAME_KICK_MAX * KEYFRAME_KICK_MS })
+      // Eight asks, no picture. The two remaining explanations need different
+      // fixes, and these fields separate them: if frames_total has not moved
+      // since the session started the dongle is not streaming at all (a phone
+      // or dongle problem, upstream of anything we do), whereas a climbing
+      // frames_total with none reaching us would be ours. plugged/phone are
+      // logged because an exhausted kick already proves a phone was attached —
+      // the guard above returns early otherwise — so a surprise here is worth
+      // seeing rather than inferring.
+      log('warn', 'keyframe_kick_exhausted', {
+        reason,
+        ms: KEYFRAME_KICK_MAX * KEYFRAME_KICK_MS,
+        plugged,
+        phone: phoneType,
+        frames_total: videoFramesTotal,
+      })
       return
     }
     try { carplay.sendKey('frame') }
@@ -2221,13 +2258,36 @@ socketControl.on('connection', (ws) => {
   })
 })
 
+// Set on every /video connection, cleared by the first frame broadcast after
+// it. The gap between the two is the only number that separates the two
+// possible causes of "CarPlay was not instant coming back", and nothing was
+// measuring it: video_connected said when the page asked, and no event said
+// when it got a picture. Without this the journal cannot tell
+//   page reconnect was slow  (socket opened late; this gap is small)
+// from
+//   phone would not paint    (socket opened at once; this gap is seconds)
+// and those have entirely different fixes. Reported still-slow 2026-09-14.
+let awaitingFirstFrameSince = 0
+
 socketVideo.on('connection', () => {
-  log('info', 'video_connected', { clients: socketVideo.clients.size })
+  log('info', 'video_connected', { clients: socketVideo.clients.size, plugged, frames_total: videoFramesTotal })
+  awaitingFirstFrameSince = Date.now()
   kickKeyframe('video_connected')
 })
 
 let videoFrameCount = 0
 let videoByteCount = 0
+// Never reset. videoFrameCount above is zeroed by the LOG_FPS sampler every
+// second, so it cannot answer "has the dongle ever sent us a picture".
+let videoFramesTotal = 0
+// When the current phone session began, and the frame count at that moment, so
+// a session can be judged on whether it ever produced a picture. See the
+// 'unplugged' handler.
+let pluggedAt = 0
+let framesAtPlug = 0
+// Comfortably inside the gap between the 31 s failure and the shortest real
+// session seen (421 s), so this cannot mislabel a genuine short session.
+const HANDSHAKE_GRACE_MS = Number(process.env.CARPLAY_HANDSHAKE_GRACE_MS ?? 45000)
 let audioFrameCount = 0
 let audioByteCount = 0
 if (process.env.LOG_FPS) {
@@ -2588,7 +2648,14 @@ carplay.onmessage = (ev) => {
     case 'video':
       // A picture arrived, so whatever we were asking for has been answered.
       stopKeyframeKick()
+      if (awaitingFirstFrameSince) {
+        // How long the page stared at its loading card. The overlay lifts on
+        // the worker's firstFrame message, so this is what the driver saw.
+        log('info', 'first_frame', { after_connect_ms: Date.now() - awaitingFirstFrameSince })
+        awaitingFirstFrameSince = 0
+      }
       videoFrameCount++
+      videoFramesTotal++
       videoByteCount += ev.message.data.byteLength
       broadcast(socketVideo, ev.message.data, { binary: true, compress: false })
       break
@@ -2639,6 +2706,8 @@ carplay.onmessage = (ev) => {
       break
     case 'plugged':
       plugged = true
+      pluggedAt = Date.now()
+      framesAtPlug = videoFramesTotal
       broadcast(socketControl, JSON.stringify({ type: 'statusReq', data: 'plugged', phone: phoneLabel() }), { compress: false })
       log('info', 'phone_plugged', { phone: phoneLabel() })
       // Re-apply current night mode — dongle resets to config.nightMode on each
@@ -2659,8 +2728,32 @@ carplay.onmessage = (ev) => {
         }
       }
       break
-    case 'unplugged':
+    case 'unplugged': {
       plugged = false
+      // Name the failure that cost two hours to find by hand.
+      //
+      // Wireless CarPlay is two links: Bluetooth for control, then the phone has
+      // to join the dongle's own 5 GHz AP. When the second half never happens the
+      // dongle waits a fixed ~31 s and then reports btDisconnected — the only
+      // link it had — so the log said "Bluetooth dropped" for a Wi-Fi handshake
+      // that never started. Measured 2026-09-14: 35 sessions at exactly 31 s
+      // against 11 real ones of 7-49 min, nothing in between, and the giveaway
+      // was BoxInfo arriving with MDModel/MDOSVersion empty and never filling in.
+      //
+      // So say it outright. No video at all plus a sub-grace lifetime is the
+      // signature; phone_model is included because populated-but-short would
+      // mean something different and should not be mistaken for this.
+      const lifeMs = pluggedAt ? Date.now() - pluggedAt : null
+      const framesThisSession = videoFramesTotal - framesAtPlug
+      if (lifeMs != null && lifeMs < HANDSHAKE_GRACE_MS && framesThisSession === 0) {
+        log('warn', 'carplay_handshake_timeout', {
+          life_ms: lifeMs,
+          phone_model: dongle.link.phoneModel,
+          frames: framesThisSession,
+          why: 'bt_up_but_phone_never_joined_dongle_wifi',
+        })
+      }
+      pluggedAt = 0
       // Next phone gets its streams announced in the log again.
       audioSeenStreams.clear()
       audioStreamStats.clear()
@@ -2670,6 +2763,7 @@ carplay.onmessage = (ev) => {
       clearNowPlaying()
       broadcast(socketControl, JSON.stringify({ type: 'statusReq', data: 'unplugged', phone: null }), { compress: false })
       break
+    }
     case 'failure':
       log('error', 'carplay_failure')
       restartCarplay('failure_event')

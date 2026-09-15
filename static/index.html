@@ -5404,7 +5404,9 @@
         wifiRefreshScan();
       }
     })();
-    if (!wifiState.pollTimer) wifiState.pollTimer = setInterval(wifiRefreshStatus, 5000);
+    // 10 s, not 5: every tick is a sudo + nmcli on the device, and link state
+    // does not move fast enough to be worth twice the privileged calls.
+    if (!wifiState.pollTimer) wifiState.pollTimer = setInterval(wifiRefreshStatus, 10000);
   }
 
   setSettingsTab(lsGet(SETTINGS_TAB_KEY));
@@ -6957,9 +6959,22 @@
     pollSettingsCert();
     if (settingsPollTimer) clearInterval(settingsPollTimer);
     settingsPollTimer = setInterval(pollSettingsCert, 5000);
+    // Re-arm whichever pane is actually on screen, since stopSettingsPoll now
+    // tears its poll down on the way out. Without this, coming back to Settings
+    // would show a pane that never refreshes.
+    if (typeof onSettingsTabShown === 'function') onSettingsTabShown(settingsTab);
   }
   function stopSettingsPoll() {
     if (settingsPollTimer) { clearInterval(settingsPollTimer); settingsPollTimer = null; }
+    // The per-pane polls too. These are started by onSettingsTabShown and were
+    // only ever stopped by *switching panes*, so walking out of Settings
+    // altogether left them running for the life of the page. Measured in the
+    // car 2026-09-14: `sudo tesla-pi-wifi status` firing 12x a minute for a
+    // solid 30 minutes while the driver was on the CarPlay route — a sudo
+    // spawn, an nmcli call and three journal lines every five seconds, for a
+    // pane nobody was looking at.
+    if (wifiState.pollTimer) { clearInterval(wifiState.pollTimer); wifiState.pollTimer = null; }
+    if (dgState.pollTimer) { clearInterval(dgState.pollTimer); dgState.pollTimer = null; }
   }
 
   function goRoute(name) {
