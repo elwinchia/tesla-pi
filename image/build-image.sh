@@ -165,8 +165,6 @@ printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' >"$ROOT/etc/resolv.conf"
 # over /tmp, so the on-disk mode is invisible. In a chroot there is no tmpfs and
 # apt fails every repo with "Couldn't create temporary file /tmp/apt.conf.XXXXXX
 # ... is not signed", which reads like a GPG problem and is not one.
-# chmod rather than `install -d -m 1777`: BSD install silently drops the sticky
-# bit, and this script is also run by hand from a Mac-hosted VM.
 note "/tmp in image was mode $(stat -c '%a' "$ROOT/tmp" 2>/dev/null || echo 'absent')"
 mkdir -p "$ROOT/tmp"
 chmod 1777 "$ROOT/tmp"
