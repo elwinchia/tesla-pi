@@ -66,8 +66,16 @@ jobs:
           chmod 600 "$dir/privkey.pem"
           # Refuse to ship a mismatched pair — nginx would fail to start and the
           # appliance would serve nothing at all.
-          a=$(openssl x509 -noout -modulus -in "$dir/fullchain.pem" | openssl sha256)
-          b=$(openssl rsa  -noout -modulus -in "$dir/privkey.pem"   | openssl sha256)
+          #
+          # Compare public keys, not moduli: `-modulus` is RSA-only and the cert
+          # is issued with --key-type ecdsa, so the old `openssl rsa -modulus`
+          # form failed outright with "Not an RSA key". This matches how
+          # renew-cert.yml and cert-sync.sh verify the same pair.
+          a=$(openssl x509 -in "$dir/fullchain.pem" -noout -pubkey | openssl sha256)
+          b=$(openssl pkey -in "$dir/privkey.pem"   -pubout        | openssl sha256)
+          # Both must be non-empty as well as equal: if both openssl calls fail,
+          # two empty strings compare equal and a broken pair sails through.
+          [ -n "$a" ] && [ -n "$b" ] || { echo "::error::could not read certificate or key"; exit 1; }
           [ "$a" = "$b" ] || { echo "::error::certificate and private key do not match"; exit 1; }
           openssl x509 -in "$dir/fullchain.pem" -noout -subject -dates
           echo "bundle=$dir" >> "$GITHUB_OUTPUT"
