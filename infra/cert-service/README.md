@@ -68,8 +68,9 @@ cd infra/cert-service
 npx wrangler kv namespace create CERTS
 ```
 
-Copy the printed `id` into `wrangler.toml` over `REPLACE_WITH_KV_NAMESPACE_ID`
-(and into the workflow's `KV_NAMESPACE_ID` if you use CI renewal).
+Copy the printed `id` into `wrangler.toml` over the existing `id` under
+`[[kv_namespaces]]`, and into `KV_NAMESPACE_ID` in
+`.github/workflows/renew-cert.yml`.
 
 ### 3. Device token
 
@@ -152,17 +153,34 @@ curl -sS -H "Authorization: Bearer $DEVICE_TOKEN" "$URL/cert/version"   # 200 + 
 curl -sS -o /dev/null -w '%{http_code}\n' "$URL/cert/version"           # 401
 ```
 
-### 8. Rate limiting
+### 8. Rate limiting (already configured)
 
-The bundle contains a private key. Add a rate-limiting rule in front of the
-Worker (Cloudflare dashboard → Security → WAF → Rate limiting rules), e.g. 10
-requests / 10 min / IP. Devices poll hours apart, so this is generous for
-legitimate use and expensive for scraping.
+Already configured in `wrangler.toml` — nothing to do in the dashboard. The
+bundle contains a private key, so the Worker charges every request against two
+per-IP budgets using Workers rate-limit bindings:
 
-> On `*.workers.dev`, WAF rules apply at the account level rather than a zone
-> route. If rate limiting proves awkward there, that is the main argument for
-> moving to a single-label custom hostname (e.g. `certs-teslapi.humblebees.co`)
-> later.
+| Binding | Budget | Charged on |
+|---|---|---|
+| `RL_REQUESTS` | 10 / 60 s | every request, before the path lookup |
+| `RL_AUTH_FAILURES` | 3 / 60 s | additionally, on a wrong or missing token |
+
+Over the limit the answer is `429` with `Retry-After: 60`, which also means a
+guesser stops being able to tell a wrong token from a right one.
+
+A device polls hours apart and fetches three objects per rotation, so this is
+far above legitimate use.
+
+> **Not a WAF rule.** WAF rate-limiting rules attach to a zone, and
+> `*.workers.dev` is Cloudflare's zone rather than ours, so there is no zone
+> here to attach one to. The limit has to live in the Worker.
+
+> **The limiter is deliberately permissive.** Counters are per Cloudflare
+> location and eventually consistent. Measured 2026-09-16 against the deployed
+> Worker: a cold burst of 35 rapid requests got only ~2 rejections, while a
+> sustained 100 got 60 — it converges to ~95% blocked rather than clamping the
+> first burst. Size the budgets for that: it makes bulk pulling expensive, it
+> does not make a short burst impossible. The token, not this, is what actually
+> guards the key.
 
 ---
 
@@ -189,6 +207,10 @@ coordinated re-image (see the design doc's Phase 2).
 - The Cloudflare DNS token exists **only** in GitHub Actions secrets (or your
   local `~/.secrets`). It is never in the Worker, KV, an image, or this repo.
 - `DEVICE_TOKEN` is shared across all images, so it is a weak secret by design —
-  it gates cert distribution, nothing else. Rate limiting is what makes it hold up.
+  it gates cert distribution, nothing else. Its 256 bits are what make it hold
+  up; the rate limiting in §8 bounds bulk scraping and removes the 401/429
+  oracle, but one successful request yields the key, so it is not the guard.
+  Per-device tokens would make a leak revocable — Phase 2 in
+  `docs/turnkey-shared-domain-plan.md`, deliberately not built yet.
 - The certificate's private key is shared across devices. Bounded because each Pi
   is an isolated single-client AP; recoverable by re-issuing and republishing.

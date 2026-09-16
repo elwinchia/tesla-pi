@@ -14,8 +14,9 @@
 // Workers plan (R2 needs a payment method on file), and KV's eventual
 // consistency (~60 s) is irrelevant for a cert that rotates every ~60 days.
 //
-// The privkey is a secret: this endpoint must stay token-gated and rate-limited
-// (see README — the rate limit is a WAF rule, enforced in front of the Worker).
+// The privkey is a secret: this endpoint stays token-gated and rate-limited in
+// the Worker itself rather than by a WAF rule — see README.md §8 for why, and
+// wrangler.toml for the two budgets.
 
 const OBJECTS = {
   '/cert/version': { key: 'version.json', type: 'application/json' },
@@ -42,19 +43,31 @@ async function tokensMatch(a, b) {
 function deny(status, msg) {
   return new Response(msg + '\n', {
     status,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      // Both budgets use period=60, so that is how long a caller should wait.
+      ...(status === 429 && { 'Retry-After': '60' }),
+    },
   })
 }
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url)
-
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('method not allowed\n', { status: 405, headers: { Allow: 'GET, HEAD' } })
     }
 
-    const target = OBJECTS[url.pathname]
+    // Requests with no CF-Connecting-IP share the "unknown" bucket — the
+    // restrictive direction, the one to fail towards when guarding a key.
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
+
+    // Charged before the path lookup, so enumerating paths costs the same as
+    // asking for a real one.
+    const { success: withinBudget } = await env.RL_REQUESTS.limit({ key: ip })
+    if (!withinBudget) return deny(429, 'too many requests')
+
+    const target = OBJECTS[new URL(request.url).pathname]
     if (!target) return deny(404, 'not found')
 
     if (!env.DEVICE_TOKEN) return deny(500, 'server misconfigured: DEVICE_TOKEN unset')
@@ -63,7 +76,11 @@ export default {
     const header = request.headers.get('Authorization') || ''
     const presented = header.startsWith('Bearer ') ? header.slice(7) : ''
     if (!(await tokensMatch(presented, env.DEVICE_TOKEN))) {
-      return deny(401, 'unauthorized')
+      // A wrong token is charged twice: once above, once against the much
+      // scarcer failure budget. Past that, the answer stops distinguishing a
+      // wrong token from a valid one.
+      const { success: mayRetry } = await env.RL_AUTH_FAILURES.limit({ key: ip })
+      return mayRetry ? deny(401, 'unauthorized') : deny(429, 'too many requests')
     }
 
     const { value, metadata } = await env.CERTS.getWithMetadata(target.key, 'text')

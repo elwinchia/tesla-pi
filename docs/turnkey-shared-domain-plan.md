@@ -109,8 +109,9 @@ JSON parsing in shell, and `openssl` verifies the pair directly.
 
 - **Auth:** `Authorization: Bearer <DEVICE_TOKEN>` — a shared token baked into
   the image. Reject anything else.
-- **Rate-limit** per IP (Cloudflare WAF / Worker KV) — the bundle contains a
-  private key; make scraping expensive.
+- **Rate-limit** per IP, in the Worker — WAF rules need a zone and
+  `*.workers.dev` is not ours. The bundle contains a private key; make scraping
+  expensive. Budgets and measured behaviour: `infra/cert-service/README.md` §8.
 - **Always HTTPS** (ordinary public cert for `certs.` — unrelated to the shared
   device cert).
 - Never publish the bundle as a public GitHub release or unauthenticated URL.
@@ -190,8 +191,11 @@ Optionally surface last-sync time in Settings → Certificate.
   opportunity is narrow. If it leaks: revoke, re-issue, bump version, devices
   pull the new one through the same channel.
 - **Shared device token.** Every image has the same bearer token, so it is a
-  weak secret. Rate-limit hard. If it leaks, rotate it — but note that rotating
-  it strands already-flashed devices, so treat it as a v2 problem (see §7).
+  weak secret — its length, not the rate limit, is what holds. Rate limiting
+  bounds scraping and hides the 401/429 distinction from a guesser; it does not
+  help once someone has the token, since one request yields the key. If it
+  leaks, rotate it — but note that rotating it strands already-flashed devices,
+  so treat it as a v2 problem (see §7).
 
 **Keep**
 - `SECURITY.md` still applies unchanged: the app itself remains unauthenticated
