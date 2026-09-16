@@ -86,8 +86,9 @@ user. Know what that means before flashing one.
   [tesla-android](https://github.com/tesla-android) makes. See
   `docs/turnkey-shared-domain-plan.md` §5.
 - **`CERT_SYNC_TOKEN` is shared** and therefore a weak secret. It is scoped to
-  fetching a certificate and nothing else; rate limiting is what makes it hold
-  up. It lives in `/etc/default/tesla-pi`, mode 0600.
+  fetching a certificate and nothing else, and its length is what makes it hold
+  up; the service's rate limiting bounds scraping rather than guarding the key.
+  It lives in `/etc/default/tesla-pi`, mode 0600.
 - **The hotspot password is the same on every image** (`12345678`). Only the
   SSID differs per device (`Tesla-Pi-XXXX`, derived from the Pi's serial), which
   prevents collisions between neighbouring boxes but is **not** a security

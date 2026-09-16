@@ -32,10 +32,22 @@ CURL_TIMEOUT="${CERT_SYNC_TIMEOUT:-30}"
 
 log() { logger -t cert-sync -- "$*"; printf '[%s] %s\n' "$(date -Iseconds)" "$*" >&2; }
 
+# Logs why a fetch failed — a 429 is ordinary back-off, not a bad token.
+# curl reports 000 for a transport failure, so that is just another case here.
 fetch() { # fetch <path> <dest>
-  curl -fsS --max-time "$CURL_TIMEOUT" \
+  local code
+  code=$(curl -sS --max-time "$CURL_TIMEOUT" \
     -H "Authorization: Bearer ${CERT_SYNC_TOKEN}" \
-    -o "$2" "${CERT_SYNC_URL}$1"
+    -o "$2" -w '%{http_code}' "${CERT_SYNC_URL}$1") || code=000
+  case "$code" in
+    200) return 0 ;;
+    000) log "could not reach ${CERT_SYNC_URL}$1 (offline, DNS, or TLS)" ;;
+    429) log "rate limited (HTTP 429) — retrying on the next cycle" ;;
+    401) log "token rejected (HTTP 401) — check CERT_SYNC_TOKEN in /etc/default/tesla-pi" ;;
+    503) log "service has no certificate published yet (HTTP 503)" ;;
+    *)   log "unexpected HTTP $code for $1" ;;
+  esac
+  return 1
 }
 
 TMP="$(mktemp -d)" || { log "mktemp failed"; exit 1; }
@@ -44,7 +56,7 @@ chmod 700 "$TMP"
 
 # ---- 1. Is a newer version published? ---------------------------------------
 if ! fetch /cert/version "$TMP/version.json"; then
-  log "version check failed (offline, or token rejected)"
+  log "version check failed; keeping existing cert"
   exit 1
 fi
 

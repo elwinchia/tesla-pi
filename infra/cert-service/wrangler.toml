@@ -22,8 +22,28 @@ workers_dev = true
 # Namespace id is filled in by `wrangler kv namespace create CERTS`.
 [[kv_namespaces]]
 binding = "CERTS"
-id = "77bd43b9a2304b369a0f0e8173bcaf33"
+id = "5136d498a92d4f6abf778cd6ff3c2253"
 
 # DEVICE_TOKEN is a secret, never a var. Set it with:
 #   npx wrangler secret put DEVICE_TOKEN
 # The same value goes into /etc/default/tesla-pi (mode 0600) on every device.
+
+# Rate limiting — the private key is behind nothing but a bearer token, so cap
+# how fast anyone can pull on it. These are Worker bindings, not WAF rules; see
+# README.md §8 for why, and for how permissive the limiter really is.
+#
+# `period` may only be 10 or 60 seconds.
+
+# Charged on every request. A device polls hours apart and fetches three objects
+# on a rotation, so this is far above legitimate use.
+[[ratelimits]]
+name = "RL_REQUESTS"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
+# Charged additionally on a wrong or missing token. A correctly configured
+# device never spends from this budget, so it can be very small.
+[[ratelimits]]
+name = "RL_AUTH_FAILURES"
+namespace_id = "1002"
+simple = { limit = 3, period = 60 }
