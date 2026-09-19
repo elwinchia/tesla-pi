@@ -1050,6 +1050,60 @@ async function applyAndroidAuto(value) {
 const AUTOCONNECT_MIN_GAP_MS = 5000
 let lastPokeAt = 0
 
+// Back off the periodic poke once the phone has proved it will not complete the
+// Wi-Fi half of the handshake.
+//
+// Measured 2026-09-15: 55 handshake timeouts in two clusters, and only 4 of them
+// had a browser attached. The other 51 were this tick retrying every ~45 s at a
+// phone that was never going to answer — it kept the dongle hot (67 C), wrote
+// most of the day's log volume, and re-drove a Bluetooth pair 51 times for
+// nothing. iOS is also reported to get *more* reluctant, not less, the more a
+// failed CarPlay association is repeated.
+//
+// 'tick' is held outright. Everything else is rate-limited to one attempt per
+// HANDSHAKE_BYPASS_GAP_MS while the hold is up, which bounds the damage in both
+// directions: nobody waits more than a minute for an attempt after coming back
+// to the app, and no reconnect storm gets to hammer the dongle.
+//
+// A plain one-shot-per-hold was tried first and is wrong. 'ws_wake' fires on
+// every control socket and 'demand' on every first carplayWanted, and the Tesla
+// browser destroys and recreates the page by itself (17 control_connected in one
+// day, ten of them inside 30 s). Each failure arms a new hold, so a one-shot
+// would hand out a fresh bypass per failure — simulated against the real
+// 2026-09-15 storm that is 44 pair attempts in 29 min against 47 with no
+// backoff at all, i.e. the 5 s AUTOCONNECT_MIN_GAP_MS rather than the 15 s tick
+// setting the pace. A time gap cannot be gamed that way.
+//
+// An explicit pair_request is the exception and clears the streak outright: the
+// user is changing the phone situation, which invalidates everything the streak
+// was evidence for. Otherwise only a real picture clears it.
+const HANDSHAKE_BACKOFF_AFTER = Number(process.env.CARPLAY_HANDSHAKE_BACKOFF_AFTER ?? 3)
+const HANDSHAKE_BACKOFF_MS = Number(process.env.CARPLAY_HANDSHAKE_BACKOFF_MS ?? 60000)
+const HANDSHAKE_BACKOFF_MAX_MS = Number(process.env.CARPLAY_HANDSHAKE_BACKOFF_MAX_MS ?? 600000)
+const HANDSHAKE_BYPASS_GAP_MS = Number(process.env.CARPLAY_HANDSHAKE_BYPASS_GAP_MS ?? 60000)
+let handshakeFailStreak = 0
+let pokeHoldUntil = 0
+let lastBypassAt = 0
+
+// Called from the 'unplugged' handler when a session died without ever painting.
+function noteHandshakeFailure() {
+  handshakeFailStreak++
+  if (handshakeFailStreak < HANDSHAKE_BACKOFF_AFTER) return
+  const over = handshakeFailStreak - HANDSHAKE_BACKOFF_AFTER
+  const hold = Math.min(HANDSHAKE_BACKOFF_MS * 2 ** over, HANDSHAKE_BACKOFF_MAX_MS)
+  pokeHoldUntil = Date.now() + hold
+  log('warn', 'autoconnect_backoff', { streak: handshakeFailStreak, hold_ms: hold })
+}
+
+// A picture proves the handshake works, so forget the streak. Called from the
+// video hot path, hence a comparison against 0 rather than two assignments.
+function clearHandshakeFailures() {
+  if (!handshakeFailStreak && !pokeHoldUntil) return
+  handshakeFailStreak = 0
+  pokeHoldUntil = 0
+  lastBypassAt = 0
+}
+
 // Pairing mode. `wifiConnect` means "reconnect to the phone you already know",
 // which is the right thing 99% of the time and exactly the wrong thing while
 // someone is trying to pair a NEW phone: we send it every 15 s, and each one
@@ -1072,7 +1126,18 @@ function pokeAutoconnect(trigger, keys = ['wifiConnect']) {
   if (onDemand && !demandActive()) return
   if (pairing()) keys = PAIR_KEYS
   const now = Date.now()
+  // An explicit pair request invalidates the streak whether or not this
+  // particular poke survives the rate limit below.
+  if (trigger === 'pair_request') clearHandshakeFailures()
   if (now - lastPokeAt < AUTOCONNECT_MIN_GAP_MS) return
+  // Last, so a bypass allowance is only spent on a poke that actually goes out.
+  // See HANDSHAKE_BACKOFF_AFTER.
+  if (now < pokeHoldUntil) {
+    if (trigger === 'tick') return
+    if (now - lastBypassAt < HANDSHAKE_BYPASS_GAP_MS) return
+    lastBypassAt = now
+    log('info', 'autoconnect_backoff_bypass', { trigger, hold_ms: pokeHoldUntil - now })
+  }
   lastPokeAt = now
   try {
     for (const k of keys) carplay.sendKey(k)
@@ -2285,6 +2350,73 @@ let videoFramesTotal = 0
 // 'unplugged' handler.
 let pluggedAt = 0
 let framesAtPlug = 0
+// Wall clock of the last video frame, for the stall watchdog below.
+let lastFrameAt = 0
+
+// A session that painted and then stopped painting is a different failure from
+// one that never painted, and until now nothing caught it.
+//
+// Measured 2026-09-15: frames_total froze at 3271 at 10:17:36 with plugged still
+// true, and stayed there for 3m09s while the page reconnected five times and
+// eight rounds of requestVideoFocus + keyframe kicks got nothing back. It only
+// ended when the reader finally died of LIBUSB_TRANSFER_ERROR at 10:20:45. The
+// driver spent that whole time looking at a frozen picture. Asking a dead pipe
+// for a keyframe cannot fix it — the dongle has to be restarted.
+//
+// Guards, each one there to stop a restart that would be gratuitous:
+//   frames > framesAtPlug  — it painted once, so this is a stall and not the
+//                            handshake failure that carplay_handshake_timeout
+//                            already owns.
+//   clients.size           — nobody is watching, so a quiet stream harms no one.
+//   demandActive()         — the session is being released anyway.
+//
+// Two stages, because "no frames for a while" has one innocent explanation: a
+// stream that is merely idle rather than dead. It is not known for certain that
+// CarPlay keeps sending on a static screen — the dongle is configured with a 5 s
+// frameInterval, which suggests it does — and restarting a healthy session while
+// the driver is playing music would be a far worse bug than the one being fixed.
+// So ask first and escalate second: a keyframe request revives an idle stream and
+// clears the stall by itself, and only a pipe that ignores the asking gets
+// restarted. In the measured incident the kicks were ignored, so it would have
+// escalated at 45 s instead of dying on its own at 189 s.
+const VIDEO_STALL_MS = Number(process.env.CARPLAY_VIDEO_STALL_MS ?? 20000)
+const VIDEO_STALL_RESTART_MS = Number(process.env.CARPLAY_VIDEO_STALL_RESTART_MS ?? 45000)
+const VIDEO_STALL_CHECK_MS = Number(process.env.CARPLAY_VIDEO_STALL_CHECK_MS ?? 5000)
+// Set when stage one fires, cleared by the next frame, so the kick is asked for
+// once per stall and not every 5 s.
+let stallKickedAt = 0
+
+function checkVideoStall() {
+  if (!plugged || !carplayStarted || restartInFlight) return
+  if (videoFramesTotal <= framesAtPlug) return
+  if (!socketVideo.clients.size) return
+  if (onDemand && !demandActive()) return
+  const since = Date.now() - lastFrameAt
+  if (since < VIDEO_STALL_MS) return
+  const info = {
+    since_ms: since,
+    frames_total: videoFramesTotal,
+    frames_this_session: videoFramesTotal - framesAtPlug,
+    clients: socketVideo.clients.size,
+    phone: phoneType,
+  }
+  if (since < VIDEO_STALL_RESTART_MS) {
+    if (stallKickedAt) return
+    stallKickedAt = Date.now()
+    log('warn', 'video_stall_kick', info)
+    kickKeyframe('video_stalled')
+    return
+  }
+  log('warn', 'video_stalled', { ...info, kicked: !!stallKickedAt })
+  // Move the goalpost before restarting: runRestart awaits USB settle time, and
+  // without this the next tick would see the same stale lastFrameAt and queue a
+  // second restart on top of the one already running.
+  lastFrameAt = Date.now()
+  stallKickedAt = 0
+  restartCarplay('video_stalled')
+}
+setInterval(checkVideoStall, VIDEO_STALL_CHECK_MS).unref()
+
 // Comfortably inside the gap between the 31 s failure and the shortest real
 // session seen (421 s), so this cannot mislabel a genuine short session.
 const HANDSHAKE_GRACE_MS = Number(process.env.CARPLAY_HANDSHAKE_GRACE_MS ?? 45000)
@@ -2648,6 +2780,9 @@ carplay.onmessage = (ev) => {
     case 'video':
       // A picture arrived, so whatever we were asking for has been answered.
       stopKeyframeKick()
+      clearHandshakeFailures()
+      lastFrameAt = Date.now()
+      stallKickedAt = 0
       if (awaitingFirstFrameSince) {
         // How long the page stared at its loading card. The overlay lifts on
         // the worker's firstFrame message, so this is what the driver saw.
@@ -2752,6 +2887,7 @@ carplay.onmessage = (ev) => {
           frames: framesThisSession,
           why: 'bt_up_but_phone_never_joined_dongle_wifi',
         })
+        noteHandshakeFailure()
       }
       pluggedAt = 0
       // Next phone gets its streams announced in the log again.
