@@ -819,7 +819,9 @@ function requestRedraw(reason) {
 // So: repeat the ask on a short timer and stop the moment a frame is
 // broadcast. Costs nothing in the common case, where the first ask is answered
 // and the second timer never fires.
-const VIDEO_FOCUS = (process.env.CARPLAY_VIDEO_FOCUS ?? 'on') !== 'off'
+// OFF by default. Sending requestVideoFocus (500) to the dongle silenced it after a
+// car-icon tap; see kickKeyframe. CARPLAY_VIDEO_FOCUS=on puts it back for testing.
+const VIDEO_FOCUS = (process.env.CARPLAY_VIDEO_FOCUS ?? 'off') === 'on'
 const KEYFRAME_KICK_MS = Number(process.env.CARPLAY_KEYFRAME_KICK_MS ?? 400)
 const KEYFRAME_KICK_MAX = Number(process.env.CARPLAY_KEYFRAME_KICK_MAX ?? 8)
 let keyframeKickTimer = null
@@ -854,9 +856,12 @@ function kickKeyframe(reason) {
   // while nobody watches, which is tempting, but it trades a blank screen we
   // now understand for a dependency on re-acquisition being reliable — and
   // that is exactly what just proved not to be.
-  // Switchable, because it is reasoned-from-the-protocol rather than measured:
-  // CARPLAY_VIDEO_FOCUS=off takes it back out of the picture so a session can be
-  // debugged without an unproven command in the mix.
+  // Measured 2026-09-23, and the reasoning above was wrong: 500 and 501 are
+  // adapter->host messages, so sending 500 to the dongle is off-spec. After a
+  // car-icon tap (requestHostUI, cmd 3) and a return, the dongle went completely
+  // silent — no video, audio or status, message counter frozen — four times in
+  // four, and only a session restart recovered it. With this off, three round
+  // trips in a row painted in 127-212 ms. So it is off by default.
   if (VIDEO_FOCUS) {
     try { sendCommand(500) }
     catch (err) { log('warn', 'request_video_focus_failed', { reason, msg: err.message }) }
@@ -881,6 +886,10 @@ function kickKeyframe(reason) {
         phone: phoneType,
         frames_total: videoFramesTotal,
       })
+      // Never restart from here. An exhausted kick does not mean a dead stream:
+      // on a static screen the dongle has nothing new to send, so a healthy
+      // session goes quiet too. Restarting on it dropped a working session on
+      // every quick launcher round trip (measured 2026-09-23, twice).
       return
     }
     try { carplay.sendKey('frame') }
@@ -2385,6 +2394,8 @@ const VIDEO_STALL_CHECK_MS = Number(process.env.CARPLAY_VIDEO_STALL_CHECK_MS ?? 
 // Set when stage one fires, cleared by the next frame, so the kick is asked for
 // once per stall and not every 5 s.
 let stallKickedAt = 0
+// Set when the stall has been logged, cleared by the next frame with the kick.
+let stallLoggedAt = 0
 
 function checkVideoStall() {
   if (!plugged || !carplayStarted || restartInFlight) return
@@ -2407,13 +2418,11 @@ function checkVideoStall() {
     kickKeyframe('video_stalled')
     return
   }
+  // No automatic restart: a restart costs the driver the session, and a quiet
+  // stream is not proof of a dead one. Log once per stall, not every tick.
+  if (stallLoggedAt) return
+  stallLoggedAt = Date.now()
   log('warn', 'video_stalled', { ...info, kicked: !!stallKickedAt })
-  // Move the goalpost before restarting: runRestart awaits USB settle time, and
-  // without this the next tick would see the same stale lastFrameAt and queue a
-  // second restart on top of the one already running.
-  lastFrameAt = Date.now()
-  stallKickedAt = 0
-  restartCarplay('video_stalled')
 }
 setInterval(checkVideoStall, VIDEO_STALL_CHECK_MS).unref()
 
@@ -2783,6 +2792,7 @@ carplay.onmessage = (ev) => {
       clearHandshakeFailures()
       lastFrameAt = Date.now()
       stallKickedAt = 0
+      stallLoggedAt = 0
       if (awaitingFirstFrameSince) {
         // How long the page stared at its loading card. The overlay lifts on
         // the worker's firstFrame message, so this is what the driver saw.
