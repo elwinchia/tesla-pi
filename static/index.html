@@ -377,7 +377,7 @@
     line-height: 1.5;
   }
   /* Progress bar built from one segment per checkpoint: filled = done, the
-     active one animates left-to-right, the rest stay empty track. */
+     active one breathes, the rest stay empty track. */
   .overlay-steps {
     list-style: none;
     margin: 0;
@@ -402,18 +402,21 @@
     background: var(--mcu-accent);
     transition: width 260ms ease;
   }
+  /* Green for anything that is done or underway; a failed step, whether it is
+     a hard error or just needs attention, fills solid yellow. */
   .overlay-step[data-state="done"] .overlay-step-fill  { width: 100%; background: var(--mcu-ok); }
-  .overlay-step[data-state="error"] .overlay-step-fill { width: 100%; background: var(--mcu-danger); }
+  .overlay-step[data-state="error"] .overlay-step-fill,
   .overlay-step[data-state="attention"] .overlay-step-fill { width: 100%; background: var(--mcu-warn); }
   .overlay-step[data-state="active"] .overlay-step-fill {
-    width: 45%;
-    animation: ovstep 1.6s ease-in-out infinite;
+    width: 100%;
+    background: var(--mcu-ok);
+    animation: ovbreathe 1.8s ease-in-out infinite;
   }
-  /* Sweeps the partial fill across its own segment — a "working on it" cue that
-     needs no percentage we cannot actually measure. */
-  @keyframes ovstep {
-    0%   { transform: translateX(-100%); }
-    100% { transform: translateX(222%); }
+  /* Breathing light: the full segment fades in and out, a "working on it" cue
+     that needs no percentage we cannot actually measure. */
+  @keyframes ovbreathe {
+    0%, 100% { opacity: 0.25; }
+    50%      { opacity: 1; }
   }
   .overlay-step-label {
     font: 500 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -433,7 +436,7 @@
   .overlay-step[data-state="done"]   .overlay-step-label { color: var(--mcu-text-dim); }
   .overlay-step[data-state="done"]   .overlay-step-label::before { content: '\2713'; color: var(--mcu-ok); }
   .overlay-step[data-state="active"] .overlay-step-label { color: var(--mcu-text); }
-  .overlay-step[data-state="error"]  .overlay-step-label { color: var(--mcu-danger); }
+  .overlay-step[data-state="error"]  .overlay-step-label { color: var(--mcu-warn); }
   .overlay-step[data-state="error"]  .overlay-step-label::before { content: '\0021'; }
   .overlay-step[data-state="attention"] .overlay-step-label { color: var(--mcu-warn); }
   .overlay-step[data-state="attention"] .overlay-step-label::before { content: '\0021'; }
