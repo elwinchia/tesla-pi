@@ -41,7 +41,8 @@ function setlog(message) {
   self.postMessage(message);
 }
 
-// Cleared whenever the video socket reconnects, NOT once per worker. The
+// Cleared whenever the page puts its loading card up (every /video connection
+// included), NOT once per worker. The
 // worker outlives every route change, so a one-shot latch here meant the page
 // hid its loading card the first time CarPlay painted and never again: leaving
 // for the launcher closes /video (applyRoute -> video.stop()), coming back
@@ -96,8 +97,10 @@ self.addEventListener("message", message => {
     }
     return;
   }
-  // The page is about to wait on a picture again (a fresh /video connection).
-  // Re-arm the announcement so the next painted frame lifts its loading card.
+  // The page is about to wait on a picture again: a fresh /video connection, or
+  // its loading card went back up over a socket that is still open (a thawed
+  // tab, an unplugged phone). Re-arm the announcement so the next painted frame
+  // lifts it.
   // Must be handled before the fallthrough below, which treats any other
   // message as an encoded chunk.
   if (m && m.type === 'expectFrame') {
