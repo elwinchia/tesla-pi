@@ -163,6 +163,17 @@ const AP_PSK_MAX = 63
 // and the SPA hides the section rather than offering a button that fails.
 const POWER_HELPER = process.env.POWER_HELPER || '/usr/local/sbin/tesla-pi-power'
 
+// Settings → System → Date & time. A Pi 4 has no RTC and, in the car, no route
+// to an NTP server, so the clock is set from the time the car's browser
+// reports — see the Clock section. Same contract as the power helper: absent
+// binary means the feature is not installed, /clock/* answers 404, the SPA
+// hides the group, and nothing here ever tries to move the clock.
+const CLOCK_HELPER = process.env.CLOCK_HELPER || '/usr/local/sbin/tesla-pi-clock'
+// timesyncd creates this the first time it gets an NTP answer in a boot, and
+// /run is tmpfs so a power cut clears it. While it exists the box is on
+// internet time, which beats anything a page can report.
+const NTP_SYNC_MARK = process.env.NTP_SYNC_MARK || '/run/systemd/timesync/synchronized'
+
 // Settings → Dongle. The helper is only needed for the last step — writing a
 // downloaded image onto a FAT32 stick — so unlike the two above, its absence
 // does NOT hide the section: identifying the dongle and fetching firmware work
@@ -402,6 +413,11 @@ const ALLOWED_AUDIO_SOURCE = new Set(['browser', 'bluetooth'])
 // phone key fails to unlock the car. Opt in from Settings > Network.
 // Off is a hard stop, not a pause — no radio is touched and no slot is taken.
 const DEFAULT_BLE_ENABLED = false
+// Whether the clock may be set from the time the car's browser reports. On by
+// default: a box with no RTC and no NTP in the car has no better source, and
+// the automatic path only ever acts while the box has not reached NTP since it
+// started. Inert until scripts/install-clock-tab.sh has run.
+const DEFAULT_CLOCK_SYNC = true
 const ALLOWED_ASPECT = new Set(['full', 'wide'])
 const DEFAULT_ASPECT = 'full'
 // 'wide' is not reachable from the UI — the split-screen dock that used it was
@@ -431,7 +447,7 @@ function audioTransferFlagFor(source) {
 }
 
 function loadPersistedSettings() {
-  const out = { fps: DEFAULT_FPS, hand: DEFAULT_HAND, aspect: DEFAULT_ASPECT, bleEnabled: DEFAULT_BLE_ENABLED }
+  const out = { fps: DEFAULT_FPS, hand: DEFAULT_HAND, aspect: DEFAULT_ASPECT, bleEnabled: DEFAULT_BLE_ENABLED, clockSync: DEFAULT_CLOCK_SYNC }
   let raw
   try { raw = fsSync.readFileSync(SETTINGS_FILE, 'utf8') }
   catch (e) {
@@ -464,6 +480,8 @@ function loadPersistedSettings() {
   else if (j.bleEnabled !== undefined) log('warn', 'settings_load_failed', { msg: 'bleEnabled not a boolean', value: j.bleEnabled })
   if (typeof j.carplayOnDemand === 'boolean') out.carplayOnDemand = j.carplayOnDemand
   else if (j.carplayOnDemand !== undefined) log('warn', 'settings_load_failed', { msg: 'carplayOnDemand not a boolean', value: j.carplayOnDemand })
+  if (typeof j.clockSync === 'boolean') out.clockSync = j.clockSync
+  else if (j.clockSync !== undefined) log('warn', 'settings_load_failed', { msg: 'clockSync not a boolean', value: j.clockSync })
   return out
 }
 
@@ -518,6 +536,8 @@ let onDemand = typeof persisted.carplayOnDemand === 'boolean'
 let audioSource = persisted.audioSource
 // Not in `config`: node-carplay has no idea what this is. See applyBleEnabled.
 let bleEnabled = persisted.bleEnabled
+// Not in `config` either. See the Clock section for what acts on it.
+let clockSync = persisted.clockSync
 
 // ── Power supply ───────────────────────────────────────────────────────────
 // The Pi's firmware raises a flag when the 5 V rail sags below ~4.63 V, and the
@@ -920,6 +940,7 @@ async function persistSettings() {
   if (audioSource) out.audioSource = audioSource
   out.bleEnabled = bleEnabled
   out.carplayOnDemand = onDemand
+  out.clockSync = clockSync
   const body = JSON.stringify(out) + '\n'
   await fs.writeFile(tmp, body, { mode: 0o644 })
   await fs.rename(tmp, SETTINGS_FILE)
@@ -1011,6 +1032,19 @@ async function applyBleEnabled(value) {
   catch (err) { log('warn', 'ble_enabled_persist_failed', { msg: err.message }) }
   broadcast(socketControl, JSON.stringify({ type: 'bleEnabled', value: v }), { compress: false })
   log('info', 'ble_enabled_applied', { value: v })
+}
+
+async function applyClockSync(value) {
+  const v = !!value
+  if (clockSync === v) return
+  clockSync = v
+  try { await persistSettings() }
+  catch (err) { log('warn', 'clock_sync_persist_failed', { msg: err.message }) }
+  broadcast(socketControl, JSON.stringify({ type: 'clockSync', value: v }), { compress: false })
+  log('info', 'clock_sync_applied', { value: v })
+  // Switched on with a fresh report in hand: act on it now rather than waiting
+  // up to five minutes for the page's next one.
+  if (v) maybeAutoSetClock('setting_on')
 }
 
 // Turning this OFF has to actively start the dongle: demandActive() answers
@@ -1532,6 +1566,8 @@ const apGuard = mkHelperGuard(AP_HELPER, 'ap_helper_missing')
 // 404 here means scripts/install-power-tab.sh was never run on this device,
 // which is how the SPA decides whether to show the System section.
 const powerGuard = mkHelperGuard(POWER_HELPER, 'power_helper_missing')
+// Likewise for scripts/install-clock-tab.sh and the Date & time group.
+const clockGuard = mkHelperGuard(CLOCK_HELPER, 'clock_helper_missing')
 
 // nmcli -t emits colon-separated rows with ':' inside fields escaped as
 // '\:' and '\\' for backslash — naive split('\:') corrupts SSIDs.
@@ -1702,6 +1738,7 @@ const httpServer = http.createServer(async (req, res) => {
         cpu_count: os.cpus().length,
         retroarch: retroarch.state(),
         karaoke: karaoke.state(),
+        clock: clockState(),
       })
       return
     }
@@ -1890,6 +1927,40 @@ const httpServer = http.createServer(async (req, res) => {
           .then((r) => log(r.ok ? 'info' : 'warn', 'power_dispatched', { verb, ok: r.ok, stderr: r.stderr }))
           .catch((e) => log('warn', 'power_dispatch_failed', { verb, msg: String(e && e.message) }))
       }, 1200).unref?.()
+      return
+    }
+    // ---- Settings → System → Date & time -----------------------------------
+    // Presence probe for the SPA (404 where install-clock-tab.sh never ran),
+    // answering the same state that rides /healthz.clock.
+    if (p === '/clock/status') {
+      if (clockGuard(req, res)) return
+      sendJson(res, 200, { ok: true, ...clockState() })
+      return
+    }
+    // Set the clock by hand. `source` is 'sync' for the Sync now button (the
+    // page's own Date.now()) and 'manual' for a typed date and time. Both are
+    // the driver asking, so unlike the automatic path neither defers to NTP:
+    // timesyncd simply wins again at its next poll, and ntp_synced in the
+    // response lets the page say so.
+    if (p === '/clock/set') {
+      if (clockGuard(req, res, { method: 'POST' })) return
+      let body
+      try { body = await readJsonBody(req) }
+      catch { sendJson(res, 400, { ok: false, error: 'bad_json' }); return }
+      const target = Number(body && body.now_ms)
+      const source = body && body.source === 'manual' ? 'manual' : 'sync'
+      if (!Number.isSafeInteger(target) || target < CLOCK_FLOOR_MS || target > CLOCK_CEIL_MS) {
+        sendJson(res, 400, { ok: false, error: 'bad_time' })
+        return
+      }
+      const delta = target - Date.now()
+      if (Math.abs(delta) < CLOCK_MANUAL_MIN_MS) {
+        sendJson(res, 200, { ok: true, stepped: false, delta_ms: delta, ...clockState() })
+        return
+      }
+      const r = await setClock(target, source)
+      if (!r.ok) { sendJson(res, r.error === 'busy' ? 409 : 500, { ok: false, error: r.error }); return }
+      sendJson(res, 200, { ok: true, stepped: true, delta_ms: r.delta_ms, ...clockState() })
       return
     }
     // ---- Settings → Dongle (firmware library for the CarPlay adapter) ------
@@ -2224,6 +2295,7 @@ socketControl.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'aspect', value: config.aspect, height: config.height }))
   ws.send(JSON.stringify({ type: 'audioSource', value: audioSource || 'bluetooth' }))
   ws.send(JSON.stringify({ type: 'carplayOnDemand', value: onDemand }))
+  ws.send(JSON.stringify({ type: 'clockSync', value: clockSync }))
   // Replay the current track so a browser that loaded mid-song isn't blank
   // until the next media message.
   if (nowPlaying) ws.send(nowPlayingMsg())
@@ -2302,6 +2374,12 @@ socketControl.on('connection', (ws) => {
       applyAndroidAuto(msg.value)
     } else if (msg.type === 'carplayOnDemand') {
       applyCarplayOnDemand(msg.value)
+    } else if (msg.type === 'clockSync') {
+      applyClockSync(msg.value)
+    } else if (msg.type === 'clock') {
+      // The page's Date.now(), sent on open and every few minutes. See the
+      // Clock section for what happens to it.
+      handleClockReport(Number(msg.now))
     } else if (msg.type === 'mediaKey') {
       if (ALLOWED_MEDIA_KEYS.has(msg.key)) {
         log('info', 'media_key', { key: msg.key })
@@ -2425,6 +2503,151 @@ function checkVideoStall() {
   log('warn', 'video_stalled', { ...info, kicked: !!stallKickedAt })
 }
 setInterval(checkVideoStall, VIDEO_STALL_CHECK_MS).unref()
+
+// ── Clock ───────────────────────────────────────────────────────────────────
+// A Pi 4 has no real-time clock. At boot systemd advances the clock to the
+// mtime of timesyncd's clock file — roughly the last minute the box was
+// powered — and from there timesyncd needs an NTP answer, which needs a default
+// route that is not our own hotspot. In the car there is none: the Tesla joins
+// us, not the other way round. So every morning the box wakes with last
+// night's time and keeps it until it next sees home Wi-Fi, and every journal
+// timestamp from a drive is wrong by however long the car sat. Measured on the
+// test box 2026-09-25: network up 08:53, first NTP contact 09:38.
+//
+// The car does know the time (GPS + LTE), and the one channel it hands it to
+// us on is the page: Date.now() in the Tesla browser, sent over the control
+// socket on connect and every few minutes after. When the box has not reached
+// NTP since boot and a report disagrees by more than a couple of seconds, the
+// clock is stepped to it through the privileged helper. NTP, when there is
+// any, is the better source and always wins: the automatic path stands down
+// the moment timesyncd has synchronised this boot, and a manual set made while
+// on internet time is undone at timesyncd's next poll. See docs/clock-sync.md.
+//
+// Stepping a clock that everything here measures against is not free: the
+// stall watchdog, the pair window, the demand leases and every "seen N s ago"
+// are wall-clock deltas, and an eight-hour jump forward would read as an
+// eight-hour stall. shiftWallClock moves each anchor by the step so they carry
+// on as if the clock had always been right. Timers are monotonic and need
+// nothing.
+const CLOCK_AUTO_MIN_MS = Number(process.env.CLOCK_AUTO_MIN_MS ?? 2000)
+// Below this a manual set is reported as already in sync rather than stepped.
+const CLOCK_MANUAL_MIN_MS = 1000
+// A flapping page cannot re-step the clock on every reconnect.
+const CLOCK_AUTO_GAP_MS = 30000
+// How long a report stays usable when the switch is turned on after it came.
+const CLOCK_REPORT_FRESH_MS = 60000
+// The helper's own bounds, mirrored so a refusal is a 400 and not a sudo spawn.
+const CLOCK_FLOOR_MS = Date.UTC(2024, 0, 1)
+const CLOCK_CEIL_MS = Date.UTC(2100, 0, 1)
+const callClockHelper = mkHelperCall(CLOCK_HELPER)
+const clockHelperPresent = () => fsSync.existsSync(CLOCK_HELPER)
+const ntpSynced = () => fsSync.existsSync(NTP_SYNC_MARK)
+// The zone the box formats its own time in, so the page can show device time
+// as the device would.
+let CLOCK_TZ = null
+try { CLOCK_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || null } catch {}
+const clock = {
+  lastReport: null,   // { now, offsetMs, at }: the page's Date.now(), ours on arrival
+  lastSetAt: 0, lastSource: null, lastDeltaMs: null,
+  lastAutoAt: 0, setting: false, steps: 0,
+}
+function clockState() {
+  return {
+    now_ms: Date.now(),
+    tz: CLOCK_TZ,
+    configured: clockHelperPresent(),
+    sync_enabled: clockSync,
+    ntp_synced: ntpSynced(),
+    last_set_at: clock.lastSetAt || null,
+    last_source: clock.lastSource,
+    last_delta_ms: clock.lastDeltaMs,
+    last_offset_ms: clock.lastReport ? clock.lastReport.offsetMs : null,
+    steps: clock.steps,
+  }
+}
+function shiftWallClock(delta) {
+  const sh = (t) => (t ? t + delta : t)
+  lastFrameAt = sh(lastFrameAt)
+  awaitingFirstFrameSince = sh(awaitingFirstFrameSince)
+  stallKickedAt = sh(stallKickedAt)
+  stallLoggedAt = sh(stallLoggedAt)
+  pluggedAt = sh(pluggedAt)
+  pairUntil = sh(pairUntil)
+  pokeHoldUntil = sh(pokeHoldUntil)
+  lastPokeAt = sh(lastPokeAt)
+  lastBypassAt = sh(lastBypassAt)
+  ghostLeaseUntil = sh(ghostLeaseUntil)
+  for (const c of socketControl.clients) c.demandUntil = sh(c.demandUntil)
+  power.sinceAt = sh(power.sinceAt)
+  dongle.seenAt = sh(dongle.seenAt)
+  dongle.link.at = sh(dongle.link.at)
+  if (_wifiLast) _wifiLast.at = sh(_wifiLast.at)
+  if (_netPrev) _netPrev.at = sh(_netPrev.at)
+  _diskAt = sh(_diskAt)
+  _certReadAt = sh(_certReadAt)
+  _uplinkReadAt = sh(_uplinkReadAt)
+  for (const st of audioStreamStats.values()) st.lastAt = sh(st.lastAt)
+  for (const e of bleCache.values()) e.at = sh(e.at)
+  if (clock.lastReport) clock.lastReport.at = sh(clock.lastReport.at)
+  clock.lastAutoAt = sh(clock.lastAutoAt)
+}
+// Step the clock to `targetMs`. Serialised: two callers racing would each
+// measure a delta against a clock the other is moving.
+async function setClock(targetMs, source) {
+  if (!Number.isSafeInteger(targetMs) || targetMs < CLOCK_FLOOR_MS || targetMs > CLOCK_CEIL_MS) return { ok: false, error: 'bad_time' }
+  if (!clockHelperPresent()) return { ok: false, error: 'clock_helper_missing' }
+  if (clock.setting) return { ok: false, error: 'busy' }
+  clock.setting = true
+  try {
+    const before = Date.now()
+    const j = parseHelperJson(await callClockHelper(['set', String(targetMs)], 5000))
+    if (!j.ok) {
+      log('warn', 'clock_set_failed', { source, error: j.error || 'helper_failed' })
+      return { ok: false, error: j.error || 'helper_failed' }
+    }
+    // The delta as the helper saw it, so the anchors move by what the clock
+    // actually did and not by what was asked a sudo spawn ago.
+    const delta = targetMs - (Number.isFinite(j.before_ms) ? j.before_ms : before)
+    shiftWallClock(delta)
+    if (clock.lastReport) clock.lastReport.offsetMs -= delta
+    clock.lastSetAt = Date.now()
+    clock.lastSource = source
+    clock.lastDeltaMs = delta
+    clock.steps++
+    log('info', 'clock_set', { source, delta_ms: delta, ntp_synced: ntpSynced() })
+    return { ok: true, delta_ms: delta, now_ms: Date.now() }
+  } finally {
+    clock.setting = false
+  }
+}
+// A page reported its Date.now(). Keep the offset, and act on it if the switch
+// and the state of the box say so.
+function handleClockReport(now) {
+  // Outside the helper's bounds the report is nonsense (a null coerces to 0);
+  // dropped here rather than logged as a failed set.
+  if (!Number.isFinite(now) || now < CLOCK_FLOOR_MS || now > CLOCK_CEIL_MS) return
+  const at = Date.now()
+  clock.lastReport = { now: Math.round(now), offsetMs: Math.round(now) - at, at }
+  maybeAutoSetClock('report')
+}
+function maybeAutoSetClock(trigger) {
+  const rep = clock.lastReport
+  if (!rep || !clockSync || !clockHelperPresent()) return
+  const now = Date.now()
+  if (now - rep.at > CLOCK_REPORT_FRESH_MS) return
+  if (Math.abs(rep.offsetMs) < CLOCK_AUTO_MIN_MS) return
+  if (ntpSynced()) {
+    // A laptop with a wrong clock on the home LAN must not move a box that is
+    // on internet time. Debug: at home this is every page, every report.
+    log('debug', 'clock_report_ignored', { trigger, reason: 'ntp_synced', offset_ms: rep.offsetMs })
+    return
+  }
+  if (now - clock.lastAutoAt < CLOCK_AUTO_GAP_MS) return
+  clock.lastAutoAt = now
+  // The report has aged since it arrived; the offset has not.
+  setClock(now + rep.offsetMs, 'browser')
+    .catch((e) => log('warn', 'clock_set_failed', { source: 'browser', msg: String(e && e.message) }))
+}
 
 // Comfortably inside the gap between the 31 s failure and the shortest real
 // session seen (421 s), so this cannot mislabel a genuine short session.
