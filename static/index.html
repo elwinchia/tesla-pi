@@ -3077,6 +3077,18 @@
   function showOverlay(reason) {
     if (overlay.classList.contains('hidden')) console.log('overlay show: ' + reason);
     overlay.classList.remove('hidden');
+    // The card lifts only on the worker's firstFrame message, and the worker
+    // announces one painted frame per re-arm. So re-arm on every show, not only
+    // when a /video socket opens. Seen in the car 2026-09-25 08:26: the Tesla
+    // browser thawed the tab with both sockets still open, the frame watchdog
+    // below put the card back, frames went on decoding and painting underneath
+    // it, and with no reconnect to re-arm the latch nothing ever took it down —
+    // 98 s of "Almost there…" over a live picture. The returns that had worked
+    // before only did so because the stale socket happened to die and reopen.
+    // A phone that unplugs and replugs on one socket sits in the same hole.
+    // Whatever put the card up, the next frame on the canvas is the proof it
+    // should come down.
+    try { worker.postMessage({ type: 'expectFrame' }); } catch (e) {}
     if (!pollTimer) {
       pollStatus();
       pollTimer = setInterval(pollStatus, 2000);
@@ -3097,9 +3109,14 @@
   //
   // A silent blank band is never a legitimate state, so treat a long gap as a
   // disconnect and put the overlay back. It hides again on the next frame, so
-  // a false positive costs one flash, not a stuck screen. The threshold is
-  // generous: a static CarPlay screen still sends periodic keyframes, and this
-  // must not fire on a parked phone showing a still Now Playing view.
+  // a false positive costs one flash, not a stuck screen — but only because
+  // showOverlay re-arms the worker's first-frame announcement. For two weeks it
+  // did not, and the commonest false positive is exactly the one the
+  // `document.hidden` guard below cannot catch: a tab thawed after a freeze,
+  // whose last frame is a minute old by the time this next runs (2026-09-25).
+  // The threshold is generous: a static CarPlay screen still sends periodic
+  // keyframes, and this must not fire on a parked phone showing a still Now
+  // Playing view.
   const VIDEO_STALL_MS = Number(localStorage.getItem('videoStallMs')) || 10000;
   let lastVideoFrameAt = 0;
   // Set when the decoder rejects the stream; shown on the overlay so the band
