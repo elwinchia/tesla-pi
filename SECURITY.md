@@ -34,6 +34,14 @@ a socket to the server can:
   action nothing recovers from remotely: the box stays off until its power is
   cycled. Denial of service only — it grants no access — and it is available at
   all only where `scripts/install-power-tab.sh` has been run,
+- **set the device's clock** (`POST /clock/set`, via a `sudo`-scoped helper
+  whose one verb takes one argument that the helper itself confines to
+  2024–2100). Nuisance rather than escalation: a wrong clock mis-stamps the
+  journal and can make the next outbound TLS connection — certificate renewal
+  — fail until NTP corrects it, which it does the moment the box is online,
+  since NTP is never overridden by this path. Available at all only where
+  `scripts/install-clock-tab.sh` has been run. The automatic path takes the
+  time from whichever page connects, which is the same trust boundary,
 - read device telemetry and recent logs (`GET /healthz`, `GET /logs`),
 - **write a diagnostic file** (`POST /debug/mic-probe`, `/debug/webgpu-probe`,
   `/debug/telemetry-probe`), but only where `PROBE_DIR` (formerly

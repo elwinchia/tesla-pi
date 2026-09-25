@@ -1,0 +1,63 @@
+#!/bin/bash
+# tesla-pi-clock — privileged clock-set helper for Settings → System → Date & time.
+#
+# Installed to /usr/local/sbin/tesla-pi-clock (mode 0755, root-owned) by
+# scripts/install-clock-tab.sh. Invoked by tesla-pi.service via
+# `sudo -n /usr/local/sbin/tesla-pi-clock set <epoch_ms>` — sudoers grants
+# NOPASSWD on this exact path only. One verb, one argument, and the argument
+# has to be a plausible wall-clock time before anything is touched.
+#
+# Why this exists: a Pi 4 has no real-time clock, and in the car the only
+# network is the hotspot the Tesla joins, so NTP never runs there. Every power
+# cut therefore wakes the box with the time it last saved. The car's browser
+# knows the real time (GPS + LTE) and reports it to the app, which sets it
+# here. See docs/clock-sync.md.
+
+set -uo pipefail
+
+# systemd advances the clock to this file's mtime at boot on a box with no RTC,
+# and timesyncd only rewrites it about once a minute. Overridable for the test.
+CLOCK_FILE=${TESLAPI_TIMESYNC_CLOCK:-/var/lib/systemd/timesync/clock}
+# Refuse anything before the project existed or absurdly far ahead: a bug, or a
+# hostile page on the hotspot, could otherwise park the clock anywhere.
+FLOOR_MS=1704067200000   # 2024-01-01T00:00:00Z
+CEIL_MS=4102444800000    # 2100-01-01T00:00:00Z
+
+# JSON on refusal as well as success, so the app can show the reason.
+fail() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit "${2:-1}"; }
+
+usage() {
+    cat >&2 <<USAGE
+usage: tesla-pi-clock set <epoch_ms>
+  set   # step the system clock to <epoch_ms> (Unix time in milliseconds)
+USAGE
+    exit 2
+}
+
+case "${1:-}" in
+    set)
+        ms="${2:-}"
+        # Exactly 13 digits: 2001-09-09 through 2286-11-20, which already
+        # excludes the empty string, signs, decimals and anything non-numeric.
+        [[ "$ms" =~ ^[0-9]{13}$ ]] || fail "bad_epoch_ms" 2
+        # 10# so a leading zero cannot make bash read the number as octal.
+        ms=$((10#$ms))
+        (( ms >= FLOOR_MS && ms <= CEIL_MS )) || fail "epoch_ms_out_of_range" 2
+        before=$(date +%s%3N)
+        sec=$(( ms / 1000 ))
+        frac=$(printf '%03d' $(( ms % 1000 )))
+        date -u -s "@${sec}.${frac}" >/dev/null || fail "date_failed"
+        # Stamp the boot-time fallback now, so a power cut inside timesyncd's
+        # next save interval still boots into the corrected time. Only when it
+        # already exists: creating it as root would leave timesyncd, which runs
+        # as its own user, unable to update it afterwards.
+        if [[ -f "$CLOCK_FILE" ]]; then
+            touch -m -d "@${sec}" "$CLOCK_FILE" 2>/dev/null || true
+        fi
+        after=$(date +%s%3N)
+        printf '{"ok":true,"before_ms":%s,"now_ms":%s}\n' "$before" "$after"
+        ;;
+    *)
+        usage
+        ;;
+esac
