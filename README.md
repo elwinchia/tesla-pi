@@ -43,6 +43,7 @@ is opened and handed back, and what it costs you in time-to-picture.
 - **Regulatory-domain aware radio:** the box asks the kernel which channels your country actually permits and picks the fastest available (80 MHz UNII-3 → UNII-1 → any 5 GHz → 2.4 GHz), rather than shipping one hardcoded channel that would leave hostapd refusing to start — and the appliance unreachable — anywhere it isn't legal.
 - **Wi-Fi settings in the browser:** Settings → Wi-Fi scans, joins, and forgets upstream networks, so the Pi can reach home Wi-Fi for certificate renewal without a keyboard or SSH.
 - **Restart / shut down from the car:** Settings → System reboots the Pi (the page waits out the outage and reloads itself when the device is back) or halts it so power can be cut without corrupting the SD card — no SSH, no reaching behind the dash. Anyone on the hotspot can do this, which is denial of service and nothing more; see [Security model](#security-model).
+- **Clock set from the car:** a Pi 4 has no real-time clock and, in the car, no route to an NTP server, so every power cut wakes it with the time it last saved and the journal from a drive is stamped hours or days wrong. The car's browser knows the time (GPS + LTE) and reports it on every connect; the Pi steps its clock to it whenever it has not yet reached NTP since boot, and NTP wins the moment it is back on home Wi-Fi. Settings → System → Date & time shows the device time and drift, has the switch, and offers **Sync now** and a manual date/time. See [`docs/clock-sync.md`](docs/clock-sync.md).
 - **Observability:** `GET /healthz` (JSON status), `GET /logs` (last 200 structured log entries), single-line JSON logs for easy `journalctl | jq` filtering
 - **Status page telemetry that needs no Bluetooth.** The car allows only three simultaneous BLE connections and phone keys hold them, so Status → Car leads with everything obtainable *without* it: speed, heading, altitude and position from the browser's own geolocation (on a Tesla that is the car's GPS, and it works offline), the car's day/night preference, and its link to the hotspot. Status → Device adds core clock, temperature, memory, storage, hotspot clients, per-interface throughput and uplink signal — all read from `/proc` and `/sys`, no subprocess or privilege — plus the **CarPlay adapter's own core temperature** and the phone it is talking to, which the dongle volunteers on every session heartbeat and which this project previously logged and discarded
 
@@ -132,7 +133,7 @@ conf/                    hostapd, dnsmasq, nginx, iptables, env templates
 systemd/                 tesla-pi.service, cert-renew-watch.service, wlan0-ap-up.service
 scripts/                 ap-mode.sh, dev-mode.sh, cert-renew-watch.sh, cert-sync.sh,
                          ap-radio-select.sh (regulatory-domain channel picker),
-                         tesla-pi-ap / -wifi / -power / -dongle / -karaoke
+                         tesla-pi-ap / -wifi / -power / -clock / -dongle / -karaoke
                          (privileged helpers behind the Settings rail) + their
                          install-*.sh installers; deploy-to-pi.sh for dev pushes
 image/                   flashable-image build: build-image.sh, provision.sh,

@@ -963,7 +963,22 @@
   /* 44px is what every other button on the page stands at — the id rules above
      already say so for the filled one, so the ghost is matched to it. */
   .set-actions-2 > button { width: 100%; height: 44px; justify-content: center; text-align: center; }
-  #power-reboot-msg, #power-shutdown-msg, #ap-country-msg { margin-top: 14px; }
+  #power-reboot-msg, #power-shutdown-msg, #ap-country-msg, #clock-msg { margin-top: 14px; }
+  /* Settings → System → Date & time. The picker is the car's own; the field
+     gets the credential inputs' chrome so it reads as one of ours. */
+  .clock-manual { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: stretch; }
+  .clock-manual input {
+    min-width: 0; box-sizing: border-box; height: 44px; padding: 0 14px;
+    font: 400 15px ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--mcu-text); background: var(--mcu-bg);
+    border: 1px solid var(--mcu-stroke); border-radius: var(--mcu-radius-md);
+    outline: none;
+  }
+  .clock-manual input:focus { border-color: var(--mcu-text-dim); }
+  @media (max-width: 620px) {
+    .clock-manual { grid-template-columns: 1fr 1fr; }
+    .clock-manual input { grid-column: 1 / -1; }
+  }
   .set-row { padding: 20px 0; border-bottom: 1px solid var(--mcu-stroke); }
   .set-row:last-child { border-bottom: 0; padding-bottom: 4px; }
   .set-row-label {
@@ -2465,6 +2480,71 @@
                 <p id="cert-renew-not-due" class="renew-note" hidden></p>
                 <div id="cert-renew-status" class="renew-status" hidden></div>
               </div>
+            </div>
+          </section>
+
+          <!-- Hidden where /usr/local/sbin/tesla-pi-clock is not installed
+               (scripts/install-clock-tab.sh). The device has no clock battery and
+               no internet in the car, so the car is what tells it the time. -->
+          <section class="set-group" id="clock-group" hidden>
+            <div class="set-group-head">
+              <h3>Date &amp; time</h3>
+            </div>
+            <div class="set-row" data-search="clock time date ntp timezone drift wrong time">
+              <div class="cert-meta">
+                <div class="cert-meta-row">
+                  <span class="k">Device</span>
+                  <span class="v mono" id="clock-now">—</span>
+                </div>
+                <div class="cert-meta-row">
+                  <span class="k">Vs car</span>
+                  <span class="v" id="clock-diff">—</span>
+                </div>
+                <div class="cert-meta-row">
+                  <span class="k">Source</span>
+                  <span class="v" id="clock-source">—</span>
+                </div>
+              </div>
+            </div>
+            <div class="set-row is-inline" data-search="sync clock time from car automatic browser">
+              <div class="set-row-main">
+                <div class="set-row-label">
+                  Set the time from the car
+                  <button type="button" class="set-info" data-set-info
+                          aria-haspopup="dialog" aria-label="About setting the time from the car">
+                    <svg width="17" height="17" aria-hidden="true"><use href="#i-info"/></svg>
+                  </button>
+                </div>
+                <p class="set-row-sub set-info-body" hidden>
+                  This device has no clock battery, so each time it loses power it
+                  wakes up with the time it last saved. At home it corrects itself
+                  from the internet; in the car there is no internet, so it asks the
+                  car instead. With this on, the time this page reports is applied
+                  whenever the device is more than a couple of seconds out and has
+                  not yet heard from the internet since it started.
+                </p>
+              </div>
+              <div class="set-row-control">
+                <button type="button" class="set-switch" id="clock-sync-switch" role="switch"
+                        aria-checked="false" aria-label="Set the time from the car">
+                  <span class="knob"></span>
+                </button>
+              </div>
+            </div>
+            <div class="set-row" data-search="sync now set time manually adjust clock apply">
+              <div class="set-row-label">Set now</div>
+              <p class="set-row-sub">
+                Sync now copies the time from this screen. Or pick a date and time
+                and apply it. A time set by hand lasts only until the next correction:
+                from the car while the switch above is on, or from the internet
+                whenever the device can reach it.
+              </p>
+              <div class="set-row-control clock-manual">
+                <input id="clock-manual" type="datetime-local" step="1" aria-label="Date and time to set">
+                <button type="button" class="ap-ghost-btn" id="clock-apply-btn">Apply</button>
+                <button type="button" class="ap-ghost-btn" id="clock-sync-btn">Sync now</button>
+              </div>
+              <div id="clock-msg" class="renew-status" hidden></div>
             </div>
           </section>
 
@@ -5397,6 +5477,7 @@
 
   function onSettingsTabShown(tab) {
     dgOnShown(tab === 'dongle');
+    if (tab === 'system') clockPrefillManual();
     if (tab !== 'network' || !wifiState.available) {
       if (wifiState.pollTimer) { clearInterval(wifiState.pollTimer); wifiState.pollTimer = null; }
       return;
@@ -5411,6 +5492,116 @@
     // does not move fast enough to be worth twice the privileged calls.
     if (!wifiState.pollTimer) wifiState.pollTimer = setInterval(wifiRefreshStatus, 10000);
   }
+
+  // ---- Settings → System → Date & time --------------------------------------
+  // Declared ahead of the tab restore below: setSettingsTab → onSettingsTabShown
+  // runs while this script is still evaluating, and prefilling the manual field
+  // reads state that has to exist by then.
+  // Gated like Power: /clock/status 404s where the helper is not installed and
+  // the group stays hidden. Live values ride /healthz.clock through the
+  // settings poll; between polls the device time ticks locally so it reads as
+  // a clock rather than a number that jumps every five seconds.
+  const clockMsg = statusMsgFor('clock-msg');
+  let clockSample = null;   // { now_ms, at }: device time, and when we heard it
+  let clockTz = null;
+  let clockTick = null;
+  const clockDeviceNow = () => clockSample ? clockSample.now_ms + (Date.now() - clockSample.at) : null;
+  function clockFmt(ms, timeOnly) {
+    const d = new Date(ms);
+    const opt = timeOnly
+      ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
+      : { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    // The device's own zone where the browser knows it; the car's otherwise.
+    try { return d.toLocaleString(undefined, { ...opt, timeZone: clockTz || undefined }); }
+    catch { return d.toLocaleString(undefined, opt); }
+  }
+  function clockSpan(ms) {
+    const s = Math.round(Math.abs(ms) / 1000);
+    if (s < 90) return s + ' s';
+    const m = Math.round(s / 60);
+    if (m < 90) return m + ' min';
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + ' h ' + String(m % 60).padStart(2, '0') + ' min';
+    return Math.round(h / 24) + ' days';
+  }
+  function clockRenderNow() {
+    const now = clockDeviceNow();
+    if (now != null) setText('clock-now', clockFmt(now));
+  }
+  function clockRender(c) {
+    if (!c) return;
+    clockTz = c.tz || null;
+    clockSample = { now_ms: c.now_ms, at: Date.now() };
+    clockRenderNow();
+    const diff = c.now_ms - Date.now();
+    setText('clock-diff', Math.abs(diff) < 2000 ? 'In sync'
+      : 'Device is ' + clockSpan(diff) + (diff < 0 ? ' behind' : ' ahead'));
+    let src;
+    if (c.ntp_synced) src = 'Internet time';
+    else if (c.last_set_at) {
+      src = (c.last_source === 'browser' ? 'Set from the car'
+           : c.last_source === 'manual' ? 'Set by hand' : 'Synced from this screen')
+          + ' at ' + clockFmt(c.last_set_at, true);
+    } else src = 'Not synced since the device started';
+    setText('clock-source', src);
+  }
+  // datetime-local wants local wall time with no zone. The car and the device
+  // share one, so the browser's own getters are the right ones.
+  function clockPrefillManual() {
+    const el = $w('clock-manual');
+    const now = clockDeviceNow();
+    if (!el || now == null || document.activeElement === el) return;
+    const d = new Date(now);
+    const p = (n) => String(n).padStart(2, '0');
+    el.value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+      + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  async function clockSet(btn, ms, source) {
+    btn.disabled = true;
+    clockMsg('Working…');
+    try {
+      const r = await fetch('/clock/set', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ now_ms: Math.round(ms), source }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        clockMsg(j.error === 'bad_time' ? 'That time is out of range.' : 'That did not work. Please try again.', true);
+        return;
+      }
+      clockRender(j);
+      clockPrefillManual();
+      if (!j.stepped) { clockMsg('Already in sync.'); return; }
+      let note = '';
+      if (j.ntp_synced) note = ' It is on internet time right now, so this may be undone.';
+      else if (source === 'manual' && j.sync_enabled) note = ' Setting the time from the car is on, so the car\'s time replaces this within a few minutes.';
+      clockMsg('Done — the device was ' + clockSpan(j.delta_ms) + (j.delta_ms > 0 ? ' behind.' : ' ahead.') + note);
+    } catch {
+      clockMsg('Could not reach the device.', true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  deferInit(async () => {
+    let j = null;
+    try {
+      const r = await fetch('/clock/status', { cache: 'no-store' });
+      j = r.ok ? await r.json() : null;
+    } catch {}
+    const ok = !!(j && j.ok);
+    $w('clock-group').hidden = !ok;
+    if (!ok) return;
+    clockRender(j);
+    clockPrefillManual();
+    $w('clock-sync-btn').addEventListener('click', (e) => clockSet(e.currentTarget, Date.now(), 'sync'));
+    $w('clock-apply-btn').addEventListener('click', (e) => {
+      const v = $w('clock-manual').value;
+      const ms = v ? new Date(v).getTime() : NaN;
+      if (!Number.isFinite(ms)) { clockMsg('Pick a date and time first.', true); return; }
+      clockSet(e.currentTarget, ms, 'manual');
+    });
+  });
 
   setSettingsTab(lsGet(SETTINGS_TAB_KEY));
 
@@ -6060,10 +6251,19 @@
     }
   }
 
+  // The car's clock, on every (re)connect and then every five minutes. The
+  // device has no clock battery and no internet in the car, so this is how it
+  // learns the time — see docs/clock-sync.md. Sent first on open so a large
+  // correction lands before CarPlay is asked for, not underneath it.
+  const CLOCK_REPORT_MS = 5 * 60 * 1000;
+  const clockReportMsg = () => JSON.stringify({ type: 'clock', now: Date.now() });
+  setInterval(() => { try { control.send(clockReportMsg()); } catch (e) {} }, CLOCK_REPORT_MS);
+
   const control = connect('/control', {
     onOpen: (ws) => {
       wsState.control = 'open';
       setHeadline();
+      ws.send(clockReportMsg());
       ws.send(JSON.stringify({ type: 'statusReq' }));
       ws.send(JSON.stringify({ type: 'nightMode', value: nightCurrent }));
       // Tell the Pi whether anyone is actually looking. Until it hears this,
@@ -6114,6 +6314,9 @@
           break;
         case 'bleEnabled':
           applyServerBleEnabled(msg.value);
+          break;
+        case 'clockSync':
+          applyServerClockSync(msg.value);
           break;
         case 'micRequest':
           setMicWanted(!!msg.value);
@@ -6205,6 +6408,20 @@
   if (onDemandSwitchEl) {
     onDemandSwitchEl.addEventListener('click', () => {
       try { control.send(JSON.stringify({ type: 'carplayOnDemand', value: !carplayOnDemand })); } catch (e) {}
+    });
+  }
+
+  // Settings > System > "Set the time from the car". Server-owned like the
+  // switch above: the page asks, the server persists and echoes.
+  let clockSyncEnabled = true;
+  const clockSyncSwitchEl = document.getElementById('clock-sync-switch');
+  function applyServerClockSync(v) {
+    clockSyncEnabled = !!v;
+    if (clockSyncSwitchEl) clockSyncSwitchEl.setAttribute('aria-checked', clockSyncEnabled ? 'true' : 'false');
+  }
+  if (clockSyncSwitchEl) {
+    clockSyncSwitchEl.addEventListener('click', () => {
+      try { control.send(JSON.stringify({ type: 'clockSync', value: !clockSyncEnabled })); } catch (e) {}
     });
   }
 
@@ -6956,12 +7173,15 @@
       setText('s-cert-settings', d == null ? '—' : d);
       applyCertChrome(d);
       applyCertRenewGate(d, j.cert_uplink);
+      if (j.clock) clockRender(j.clock);
     } catch {}
   }
   function startSettingsPoll() {
     pollSettingsCert();
     if (settingsPollTimer) clearInterval(settingsPollTimer);
     settingsPollTimer = setInterval(pollSettingsCert, 5000);
+    if (clockTick) clearInterval(clockTick);
+    clockTick = setInterval(clockRenderNow, 1000);
     // Re-arm whichever pane is actually on screen, since stopSettingsPoll now
     // tears its poll down on the way out. Without this, coming back to Settings
     // would show a pane that never refreshes.
@@ -6969,6 +7189,7 @@
   }
   function stopSettingsPoll() {
     if (settingsPollTimer) { clearInterval(settingsPollTimer); settingsPollTimer = null; }
+    if (clockTick) { clearInterval(clockTick); clockTick = null; }
     // The per-pane polls too. These are started by onSettingsTabShown and were
     // only ever stopped by *switching panes*, so walking out of Settings
     // altogether left them running for the life of the page. Measured in the

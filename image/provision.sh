@@ -335,6 +335,8 @@ say "Settings tabs (Hotspot, WiFi, System)"
 TESLAPI_SERVICE_USER="$SERVICE_USER" bash "$APP_DIR/scripts/install-ap-tab.sh"
 TESLAPI_SERVICE_USER="$SERVICE_USER" bash "$APP_DIR/scripts/install-wifi-tab.sh"
 TESLAPI_SERVICE_USER="$SERVICE_USER" bash "$APP_DIR/scripts/install-power-tab.sh"
+# No RTC and no NTP in the car: the clock is set from the car's browser.
+TESLAPI_SERVICE_USER="$SERVICE_USER" bash "$APP_DIR/scripts/install-clock-tab.sh"
 
 # ──────────────────────────────────────────────────────────────── RetroArch ──
 if [[ $WITH_RETROARCH == 1 ]]; then

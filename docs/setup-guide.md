@@ -235,6 +235,10 @@ cd ~/tesla-pi
 sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-ap-tab.sh
 # Restart / Shut down from the car (Settings → System):
 sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-power-tab.sh
+# Set the clock from the car (Settings → System → Date & time). The Pi has no
+# RTC and no NTP in the car, so without this it keeps last night's time until
+# it is next on home Wi-Fi — see docs/clock-sync.md:
+sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-clock-tab.sh
 # Only if a second WiFi adapter (wlan1) is wired in:
 sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-wifi-tab.sh
 # Write dongle firmware to a USB stick from the car (Settings → Dongle):
