@@ -1937,11 +1937,10 @@ const httpServer = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...clockState() })
       return
     }
-    // Set the clock by hand. `source` is 'sync' for the Sync now button (the
-    // page's own Date.now()) and 'manual' for a typed date and time. Both are
-    // the driver asking, so unlike the automatic path neither defers to NTP:
-    // timesyncd simply wins again at its next poll, and ntp_synced in the
-    // response lets the page say so.
+    // Set the clock by hand. `source` is 'manual' for the editor in Settings
+    // (offered only while automatic time is off) and 'sync' for a caller that
+    // passes its own clock. Either is a person asking, so unlike the automatic
+    // path neither defers to NTP: timesyncd simply wins again at its next poll.
     if (p === '/clock/set') {
       if (clockGuard(req, res, { method: 'POST' })) return
       let body
