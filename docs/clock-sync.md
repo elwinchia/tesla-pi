@@ -56,7 +56,7 @@ from the Pi's own clock, and steps the clock when all of these hold:
 
 | condition | why |
 |---|---|
-| the Date & time switch is on (`clockSync`, persisted, default on) | the user's call |
+| "Set time and date automatically" is on (`clockSync`, persisted, default on) | the user's call |
 | `/usr/local/sbin/tesla-pi-clock` exists | the feature is installed |
 | `/run/systemd/timesync/synchronized` does **not** exist | timesyncd has not had an NTP answer this boot; once it has, NTP is the better source and wins |
 | the offset is at least 2 s (`CLOCK_AUTO_MIN_MS`) | LAN jitter is milliseconds; anything under this is not worth a sudo spawn |
@@ -75,11 +75,13 @@ eight-hour stall. `shiftWallClock` moves every such anchor by the step, so they
 carry on as if the clock had always been right. Timers are monotonic and need
 nothing.
 
-**Manual.** `POST /clock/set { now_ms, source }` sets the clock by hand.
-*Sync now* sends the page's `Date.now()`; the date/time field sends what was
-typed. Both are the driver asking, so neither defers to NTP — timesyncd simply
-wins again at its next poll (up to 34 minutes), and the response's
-`ntp_synced` lets the page say so.
+**Manual.** `POST /clock/set { now_ms, source }` sets the clock by hand. In
+the page this is reachable only with "Set time and date automatically" off:
+the date and time row is then a button that opens an editor, and Save sends
+what was picked with `source: 'manual'`. With the switch on the row is a
+readout only. The route itself does not defer to NTP — timesyncd simply wins
+again at its next poll (up to 34 minutes) when the box is online — and it
+still accepts `source: 'sync'` for a caller that wants to pass its own clock.
 
 **State.** `/healthz.clock` and `GET /clock/status` (which 404s where the
 helper is absent, and is how the page decides to show the group):
@@ -91,7 +93,7 @@ helper is absent, and is how the page decides to show the group):
   "last_offset_ms": -3, "steps": 1 }
 ```
 
-`last_source` is `browser` (automatic), `sync` (the button) or `manual` (typed).
+`last_source` is `browser` (automatic), `manual` (the editor) or `sync` (an API caller passing its own clock).
 
 ## Install
 
