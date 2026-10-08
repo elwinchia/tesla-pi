@@ -195,6 +195,9 @@ sudo ln -sf $(pwd)/systemd/wlan0-ap-up.service  /etc/systemd/system/wlan0-ap-up.
 sudo mkdir -p /etc/systemd/system/hostapd.service.d
 sudo ln -sf $(pwd)/systemd/hostapd.service.d/wait-wlan0.conf \
             /etc/systemd/system/hostapd.service.d/wait-wlan0.conf
+# Turns brcmfmac's 802.11 power save off once the AP is up (see the file).
+sudo ln -sf $(pwd)/systemd/hostapd.service.d/power-save-off.conf \
+            /etc/systemd/system/hostapd.service.d/power-save-off.conf
 
 sudo systemctl daemon-reload
 ```
@@ -278,21 +281,24 @@ After this, **eth0 is your only stable SSH path**. The Pi is no longer on home W
 ```bash
 cd ~/tesla-pi
 sudo install -m 0755 scripts/cert-renew-watch.sh scripts/cert-renew-now.sh \
-     scripts/net-share.sh /opt/tesla-pi/scripts/
+     scripts/net-share.sh scripts/link-watch.sh /opt/tesla-pi/scripts/
 # Sourced by all three of the above from their own directory, so it goes with them.
 sudo install -m 0644 scripts/cert-renew-lib.sh /opt/tesla-pi/scripts/
 sudo ln -sf $(pwd)/systemd/cert-renew-watch.service /etc/systemd/system/cert-renew-watch.service
 sudo ln -sf $(pwd)/systemd/cert-renew-now.service   /etc/systemd/system/cert-renew-now.service
 sudo ln -sf $(pwd)/systemd/tesla-pi-netshare.service /etc/systemd/system/tesla-pi-netshare.service
+sudo ln -sf $(pwd)/systemd/tesla-pi-linkwatch.service /etc/systemd/system/tesla-pi-linkwatch.service
 sudo cp conf/wpa_supplicant-wlan0-home.conf.template \
        /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
 sudo $EDITOR /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf  # fill home SSID + PSK
 sudo chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlan0-home.conf
 sudo systemctl daemon-reload
-sudo systemctl enable --now cert-renew-watch tesla-pi-netshare
+sudo systemctl enable --now cert-renew-watch tesla-pi-netshare tesla-pi-linkwatch
 ```
 
 `tesla-pi-netshare` is what lets the Tesla use the Pi's uplink: it tracks whether one exists and switches dnsmasq between forwarding real queries and the offline walled garden. See "Internet sharing | net-share.sh" in `tesla-doc.md`.
+
+`tesla-pi-linkwatch` logs one line every 30 s while the car is associated: the radio's idle time, packet counters and signal for the car, plus how many DNS packets reached the Pi. Read it with `journalctl -u tesla-pi-linkwatch` when the car reports "DNS address could not be found", to tell whether the car stopped sending or the Pi stopped receiving.
 
 The watcher polls every 60 s and has two ways to pick up a new cert:
 

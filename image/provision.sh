@@ -177,6 +177,7 @@ install -m 0755 "$APP_DIR/scripts/cert-sync.sh" \
                 "$APP_DIR/scripts/cert-renew-watch.sh" \
                 "$APP_DIR/scripts/cert-renew-now.sh" \
                 "$APP_DIR/scripts/net-share.sh" \
+                "$APP_DIR/scripts/link-watch.sh" \
                 "$SCRIPTS_DIR/"
 # Sourced by the cert-renew entry points and by net-share.sh, so it has to sit
 # beside them.
@@ -265,10 +266,13 @@ ln -sf "$APP_DIR/systemd/wlan0-ap-up.service"      /etc/systemd/system/wlan0-ap-
 ln -sf "$APP_DIR/systemd/cert-renew-watch.service" /etc/systemd/system/cert-renew-watch.service
 ln -sf "$APP_DIR/systemd/cert-renew-now.service"   /etc/systemd/system/cert-renew-now.service
 ln -sf "$APP_DIR/systemd/tesla-pi-netshare.service" /etc/systemd/system/tesla-pi-netshare.service
+ln -sf "$APP_DIR/systemd/tesla-pi-linkwatch.service" /etc/systemd/system/tesla-pi-linkwatch.service
 
 install -d -m 0755 /etc/systemd/system/hostapd.service.d
 ln -sf "$APP_DIR/systemd/hostapd.service.d/wait-wlan0.conf" \
        /etc/systemd/system/hostapd.service.d/wait-wlan0.conf
+ln -sf "$APP_DIR/systemd/hostapd.service.d/power-save-off.conf" \
+       /etc/systemd/system/hostapd.service.d/power-save-off.conf
 
 # First-boot personalisation. Ordered ahead of the radio because it writes the
 # hostapd config that hostapd is about to read.
@@ -363,6 +367,7 @@ sctl_enable dnsmasq.service
 sctl_enable nginx.service
 sctl_enable cert-renew-watch.service
 sctl_enable tesla-pi-netshare.service
+sctl_enable tesla-pi-linkwatch.service
 sctl_enable tesla-pi.service
 sctl_enable netfilter-persistent.service
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Log the car's Wi-Fi link and DNS packet counts (scripts/link-watch.sh)
+After=hostapd.service
+Wants=hostapd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/tesla-pi/scripts/link-watch.sh
+Restart=always
+RestartSec=15
+
+# Needs root for nft and the station dump.
+
+[Install]
+WantedBy=multi-user.target
