@@ -17,7 +17,16 @@
 # anything, packet counters, signal, and connected time (which resets if the car
 # silently re-associates).
 #
+# Each line also carries the kernel's own counters for the interface
+# (if_rx/if_tx/if_drop, deltas since the previous line). rx_pkts/tx_pkts come
+# from the radio firmware; if_* are what actually crossed into Linux. In
+# one outage the firmware kept counting ~4 frames/s from the car while
+# DNS fell to 0 — and without if_* that cannot separate "the chip stopped
+# handing frames up" from "the car only sends null/keepalive frames".
+#
 # Reading a line:
+#   rx_pkts rising + if_rx ~0 + dns 0          → the Pi's radio stopped passing data up
+#   rx_pkts and if_rx both tiny + dns 0        → the car moved its traffic elsewhere (LTE)
 #   inactive_ms large + rx_pkts flat + dns 0  → the car stopped sending to us
 #   tx_failed climbing while inactive_ms small → the car hears us poorly
 #   connected_s reset with no hostapd line     → a silent re-association
@@ -64,20 +73,31 @@ if ! setup_counters; then
 fi
 log "evt=linkwatch_start iface=$IFACE interval_s=$INTERVAL power_save=$("$IW" dev "$IFACE" get power_save 2>/dev/null | awk '{print $NF}')"
 
+# Kernel-side counters for the whole interface, as "rx tx rx_dropped".
+if_counters() {
+    local d=/sys/class/net/$IFACE/statistics
+    echo "$(cat "$d/rx_packets" 2>/dev/null || echo -) $(cat "$d/tx_packets" 2>/dev/null || echo -) $(cat "$d/rx_dropped" 2>/dev/null || echo -)"
+}
+delta() { [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]] && echo $(($1 - $2)) || echo -; }
+
 prev_dns="$(dns_packets)"
+read -r prev_if_rx prev_if_tx prev_if_drop <<<"$(if_counters)"
 idle_ticks=0
 while sleep "$INTERVAL"; do
     dns="$(dns_packets)"
     if [[ -n "$dns" && -n "$prev_dns" ]]; then dns_delta=$((dns - prev_dns)); else dns_delta=-; fi
     prev_dns="$dns"
+    read -r if_rx if_tx if_drop <<<"$(if_counters)"
+    ifd="if_rx=$(delta "$if_rx" "$prev_if_rx") if_tx=$(delta "$if_tx" "$prev_if_tx") if_drop=$(delta "$if_drop" "$prev_if_drop")"
+    prev_if_rx=$if_rx prev_if_tx=$if_tx prev_if_drop=$if_drop
 
     # One output line per station. Fields are absent on drivers that do not
     # report them, which prints as "-" rather than shifting the columns.
-    stations="$("$IW" dev "$IFACE" station dump 2>/dev/null | awk -v dns="$dns_delta" '
+    stations="$("$IW" dev "$IFACE" station dump 2>/dev/null | awk -v dns="$dns_delta" -v ifd="$ifd" '
         function flush() {
             if (mac == "") return
-            printf "evt=linkwatch sta=%s inactive_ms=%s rx_pkts=%s tx_pkts=%s tx_retries=%s tx_failed=%s signal=%s connected_s=%s dns_in=%s\n",
-                mac, v["inactive"], v["rx_pkts"], v["tx_pkts"], v["tx_retries"], v["tx_failed"], v["signal"], v["connected"], dns
+            printf "evt=linkwatch sta=%s inactive_ms=%s rx_pkts=%s tx_pkts=%s tx_retries=%s tx_failed=%s signal=%s connected_s=%s dns_in=%s %s\n",
+                mac, v["inactive"], v["rx_pkts"], v["tx_pkts"], v["tx_retries"], v["tx_failed"], v["signal"], v["connected"], dns, ifd
         }
         /^Station/ { flush(); mac = $2; split("", v)
                      v["inactive"] = v["rx_pkts"] = v["tx_pkts"] = v["tx_retries"] = v["tx_failed"] = v["signal"] = v["connected"] = "-"; next }
@@ -96,7 +116,7 @@ while sleep "$INTERVAL"; do
     else
         idle_ticks=$((idle_ticks + 1))
         if (( idle_ticks >= IDLE_EVERY )); then
-            log "evt=linkwatch sta=none dns_in=$dns_delta"
+            log "evt=linkwatch sta=none dns_in=$dns_delta $ifd"
             idle_ticks=0
         fi
     fi
