@@ -1,0 +1,116 @@
+#!/bin/bash
+# tesla-pi-phone — is the owner's iPhone in the car? Privileged Bluetooth probe
+# for Settings → CarPlay → "Start when my iPhone is in the car".
+#
+# Installed to /usr/local/sbin/tesla-pi-phone (0755, root) by
+# scripts/install-phone-near.sh. Invoked by tesla-pi.service as
+# `sudo -n /usr/local/sbin/tesla-pi-phone probe <BT MAC>`; sudoers grants
+# NOPASSWD on this exact path. One verb, one argument, and the argument must be
+# a Bluetooth address before anything is touched.
+#
+# How it decides, measured in a car against an iPhone
+# that was never paired with this Pi:
+#
+#   driver's seat  name request answered in 0.8–1.4 s, l2ping 3/3, RSSI -3..0
+#   indoors        name request timed out (5.1 s, 3/3), l2ping "Host is down"
+#
+# A classic-Bluetooth name request needs no pairing and no BLE connection, so
+# it never takes one of the car's three BLE slots (see tesla-pi-ble). When the
+# phone answers, a short l2ping holds an ACL link open long enough to read its
+# RSSI, which the app compares with a threshold. RSSI here is the controller's
+# "relative to the golden receive range" figure: 0 means comfortably strong,
+# more negative means weaker. It is not dBm.
+#
+# Bluetooth stays rfkill soft-blocked between probes, as everywhere on this
+# device: the radio shares silicon with the wlan0 AP. Each probe borrows it and
+# returns it, under a lock shared with tesla-pi-ble so the two never pull the
+# block out from under each other.
+
+set -uo pipefail
+
+RFKILL=${TESLAPI_RFKILL:-/usr/sbin/rfkill}
+HCICONFIG=${TESLAPI_HCICONFIG:-/usr/bin/hciconfig}
+HCITOOL=${TESLAPI_HCITOOL:-/usr/bin/hcitool}
+L2PING=${TESLAPI_L2PING:-/usr/bin/l2ping}
+LOCK=${TESLAPI_BT_LOCK:-/run/lock/tesla-pi-bt.lock}
+ADAPTER=hci0
+# Page timeout in 0.625 ms slots. The controller default (8192 ≈ 5.1 s) is what
+# a missed probe costs on a radio the AP shares; 3200 ≈ 2 s is still well over
+# the 0.8–1.4 s an in-car phone took to answer.
+PAGE_TIMEOUT=${TESLAPI_BT_PAGETO:-3200}
+RSSI_TRIES=${TESLAPI_RSSI_TRIES:-8}
+
+fail() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit "${2:-1}"; }
+
+usage() {
+    echo "usage: tesla-pi-phone probe <XX:XX:XX:XX:XX:XX>" >&2
+    exit 2
+}
+
+was_blocked=""
+restore_bt() {
+    [[ "$was_blocked" == "yes" ]] || return 0
+    "$HCICONFIG" "$ADAPTER" down 2>/dev/null || true
+    "$RFKILL" block bluetooth 2>/dev/null || true
+}
+
+borrow_bt() {
+    # Read-only open is enough for flock, and lets a non-root tesla-pi-ble
+    # share a lock file that root created.
+    [[ -e "$LOCK" ]] || ( umask 0; : >"$LOCK" ) 2>/dev/null || true
+    exec 9<"$LOCK" || fail "lock_open_failed"
+    flock -w 20 9 || fail "bt_busy"
+    was_blocked="$("$RFKILL" list bluetooth 2>/dev/null | awk '/Soft blocked/{print ($3=="yes")?"yes":"no"; exit}')"
+    [[ -n "$was_blocked" ]] || fail "no_bluetooth_adapter"
+    trap restore_bt EXIT INT TERM
+    if [[ "$was_blocked" == "yes" ]]; then
+        "$RFKILL" unblock bluetooth || fail "rfkill_unblock_failed"
+        sleep 1
+    fi
+    "$HCICONFIG" "$ADAPTER" up 2>/dev/null || fail "adapter_up_failed"
+    "$HCICONFIG" "$ADAPTER" pageto "$PAGE_TIMEOUT" 2>/dev/null || true
+}
+
+json_str() {
+    # Names come from the phone. Keep printable ASCII minus quote and backslash.
+    printf '%s' "$1" | LC_ALL=C tr -cd ' -~' | tr -d '"\\' | cut -c1-64
+}
+
+case "${1:-}" in
+    probe)
+        mac="${2:-}"
+        [[ "$mac" =~ ^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$ ]] || fail "bad_mac" 2
+        mac="${mac^^}"
+        start=$(date +%s%3N)
+        borrow_bt
+        name="$(timeout 6 "$HCITOOL" -i "$ADAPTER" name "$mac" 2>/dev/null | head -1)"
+        if [[ -z "$name" ]]; then
+            printf '{"ok":true,"present":false,"rssi":null,"samples":[],"ms":%s}\n' "$(( $(date +%s%3N) - start ))"
+            exit 0
+        fi
+        # The phone answered. Hold a link open with l2ping and read RSSI while
+        # it is up; the iPhone drops an unauthenticated link within seconds, so
+        # sample quickly and take whatever arrives.
+        timeout 8 "$L2PING" -i "$ADAPTER" -d 0 -c 40 "$mac" >/dev/null 2>&1 &
+        lp=$!
+        samples=()
+        for (( i = 0; i < RSSI_TRIES * 4 && ${#samples[@]} < RSSI_TRIES; i++ )); do
+            v="$("$HCITOOL" -i "$ADAPTER" rssi "$mac" 2>/dev/null | awk '/RSSI return value/ {print $4}')"
+            [[ "$v" =~ ^-?[0-9]+$ ]] && samples+=("$v")
+            sleep 0.25
+        done
+        kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null
+        rssi=null
+        if (( ${#samples[@]} )); then
+            # Median: one reading taken while the link was coming up or going
+            # down should not decide it.
+            rssi="$(printf '%s\n' "${samples[@]}" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}')"
+        fi
+        list="$(IFS=,; echo "${samples[*]:-}")"
+        printf '{"ok":true,"present":true,"name":"%s","rssi":%s,"samples":[%s],"ms":%s}\n' \
+            "$(json_str "$name")" "$rssi" "$list" "$(( $(date +%s%3N) - start ))"
+        ;;
+    *)
+        usage
+        ;;
+esac

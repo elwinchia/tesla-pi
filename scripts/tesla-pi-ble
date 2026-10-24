@@ -56,6 +56,14 @@ restore_bt() {
 trap restore_bt EXIT INT TERM
 
 borrow_bt() {
+    # Shared with tesla-pi-phone, which borrows the same radio every few
+    # seconds while it looks for the owner's iPhone. Without it one helper's
+    # restore_bt can re-block Bluetooth in the middle of the other's call.
+    local lock=/run/lock/tesla-pi-bt.lock
+    [[ -e "$lock" ]] || ( umask 0; : >"$lock" ) 2>/dev/null || true
+    if exec 9<"$lock" 2>/dev/null; then
+        flock -w 20 9 || { echo "Bluetooth is busy (tesla-pi-phone probe); try again." >&2; exit 1; }
+    fi
     was_blocked="$(sudo "$RFKILL" list bluetooth | awk '/Soft blocked/{print ($3=="yes")?"yes":"no"; exit}')"
     if [[ "$was_blocked" == "yes" ]]; then
         sudo "$RFKILL" unblock bluetooth

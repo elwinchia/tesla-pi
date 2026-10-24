@@ -242,6 +242,9 @@ sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-power-tab.sh
 # RTC and no NTP in the car, so without this it keeps last night's time until
 # it is next on home Wi-Fi — see docs/clock-sync.md:
 sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-clock-tab.sh
+# Start CarPlay when your iPhone is in the driver's seat (Settings → CarPlay,
+# off until turned on). Probes the phone over classic Bluetooth:
+sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-phone-near.sh
 # Only if a second WiFi adapter (wlan1) is wired in:
 sudo TESLAPI_SERVICE_USER=$USER bash scripts/install-wifi-tab.sh
 # Write dongle firmware to a USB stick from the car (Settings → Dongle):

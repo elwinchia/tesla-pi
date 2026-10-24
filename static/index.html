@@ -995,6 +995,8 @@
   }
   .set-row.is-inline .set-row-main { min-width: 0; }
   .set-row.is-inline .set-row-control { margin-top: 0; flex: none; }
+  /* Beats the UA [hidden] rule losing to .is-inline's display:flex. */
+  .set-row[hidden] { display: none; }
   /* These blocks predate the row layout and rule themselves off from what
      sits above; inside a row the hairline is the row's job. */
   .set-row .cert-actions { margin-top: 14px; padding-top: 0; border-top: 0; }
@@ -2132,6 +2134,37 @@
               <div class="set-row-control">
                 <button type="button" class="set-switch" id="on-demand-switch" role="switch"
                         aria-checked="false" aria-label="Connect only while this page is open">
+                  <span class="knob"></span>
+                </button>
+              </div>
+            </div>
+            <!-- Hidden until the server says the Bluetooth helper is installed
+                 (scripts/install-phone-near.sh); see applyServerPhoneNear. -->
+            <div class="set-row is-inline" id="phone-near-row" hidden
+                 data-search="iphone phone bluetooth near nearby car start automatically presence proximity">
+              <div class="set-row-main">
+                <div class="set-row-label">
+                  Start when my iPhone is in the car
+                  <button type="button" class="set-info" data-set-info
+                          aria-haspopup="dialog" aria-label="About starting CarPlay when your iPhone is in the car">
+                    <svg width="17" height="17" aria-hidden="true"><use href="#i-info"/></svg>
+                  </button>
+                </div>
+                <p class="set-row-sub" id="phone-near-sub" hidden></p>
+                <p class="set-row-sub set-info-body" hidden>
+                  With "Connect only while this page is open" on, CarPlay normally waits
+                  until you open this page, and then takes a while to connect. With this
+                  on as well, the Pi listens for your iPhone over Bluetooth and starts
+                  CarPlay as soon as the phone is close to the driver's seat, so it is
+                  ready when you open the page. A phone indoors is too far away to count,
+                  so it does not take your phone off home Wi-Fi while the car sits on
+                  the drive. CarPlay has to connect once first, so the Pi learns which
+                  phone is yours.
+                </p>
+              </div>
+              <div class="set-row-control">
+                <button type="button" class="set-switch" id="phone-near-switch" role="switch"
+                        aria-checked="false" aria-label="Start when my iPhone is in the car">
                   <span class="knob"></span>
                 </button>
               </div>
@@ -4904,7 +4937,8 @@
         for (const row of rows) {
           const on = !q || headMatch || rowHaystack(row).includes(q);
           row.classList.toggle('set-hide', !on);
-          if (on) shown++;
+          // A row the device does not offer (hidden attribute) is not a hit.
+          if (on && !row.hidden) shown++;
         }
         // A group with no rows of its own (the Wi-Fi lists) matches on its
         // heading alone — its contents are built at runtime, not static copy.
@@ -6324,6 +6358,9 @@
         case 'clockSync':
           applyServerClockSync(msg.value);
           break;
+        case 'phoneNear':
+          applyServerPhoneNear(msg);
+          break;
         case 'micRequest':
           setMicWanted(!!msg.value);
           break;
@@ -6410,10 +6447,42 @@
   function applyServerCarplayOnDemand(v) {
     carplayOnDemand = !!v;
     if (onDemandSwitchEl) onDemandSwitchEl.setAttribute('aria-checked', carplayOnDemand ? 'true' : 'false');
+    if (typeof paintPhoneNearSub === 'function') paintPhoneNearSub();
   }
   if (onDemandSwitchEl) {
     onDemandSwitchEl.addEventListener('click', () => {
       try { control.send(JSON.stringify({ type: 'carplayOnDemand', value: !carplayOnDemand })); } catch (e) {}
+    });
+  }
+
+  // Settings > CarPlay > "Start when my iPhone is in the car". Same contract as
+  // the on-demand switch: the server owns the value and the switch only asks.
+  // The row exists only when the Bluetooth helper is installed, and it only
+  // does anything while on-demand is on — with on-demand off CarPlay is already
+  // always connected — so the sub-line says why it is idle when it is.
+  let phoneNearOn = false;
+  let phoneNearKnown = false;
+  const phoneNearRowEl = document.getElementById('phone-near-row');
+  const phoneNearSwitchEl = document.getElementById('phone-near-switch');
+  const phoneNearSubEl = document.getElementById('phone-near-sub');
+  function paintPhoneNearSub() {
+    if (!phoneNearSubEl) return;
+    let text = '';
+    if (phoneNearOn && !carplayOnDemand) text = 'Has no effect while "Connect only while this page is open" is off.';
+    else if (phoneNearOn && !phoneNearKnown) text = 'Waiting for CarPlay to connect once, so the Pi learns your phone.';
+    phoneNearSubEl.textContent = text;
+    phoneNearSubEl.hidden = !text;
+  }
+  function applyServerPhoneNear(msg) {
+    phoneNearOn = !!msg.value;
+    phoneNearKnown = !!msg.phoneKnown;
+    if (phoneNearRowEl) phoneNearRowEl.hidden = !msg.available;
+    if (phoneNearSwitchEl) phoneNearSwitchEl.setAttribute('aria-checked', phoneNearOn ? 'true' : 'false');
+    paintPhoneNearSub();
+  }
+  if (phoneNearSwitchEl) {
+    phoneNearSwitchEl.addEventListener('click', () => {
+      try { control.send(JSON.stringify({ type: 'phoneNear', value: !phoneNearOn })); } catch (e) {}
     });
   }
 

@@ -169,6 +169,26 @@ const POWER_HELPER = process.env.POWER_HELPER || '/usr/local/sbin/tesla-pi-power
 // binary means the feature is not installed, /clock/* answers 404, the SPA
 // hides the group, and nothing here ever tries to move the clock.
 const CLOCK_HELPER = process.env.CLOCK_HELPER || '/usr/local/sbin/tesla-pi-clock'
+// Settings → CarPlay → "Start when my iPhone is in the car". The helper is a
+// root-only Bluetooth probe (scripts/tesla-pi-phone); same contract as the
+// clock helper — absent binary means not installed, the switch stays hidden,
+// and nothing here touches Bluetooth for it.
+const PHONE_HELPER = process.env.PHONE_HELPER || '/usr/local/sbin/tesla-pi-phone'
+// While CarPlay is down, look for the phone this often. A missed probe pages
+// the shared radio for ~2 s (the helper shortens the 5 s default), so this is
+// roughly a 13 % duty cycle on Bluetooth while nobody is in the car.
+const PHONE_POLL_IDLE_MS = Number(process.env.PHONE_POLL_IDLE_MS ?? 15000)
+// While a session is up, only to keep the lease alive: walking away with the
+// phone has to let it lapse.
+const PHONE_POLL_ACTIVE_MS = Number(process.env.PHONE_POLL_ACTIVE_MS ?? 60000)
+// One sighting holds demand this long — over two active-poll periods, so one
+// missed probe does not drop a session the driver is about to use.
+const PHONE_LEASE_MS = Number(process.env.PHONE_LEASE_MS ?? 150000)
+// Measured: RSSI -3..0 (median -1) from the driver's seat; from indoors
+// the phone did not answer at all. -8 leaves margin for a phone in
+// a pocket or a bag on the passenger seat, and refuses a weak link from a room
+// close to the car that does happen to answer.
+const PHONE_RSSI_MIN = Number(process.env.PHONE_RSSI_MIN ?? -8)
 // timesyncd creates this the first time it gets an NTP answer in a boot, and
 // /run is tmpfs so a power cut clears it. While it exists the box is on
 // internet time, which beats anything a page can report.
@@ -418,6 +438,10 @@ const DEFAULT_BLE_ENABLED = false
 // the automatic path only ever acts while the box has not reached NTP since it
 // started. Inert until scripts/install-clock-tab.sh has run.
 const DEFAULT_CLOCK_SYNC = true
+// Off until asked for: it puts the Bluetooth radio to work every few seconds
+// while the car is awake, on silicon the hotspot shares.
+const DEFAULT_PHONE_NEAR = false
+const BT_MAC_RE = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/
 const ALLOWED_ASPECT = new Set(['full', 'wide'])
 const DEFAULT_ASPECT = 'full'
 // 'wide' is not reachable from the UI — the split-screen dock that used it was
@@ -447,7 +471,7 @@ function audioTransferFlagFor(source) {
 }
 
 function loadPersistedSettings() {
-  const out = { fps: DEFAULT_FPS, hand: DEFAULT_HAND, aspect: DEFAULT_ASPECT, bleEnabled: DEFAULT_BLE_ENABLED, clockSync: DEFAULT_CLOCK_SYNC }
+  const out = { fps: DEFAULT_FPS, hand: DEFAULT_HAND, aspect: DEFAULT_ASPECT, bleEnabled: DEFAULT_BLE_ENABLED, clockSync: DEFAULT_CLOCK_SYNC, phoneNear: DEFAULT_PHONE_NEAR, phoneBtMac: null }
   let raw
   try { raw = fsSync.readFileSync(SETTINGS_FILE, 'utf8') }
   catch (e) {
@@ -482,6 +506,10 @@ function loadPersistedSettings() {
   else if (j.carplayOnDemand !== undefined) log('warn', 'settings_load_failed', { msg: 'carplayOnDemand not a boolean', value: j.carplayOnDemand })
   if (typeof j.clockSync === 'boolean') out.clockSync = j.clockSync
   else if (j.clockSync !== undefined) log('warn', 'settings_load_failed', { msg: 'clockSync not a boolean', value: j.clockSync })
+  if (typeof j.phoneNear === 'boolean') out.phoneNear = j.phoneNear
+  else if (j.phoneNear !== undefined) log('warn', 'settings_load_failed', { msg: 'phoneNear not a boolean', value: j.phoneNear })
+  if (typeof j.phoneBtMac === 'string' && BT_MAC_RE.test(j.phoneBtMac)) out.phoneBtMac = j.phoneBtMac
+  else if (j.phoneBtMac != null) log('warn', 'settings_load_failed', { msg: 'phoneBtMac invalid', value: j.phoneBtMac })
   return out
 }
 
@@ -538,6 +566,11 @@ let audioSource = persisted.audioSource
 let bleEnabled = persisted.bleEnabled
 // Not in `config` either. See the Clock section for what acts on it.
 let clockSync = persisted.clockSync
+// Not in `config` either. See the Phone-near section.
+let phoneNear = persisted.phoneNear
+// Learned from the dongle (BoxInfo btMacAddr) and kept, because the probe has
+// to know whom to look for before any session exists.
+let phoneBtMac = persisted.phoneBtMac
 
 // ── Power supply ───────────────────────────────────────────────────────────
 // The Pi's firmware raises a flag when the 5 V rail sags below ~4.63 V, and the
@@ -764,6 +797,7 @@ carplay.dongleDriver.prependListener('message', (m) => {
     if (s.MDModel != null) dongle.link.phoneModel = dongleStr(s.MDModel) || null
     if (s.MDOSVersion != null) dongle.link.phoneOs = dongleStr(s.MDOSVersion) || null
     if (s.btName != null) dongle.link.phoneName = dongleStr(s.btName)
+    if (s.btMacAddr != null) learnPhoneMac(dongleStr(s.btMacAddr))
   } else if (m instanceof SoftwareVersion) {
     log('info', 'dongle_version', { version: m.version })
     const v = parseVersion(m.version)
@@ -941,6 +975,8 @@ async function persistSettings() {
   out.bleEnabled = bleEnabled
   out.carplayOnDemand = onDemand
   out.clockSync = clockSync
+  out.phoneNear = phoneNear
+  if (phoneBtMac) out.phoneBtMac = phoneBtMac
   const body = JSON.stringify(out) + '\n'
   await fs.writeFile(tmp, body, { mode: 0o644 })
   await fs.rename(tmp, SETTINGS_FILE)
@@ -1201,6 +1237,8 @@ let releasing = false
 let demandWas = !onDemand
 // Set when a socket closes with a live lease; see GHOST_LEASE_MS.
 let ghostLeaseUntil = 0
+// Set by the phone probe; see the Phone-near section.
+let phoneLeaseUntil = 0
 // Last absence a page reported on returning, in ms. Reported, not inferred.
 let lastAwayMs = null
 
@@ -1208,6 +1246,7 @@ function demandActive() {
   if (!onDemand) return true
   const now = Date.now()
   if (ghostLeaseUntil > now) return true
+  if (phoneLeaseUntil > now) return true
   for (const c of socketControl.clients) if (c.demandUntil > now) return true
   return false
 }
@@ -1692,6 +1731,7 @@ const httpServer = http.createServer(async (req, res) => {
         carplay: carplayPhase(),
         carplay_on_demand: onDemand,
         carplay_demand: demandActive(),
+        phone_near: phoneNearState(),
         phone_type: phoneLabel(),
         android_work_mode: config.androidWorkMode ?? null,
         ble_enabled: bleEnabled,
@@ -2295,6 +2335,7 @@ socketControl.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'audioSource', value: audioSource || 'bluetooth' }))
   ws.send(JSON.stringify({ type: 'carplayOnDemand', value: onDemand }))
   ws.send(JSON.stringify({ type: 'clockSync', value: clockSync }))
+  ws.send(phoneNearMsg())
   // Replay the current track so a browser that loaded mid-song isn't blank
   // until the next media message.
   if (nowPlaying) ws.send(nowPlayingMsg())
@@ -2375,6 +2416,8 @@ socketControl.on('connection', (ws) => {
       applyCarplayOnDemand(msg.value)
     } else if (msg.type === 'clockSync') {
       applyClockSync(msg.value)
+    } else if (msg.type === 'phoneNear') {
+      applyPhoneNear(msg.value)
     } else if (msg.type === 'clock') {
       // The page's Date.now(), sent on open and every few minutes. See the
       // Clock section for what happens to it.
@@ -3220,6 +3263,153 @@ setInterval(() => {
   restartCarplay('watchdog')
 }, WATCHDOG_MS).unref()
 
+// ── Phone near ─────────────────────────────────────────────────────────────
+// Settings → CarPlay → "Start when my iPhone is in the car". Under on-demand the
+// adapter stays closed until a page is on screen, which costs an 18–44 s cold
+// start every time the driver opens it. This adds a second voter: when the
+// owner's iPhone answers a Bluetooth name request from the driver's seat with
+// a strong enough signal, it holds demand like a visible page would, so the
+// session is already up when the page opens.
+//
+// Why the signal threshold and not mere presence: the reason on-demand exists
+// is not to pull the phone off home Wi-Fi while the car is awake on the drive
+// and the phone is indoors. From indoors the phone did not answer at
+// all when measured, but a room nearer the car might, weakly; RSSI is
+// what refuses that. See PHONE_RSSI_MIN.
+//
+// The phone is identified by the Bluetooth address the adapter reports for it
+// (BoxInfo btMacAddr), learned on the first session and persisted — a name
+// request needs the address, and nothing else on this box knows it.
+const callPhoneHelper = mkHelperCall(PHONE_HELPER)
+const phoneHelperPresent = () => fsSync.existsSync(PHONE_HELPER)
+const phone = {
+  lastProbeAt: 0, lastPresent: null, lastRssi: null, lastMs: null,
+  lastError: null, lastState: null, sightings: 0,
+}
+let phoneTimer = null
+let phoneProbing = false
+
+function learnPhoneMac(raw) {
+  const mac = String(raw || '').trim().toUpperCase()
+  if (!BT_MAC_RE.test(mac) || mac === '00:00:00:00:00:00' || mac === phoneBtMac) return
+  phoneBtMac = mac
+  log('info', 'phone_bt_mac_learned', {})
+  persistSettings().catch((err) => log('warn', 'phone_bt_mac_persist_failed', { msg: err.message }))
+  broadcast(socketControl, phoneNearMsg(), { compress: false })
+  schedulePhoneProbe(0)
+}
+
+function phoneNearState() {
+  const now = Date.now()
+  return {
+    enabled: phoneNear,
+    available: phoneHelperPresent(),
+    phone_known: !!phoneBtMac,
+    rssi_min: PHONE_RSSI_MIN,
+    lease_ms: Math.max(0, phoneLeaseUntil - now),
+    last_probe_at: phone.lastProbeAt || null,
+    last_present: phone.lastPresent,
+    last_rssi: phone.lastRssi,
+    last_probe_ms: phone.lastMs,
+    last_error: phone.lastError,
+    sightings: phone.sightings,
+  }
+}
+
+function phoneNearMsg() {
+  return JSON.stringify({
+    type: 'phoneNear', value: phoneNear,
+    available: phoneHelperPresent(), phoneKnown: !!phoneBtMac,
+  })
+}
+
+async function applyPhoneNear(value) {
+  const v = !!value
+  if (phoneNear === v) return
+  phoneNear = v
+  try { await persistSettings() }
+  catch (err) { log('warn', 'phone_near_persist_failed', { msg: err.message }) }
+  broadcast(socketControl, phoneNearMsg(), { compress: false })
+  log('info', 'phone_near_applied', { value: v })
+  if (v) {
+    schedulePhoneProbe(0)
+  } else {
+    if (phoneTimer) { clearTimeout(phoneTimer); phoneTimer = null }
+    if (phoneLeaseUntil) { phoneLeaseUntil = 0; syncDemand('phone_near_off') }
+  }
+}
+
+// One timer, re-armed after every probe, so probes never overlap and the
+// cadence follows the session: quick while CarPlay is down (that is when a
+// sighting is worth something), slow while it is up (only keeping the lease).
+function schedulePhoneProbe(ms) {
+  if (phoneTimer) { clearTimeout(phoneTimer); phoneTimer = null }
+  if (!phoneNear || shuttingDown) return
+  const wait = ms ?? (carplayStarted ? PHONE_POLL_ACTIVE_MS : PHONE_POLL_IDLE_MS)
+  phoneTimer = setTimeout(phoneTick, wait)
+  phoneTimer.unref?.()
+}
+
+function notePhoneState(state, fields) {
+  if (state === phone.lastState) return
+  phone.lastState = state
+  log('info', 'phone_' + state, fields)
+}
+
+async function phoneTick() {
+  phoneTimer = null
+  if (phoneProbing) return
+  // Nothing to decide: with on-demand off the adapter is always open, and
+  // without the helper or a learned address there is nobody to look for.
+  if (!phoneNear || !onDemand || !phoneBtMac || !phoneHelperPresent()) {
+    schedulePhoneProbe(PHONE_POLL_ACTIVE_MS)
+    return
+  }
+  phoneProbing = true
+  try {
+    const r = parseHelperJson(await callPhoneHelper(['probe', phoneBtMac], 20000))
+    phone.lastProbeAt = Date.now()
+    if (!r.ok) {
+      if (phone.lastError !== r.error) log('warn', 'phone_probe_failed', { error: r.error })
+      phone.lastError = r.error || 'unknown'
+      return
+    }
+    phone.lastError = null
+    phone.lastPresent = !!r.present
+    phone.lastRssi = typeof r.rssi === 'number' ? r.rssi : null
+    phone.lastMs = typeof r.ms === 'number' ? r.ms : null
+    // The threshold guards *starting* a session from indoors. Once the phone is
+    // in one, any answer keeps it: as measured, a phone busy with
+    // CarPlay reads several points weaker from the same seat (-4..-11 against
+    // -1..-3 idle), so holding it to the start threshold would drop a session
+    // the driver is sitting in. From indoors the phone does not answer at all,
+    // so walking away still lets the lease lapse.
+    const near = r.present && (plugged || (phone.lastRssi != null && phone.lastRssi >= PHONE_RSSI_MIN))
+    if (near) {
+      phone.sightings++
+      const wasHeld = phoneLeaseUntil > Date.now()
+      phoneLeaseUntil = Date.now() + PHONE_LEASE_MS
+      notePhoneState('near', { rssi: phone.lastRssi, samples: r.samples, ms: phone.lastMs })
+      if (!wasHeld) syncDemand('phone_near')
+    } else {
+      // Not near: leave any lease to run out on its own. One missed probe must
+      // not drop a session the driver is about to use.
+      if (r.present) notePhoneState('weak', { rssi: phone.lastRssi, samples: r.samples, rssi_min: PHONE_RSSI_MIN })
+      else notePhoneState('absent', { ms: phone.lastMs })
+      if (phoneLeaseUntil && phoneLeaseUntil <= Date.now()) {
+        phoneLeaseUntil = 0
+        log('info', 'phone_lease_lapsed', {})
+        syncDemand('phone_gone')
+      }
+    }
+  } catch (err) {
+    log('warn', 'phone_probe_failed', { error: err.message })
+  } finally {
+    phoneProbing = false
+    schedulePhoneProbe()
+  }
+}
+
 // config now carries node-carplay's merged defaults (incl. a large phoneConfig);
 // log only the fields we tune.
 log('info', 'boot', { width: config.width, height: config.height, wide_height: WIDE_HEIGHT, aspect: config.aspect, fps: config.fps, dpi: config.dpi, hand: config.hand })
@@ -3234,6 +3424,10 @@ if (onDemand) {
 // dongle. Left in place so CARPLAY_ON_DEMAND=off still boots straight into a
 // session.
 restartCarplay('boot')
+if (phoneNear) {
+  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, phone_known: !!phoneBtMac })
+  schedulePhoneProbe(5000)
+}
 
 const AUTOCONNECT_POKE_MS = 15000
 setInterval(() => pokeAutoconnect('tick'), AUTOCONNECT_POKE_MS).unref()
