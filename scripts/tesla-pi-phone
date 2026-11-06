@@ -97,6 +97,11 @@ case "${1:-}" in
         for (( i = 0; i < RSSI_TRIES * 4 && ${#samples[@]} < RSSI_TRIES; i++ )); do
             v="$("$HCITOOL" -i "$ADAPTER" rssi "$mac" 2>/dev/null | awk '/RSSI return value/ {print $4}')"
             [[ "$v" =~ ^-?[0-9]+$ ]] && samples+=("$v")
+            # l2ping gone means the link is gone (the phone refused or dropped
+            # it), and no later read can succeed. Waiting out the loop anyway
+            # made an RSSI-less answer cost ~10 s instead of ~2 s, on the
+            # radio the AP shares.
+            kill -0 "$lp" 2>/dev/null || break
             sleep 0.25
         done
         kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null

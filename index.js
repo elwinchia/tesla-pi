@@ -211,6 +211,12 @@ const PHONE_BOOT_WINDOW_MS = Number(process.env.PHONE_BOOT_WINDOW_MS ?? 180000)
 const PHONE_CAR_CHECK = (process.env.PHONE_CAR_CHECK ?? 'on') !== 'off'
 const PHONE_CAR_CHECK_STREAK = Number(process.env.PHONE_CAR_CHECK_STREAK ?? 2)
 const PHONE_CAR_CHECK_GAP_MS = Number(process.env.PHONE_CAR_CHECK_GAP_MS ?? 300000)
+// The car only reports a user once they are seated, so the first check of a
+// spell often lands while the driver is still opening the door (2026-11-04
+// 09:55: "no", then the driver sat waiting 90 s behind the 5-minute gap).
+// Within one unbroken spell of answers, re-ask this soon, up to this many times.
+const PHONE_CAR_RECHECK_MS = Number(process.env.PHONE_CAR_RECHECK_MS ?? 40000)
+const PHONE_CAR_CHECKS_PER_SPELL = Number(process.env.PHONE_CAR_CHECKS_PER_SPELL ?? 3)
 // timesyncd creates this the first time it gets an NTP answer in a boot, and
 // /run is tmpfs so a power cut clears it. While it exists the box is on
 // internet time, which beats anything a page can report.
@@ -3309,7 +3315,7 @@ const phone = {
   lastError: null, lastState: null, sightings: 0,
   // Consecutive present-but-not-near answers, and the last car check, on the
   // monotonic clock (the wall clock jumps when the car's browser sets it).
-  weakStreak: 0, carCheckAt: null, carSaid: null,
+  weakStreak: 0, spellChecks: 0, carCheckAt: null, carSaid: null,
 }
 let phoneTimer = null
 let phoneProbing = false
@@ -3340,6 +3346,7 @@ function phoneCarCheckAvailable() {
 // car could not be read (asleep, out of range, all three BLE slots taken).
 async function askCarUserPresent() {
   phone.carCheckAt = performance.now()
+  phone.spellChecks++
   const out = await readBleState('closures')
   const present = out.ok ? out.data?.closuresState?.isUserPresent : undefined
   phone.carSaid = typeof present === 'boolean' ? present : null
@@ -3348,6 +3355,20 @@ async function askCarUserPresent() {
     ...(out.ok ? {} : { error: String(out.error).slice(0, 160) }),
   })
   return phone.carSaid
+}
+
+function carCheckDue() {
+  // Just after power-up one weak answer is enough: the car usually woke because
+  // someone walked up to it, and a driver quick to the browser beat the
+  // two-answer wait (2026-11-05 12:39, 14 s). The overnight case this streak
+  // guards against is a car long awake, never one that just booted us.
+  const streak = inPhoneBootWindow() ? 1 : PHONE_CAR_CHECK_STREAK
+  if (phone.weakStreak < streak || !phoneCarCheckAvailable()) return false
+  if (phoneLeaseUntil > Date.now()) return false
+  if (phone.carCheckAt == null) return true
+  const since = performance.now() - phone.carCheckAt
+  if (phone.spellChecks === 0) return since >= PHONE_CAR_CHECK_GAP_MS
+  return phone.spellChecks < PHONE_CAR_CHECKS_PER_SPELL && since >= PHONE_CAR_RECHECK_MS
 }
 
 function phoneNearState() {
@@ -3393,12 +3414,15 @@ async function applyPhoneNear(value) {
 }
 
 // One timer, re-armed after every probe, so probes never overlap and the
-// cadence follows the session: quick while CarPlay is down (that is when a
-// sighting is worth something), slow while it is up (only keeping the lease).
+// cadence follows the session: quick until the phone is in one (that is when a
+// sighting is worth something), slow while it is (only keeping the lease).
 function schedulePhoneProbe(ms) {
   if (phoneTimer) { clearTimeout(phoneTimer); phoneTimer = null }
   if (!phoneNear || shuttingDown) return
-  const wait = ms ?? (carplayStarted ? PHONE_POLL_ACTIVE_MS : PHONE_POLL_IDLE_MS)
+  // Slow only while the phone is actually in a session. The dongle stays open
+  // for IDLE_STOP_MS after the phone leaves, and polling at the active rate then
+  // cost a returning driver a 66 s wait (2026-11-04 11:09).
+  const wait = ms ?? (plugged ? PHONE_POLL_ACTIVE_MS : PHONE_POLL_IDLE_MS)
   phoneTimer = setTimeout(phoneTick, wait)
   phoneTimer.unref?.()
 }
@@ -3443,11 +3467,8 @@ async function phoneTick() {
     let near = r.present && (plugged || (phone.lastRssi != null && phone.lastRssi >= rssiMin))
     let via = 'rssi'
     phone.weakStreak = r.present && !near ? phone.weakStreak + 1 : 0
-    if (phone.weakStreak >= PHONE_CAR_CHECK_STREAK && phoneCarCheckAvailable() &&
-        phoneLeaseUntil <= Date.now() &&
-        (phone.carCheckAt == null || performance.now() - phone.carCheckAt >= PHONE_CAR_CHECK_GAP_MS)) {
-      if (await askCarUserPresent()) { near = true; via = 'car' }
-    }
+    if (phone.weakStreak === 0) phone.spellChecks = 0
+    if (carCheckDue() && await askCarUserPresent()) { near = true; via = 'car' }
     if (near) {
       phone.weakStreak = 0
       phone.sightings++
@@ -3489,7 +3510,7 @@ if (onDemand) {
 // session.
 restartCarplay('boot')
 if (phoneNear) {
-  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, boot_rssi_min: PHONE_BOOT_RSSI_MIN, boot_window_ms: PHONE_BOOT_WINDOW_MS, car_check: phoneCarCheckAvailable(), car_check_streak: PHONE_CAR_CHECK_STREAK, car_check_gap_ms: PHONE_CAR_CHECK_GAP_MS, phone_known: !!phoneBtMac })
+  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, boot_rssi_min: PHONE_BOOT_RSSI_MIN, boot_window_ms: PHONE_BOOT_WINDOW_MS, car_check: phoneCarCheckAvailable(), car_check_streak: PHONE_CAR_CHECK_STREAK, car_check_gap_ms: PHONE_CAR_CHECK_GAP_MS, car_recheck_ms: PHONE_CAR_RECHECK_MS, car_checks_per_spell: PHONE_CAR_CHECKS_PER_SPELL, phone_known: !!phoneBtMac })
   schedulePhoneProbe(5000)
 }
 
