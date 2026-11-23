@@ -6,7 +6,7 @@
 //       The dynamometer holds the engine at <rpm>. Throttle 1 = full load
 //       (on-load); throttle 0 = the dyno drives the engine (overrun).
 //   es-render <script.mr> <out.wav> idle <seconds> [warmup s]
-//       Free-running idle, closed throttle, no dyno.
+//       Free-running idle, no dyno: closed throttle, or ES_IDLE_THROTTLE.
 //   es-render <script.mr> <out.wav> rev <seconds>
 //       Free revving in neutral: idle, blips, a sweep to the limiter.
 #include "scripting/include/compiler.h"
@@ -134,7 +134,9 @@ int main(int argc, char **argv) {
             sim->m_dyno.m_rotationSpeed = units::rpm(800 + (holdRpm - 800) * std::max(0.0, r));
             target = hold ? throttle : 0.0;
         } else if (mode == "idle") {
-            target = 0;
+            // ES_IDLE_THROTTLE: some scripts (the F136) only keep running
+            // with the throttle cracked open, as a real idle valve would.
+            target = getenv("ES_IDLE_THROTTLE") ? std::atof(getenv("ES_IDLE_THROTTLE")) : 0.0;
         } else {
             const double u = t - 1.5; // 0 = engine running
             if (u > 2 && u < 2.3) target = 0.6;            // blip

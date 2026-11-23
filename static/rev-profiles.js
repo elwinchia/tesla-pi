@@ -43,8 +43,55 @@ const v8 = {
   pulseMs: 2.4, bright: [650, 2500], intake: [1700, 0.10], pops: 0.07, drive: 1.7, lope: 0.45,
 }
 
-// One car: the V8. Its sound is engine-sim loops (static/rev-samples.js);
-// these numbers drive its gearbox and rev range, and synthesise it only if
-// the loops cannot be loaded. The other seven engines were removed.
-export const PROFILES = { v8 }
+// Even-fire V10 at 72 degrees, 1-6-5-10-2-7-3-8-4-9, banks alternating.
+// Its sound: engine-sim's LFA-style V10 script.
+const lfa = {
+  name: 'V10', style: 'LFA-style',
+  blurb: 'engine-sim\'s LFA V10: a high, clean howl to 9,000 rpm.',
+  idle: 890, redline: 9000, launch: 3200, revRise: 16000, revFall: 7500, limiter: 50,
+  gears: kmh(80, 120, 160, 200, 245, 300),
+  cylinders: [1, 6, 5, 10, 2, 7, 3, 8, 4, 9].map((c, i) => ({ at: i / 10, bank: c <= 5 ? 0 : 1 })),
+  banks: [
+    [[210, 3.0, 0.7], [500, 4.0, 0.62], [1250, 5.0, 0.45], [2800, 6.0, 0.24]],
+    [[222, 3.0, 0.7], [520, 4.0, 0.62], [1310, 5.0, 0.45], [2900, 6.0, 0.24]],
+  ],
+  pulseMs: 1.0, bright: [1800, 4200], intake: [3000, 0.14], pops: 0.04, drive: 1.4, lope: 0,
+}
+
+// Flat-plane V8, 1-5-3-7-4-8-2-6, the banks alternating evenly: a harder,
+// higher note than the cross-plane burble. Its sound: engine-sim's Ferrari
+// F136-style script.
+const f136 = {
+  name: 'V8', style: 'Ferrari-style flat-plane',
+  blurb: 'engine-sim\'s F136 flat-plane V8: a hard-edged scream to 9,000 rpm.',
+  idle: 1060, redline: 9000, launch: 3000, revRise: 14000, revFall: 6500, limiter: 50,
+  gears: kmh(70, 105, 140, 175, 210, 250, 325),
+  cylinders: [1, 5, 3, 7, 4, 8, 2, 6].map((c, i) => ({ at: i / 8, bank: c <= 4 ? 0 : 1 })),
+  banks: [
+    [[150, 3.0, 0.8], [360, 4.0, 0.6], [900, 5.0, 0.4], [2200, 6.0, 0.2]],
+    [[158, 3.0, 0.8], [375, 4.0, 0.6], [940, 5.0, 0.4], [2300, 6.0, 0.2]],
+  ],
+  pulseMs: 1.4, bright: [1300, 3600], intake: [2600, 0.12], pops: 0.05, drive: 1.5, lope: 0,
+}
+
+// Flat six, 1-6-2-4-3-5, cylinders 1-3 on one side: the banks alternate
+// evenly. Its sound: our own GT3-style engine-sim script
+// (scripts/engine-sim/flat6_gt3.mr).
+const gt3 = {
+  name: 'Flat-6', style: 'GT3-style',
+  blurb: 'A GT3-style flat-6 we wrote for engine-sim: rasp and howl to 9,000 rpm.',
+  idle: 930, redline: 9000, launch: 3200, revRise: 14000, revFall: 6500, limiter: 60,
+  gears: kmh(62, 95, 130, 165, 200, 240, 318),
+  cylinders: [1, 6, 2, 4, 3, 5].map((c, i) => ({ at: i / 6, bank: c <= 3 ? 0 : 1, delayMs: c <= 3 ? 0 : 0.35 })),
+  banks: [
+    [[160, 3.0, 0.7], [410, 4.0, 0.6], [1100, 6.0, 0.5], [2600, 9.0, 0.34]],
+    [[168, 3.0, 0.7], [430, 4.0, 0.6], [1160, 6.0, 0.5], [2720, 9.0, 0.34]],
+  ],
+  pulseMs: 1.1, bright: [1500, 4200], intake: [2900, 0.2], pops: 0.04, drive: 1.6, lope: 0.05,
+}
+
+// The cars, in the picker's order. Each one's sound is engine-sim loops
+// (static/rev-samples.js); these numbers drive its gearbox and rev range,
+// and synthesise it only if the loops cannot be loaded.
+export const PROFILES = { v8, lfa, f136, gt3 }
 export const DEFAULT_PROFILE = 'v8'

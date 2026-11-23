@@ -26,6 +26,12 @@ ES_IR=es/sound-library/new/minimal_muffling_01.wav \
 ES_CONV=0 scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-dry 1200 1800 2500 3200 4000 4800 5600 6300
 node scripts/rev-samples.mjs --print-levels v8       # the levels static/rev-samples.js holds
 node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the sub, level, encode into static/sounds/
+
+# The other cars, the same three ways each (run in sh: zsh does not split $P):
+#   lfa_v10.mr -> lfa-v10, f136_v8.mr -> f136-v8   P="1300 2000 2800 3700 4600 5600 6700 7800 8800"
+#   flat6_gt3.mr -> flat6-gt3                      P="1400 2100 2900 3800 4800 5800 6800 7800 8800"
+# The F136 stalls at a closed throttle: re-render its three idle.wav files with
+# ES_IDLE_THROTTLE=0.02 (es-render ... idle 4 4).
 ```
 
 Everything lands in the git-ignored `.cache/engine-sim/`:
@@ -61,6 +67,8 @@ audio. Nothing is dropped and nothing is padded.
   At closed throttle the engine is 15–30× quieter than at full load, so idle
   needs care. `rev-samples.js` stores each loop's level relative to the
   loudest on-load loop.
+- **Idle throttle:** `ES_IDLE_THROTTLE` opens the throttle a little in
+  `idle` mode, for engines that stall shut (the F136, at 0.02).
 - **Impulse response:** `ES_IR` swaps the exhaust impulse response for every
   exhaust (a 16-bit WAV, relative to the source root), and `ES_CONV` sets how
   much of it is mixed in (0 = dry).
@@ -113,8 +121,10 @@ engine-sim bundles these engine scripts (`assets/engines/`):
 - **V12:** Ferrari 412 T2 (F1), Rolls-Royce Merlin (aircraft)
 - **Other:** Audi I5, Honda VTEC I4, and more
 
-It has no flat-6 (one would have to be written) and no rotary (engine-sim
-models piston engines only).
+It has no flat-6, so `flat6_gt3.mr` is ours: a 4.0 L, 9,000 rpm boxer six
+written on the pattern of the Subaru EJ25 script, with its crank and firing
+geometry worked out in its header. There is no rotary (engine-sim models
+piston engines only).
 
 To add one:
 

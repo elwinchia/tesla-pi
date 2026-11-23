@@ -141,6 +141,13 @@
     display: flex;
     background: #000;
   }
+  /* With the engine sound on, the band under CarPlay is its rev meter and
+     speedometer (static/rev-gauge.js + rev-gauge.css), scaled to fit. */
+  #carplay-dock.rv-dock {
+    align-items: center; justify-content: center; padding: 6px 16px; border: 0;
+    background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
+  }
+  #carplay-dock.rv-dock .cluster-svg { width: auto; height: 100%; max-width: 100%; }
 
   /* ─────────────────────────  NOW PLAYING  ───────────────────────── */
   /* One component, two homes: the black band under CarPlay in wide mode, and
@@ -3038,7 +3045,8 @@
   // value the server sent is cached here and reconciled on the next push.
   const WIDE_H = Number(localStorage.getItem('carplayWideHeight')) || 840;
   const ASPECTS = { full: { w: 1920, h: 1496 }, wide: { w: 1920, h: WIDE_H } };
-  // Full unless the SERVER has been put in wide — nothing in the UI selects it.
+  // Full unless the server is in wide, which the page asks for while the
+  // engine sound is on (see reconcileAspect), to put its gauges under CarPlay.
   const renderedAspect = localStorage.getItem('carplayAspect') === 'wide' ? 'wide' : 'full';
   document.documentElement.dataset.aspect = renderedAspect;
   const carplayWidth = ASPECTS[renderedAspect].w;
@@ -4388,7 +4396,10 @@
   function loadRevSound() {
     if (!revLoading) {
       revLoading = import('./rev-sound.js')
-        .then((m) => { revSound = new m.RevSound(); return revSound; })
+        .then((m) => {
+          revSound = new m.RevSound({ onState: (st) => { if (dockCluster) dockCluster.set(dockCluster.toInput(st)); } });
+          return revSound;
+        })
         .catch((e) => { console.warn('engine sound unavailable', e); revLoading = null; return null; });
     }
     return revLoading;
@@ -4407,7 +4418,7 @@
   function initRev() {
     const on = revEnabled();
     applyRev(on);
-    if (on) { loadRevSound(); armRevStart(); }
+    if (on) { loadRevSound(); armRevStart(); startDock(); }
   }
   revSwitchEl.addEventListener('click', async () => {
     const next = !revEnabled();
@@ -4415,9 +4426,75 @@
     const rs = await loadRevSound();
     if (!rs) { applyRev(false); return; }
     rs.update({ enabled: next });
+    // Turning it on is the owner asking for wide again, even after a fallback.
+    if (next) lsSet(WIDE_BLOCK_KEY, '0');
     // The tap on the switch is the gesture that lets the sound start.
     if (next) rs.start(); else rs.stop();
+    reconcileAspect();
   });
+
+  // ---- Engine sound gauges under CarPlay -----------------------------------
+  // While the engine sound is on, CarPlay is a wide top band and the band
+  // below it shows the rev meter and speedometer, fed by the same engine
+  // the sound comes from. The server owns the format (applyAspect in
+  // index.js restarts CarPlay at the new height); this page asks for it.
+  let serverAspect = null;
+  let dockCluster = null;
+  const WIDE_BLOCK_KEY = 'carplayWideBlocked';
+  function wantAspect() {
+    return revEnabled() && lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
+  }
+  // Ask the server for the format the engine sound wants. True if asked.
+  function reconcileAspect() {
+    const want = wantAspect();
+    if (serverAspect == null || serverAspect === want) return false;
+    try { control.send(JSON.stringify({ type: 'aspect', value: want })); } catch { return false; }
+    serverAspect = want;
+    return true;
+  }
+  // Wide was unstable on this dongle at one height (it dropped off USB and
+  // CarPlay restarted in a loop: see index.js). If CarPlay keeps starting
+  // over in wide, go back to full and stop asking until the engine sound is
+  // switched on again.
+  const wideStarts = [];
+  function noteWidePhase(phase) {
+    if (renderedAspect !== 'wide') return;
+    const now = Date.now();
+    if (phase === 'plugged') { wideStarts.length = 0; return; }
+    if (phase !== 'starting') return;
+    wideStarts.push(now);
+    while (wideStarts.length && now - wideStarts[0] > 10 * 60 * 1000) wideStarts.shift();
+    if (wideStarts.length >= 4) {
+      console.warn('CarPlay keeps restarting in wide; going back to full screen');
+      lsSet(WIDE_BLOCK_KEY, '1');
+      reconcileAspect();
+    }
+  }
+  function startDock() {
+    if (renderedAspect !== 'wide' || dockCluster) return;
+    const dock = document.getElementById('carplay-dock');
+    if (!document.querySelector('link[href="rev-gauge.css"]')) {
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'rev-gauge.css';
+      document.head.appendChild(l);
+    }
+    Promise.all([import('./rev-gauge.js'), loadRevSound()]).then(([g, rs]) => {
+      if (!rs || dockCluster) return;
+      const p = rs.engine.profile;
+      dock.classList.add('rv-dock', 'dash');
+      dockCluster = new g.Cluster(dock, { scale: g.tachScale(p.redline, p.idle),
+        theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') });
+      dockCluster.toInput = g.clusterInput;
+      rs.emit(performance.now());
+      let last = performance.now();
+      const frame = (now) => {
+        if (!dockCluster) return;
+        if (!document.hidden) dockCluster.frame(Math.min(0.1, (now - last) / 1000));
+        last = now;
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }).catch((e) => console.warn('engine gauges unavailable', e));
+  }
 
   // ---- Frame-rate (server-side; broadcast on /control connect drives UI) --
   const ALLOWED_FPS_CLIENT = new Set([30, 60]);
@@ -4910,6 +4987,10 @@
 
   function applyServerAspect(value, height) {
     if (!ALLOWED_ASPECT_CLIENT.has(value)) return;
+    serverAspect = value;
+    // Ask for the format the engine sound wants first: if it differs, the
+    // server restarts CarPlay and pushes the new value, which reloads below.
+    if (reconcileAspect()) return;
     localStorage.setItem('carplayAspect', value);
     // A wide height that differs from the one this page was built with needs the
     // same reload an aspect change needs — the canvas geometry is baked in.
@@ -6395,6 +6476,7 @@
       const msg = JSON.parse(ev.data);
       switch (msg.type) {
         case 'statusReq':
+          noteWidePhase(msg.data);
           switch (msg.data) {
             case 'plugged':   console.log('Phone plugged: ' + (msg.phone || 'unknown')); carplayState = 'plugged'; phoneKind = msg.phone || null; renderAaTile(); setHeadline(); break;
             case 'unplugged': console.log('Phone unplugged'); carplayState = 'unplugged'; phoneKind = null; renderAaTile(); showOverlay('unplugged'); break;

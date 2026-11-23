@@ -7,9 +7,10 @@ browser, and the Pi only serves a few more static files.
 A synthesised engine that revs and shifts as you drive, through the car's own
 speakers. It is modelled on [TesRev](https://tesrev.com/). None of TesRev's
 code or sounds are used: its site publishes no source code and no licence
-for its sounds. There is one car, a V8, and its sound is loops we render
-ourselves with engine-sim, a physically modelled engine
-([The sound](#the-sound-an-engine-sim-v8)). A synthesiser stands in only
+for its sounds. There are four cars (a muscle V8, an LFA-style V10, a
+Ferrari-style flat-plane V8 and a GT3-style flat-6), and their sound is
+loops we render ourselves with engine-sim, a physically modelled engine
+([The sound](#the-sound-four-engine-sim-cars)). A synthesiser stands in only
 if the loops cannot be loaded.
 
 ## 1. How TesRev works
@@ -59,7 +60,7 @@ TesRev's "Tesla only" mode.
   sounded fake. A physically modelled engine (engine-sim) rendered offline
   into loops at many rpm, on-load and overrun, sounds far more like an
   engine and costs the car nothing but playback
-  ([The sound](#the-sound-an-engine-sim-v8)).
+  ([The sound](#the-sound-four-engine-sim-cars)).
 - **GPS speed with a physics load model.** Speed is the one signal we have in
   real time. Load comes from how fast it changes, the way TesRev uses mass,
   power and drag: (mass × accel + drag + rolling) ÷ the force available at
@@ -101,17 +102,18 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | File | What |
 |---|---|
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
-| `static/rev-profiles.js` | The V8: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
+| `static/rev-profiles.js` | The four cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
-| `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 34 files, 455 kB together, engine and exhaust) and `CREDITS.md`. |
+| `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
+| `static/rev-gauge.css` | The cluster's styles, shared by `rev.html` and the dock under CarPlay on `index.html`. |
 | `scripts/engine-sim/` | A headless build of engine-sim (MIT) for macOS and the scripts that render the V8's loops; see its README. Nothing in it ships to the Pi. |
 | `scripts/rev-samples.mjs` | Rebuilds `static/sounds/` from the renders: cuts, loops, EQs, mixes the sub layer, levels and encodes (`--print-levels` gives the levels). It can also fetch credited Freesound recordings. Needs `ffmpeg` on the machine that builds; the car doesn't. |
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, an idle lope, saturation and a DC blocker follow. It allocates nothing on the audio thread. It plays the loop player when the car's loops are loaded, and the synthesiser only as the fallback. |
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for the dashboard, **Simulation mode**, the car card, settings and the Test drive: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The cluster on `rev.html`, plain SVG with no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** a glowing orange pill in km/h, showing the speed the engine follows. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** engine load (L–H), and GPS readings per second (full at one per second, the car's expected rate). **Digits:** engine speed under the pill. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
-| `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay. |
+| `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
@@ -174,25 +176,32 @@ moving, and `Engine.step()` ends it on the first tick the car is:
   pulling away; on the car's GPS it is the first fix over ~4 km/h, so up to
   about a second.
 
-### The sound: an engine-sim V8
+### The sound: four engine-sim cars
 
-There is one car, the **V8, American muscle**. Its sound is loops rendered
-offline with [engine-sim](https://github.com/ange-yaghi/engine-sim) (MIT), a
-physically modelled combustion engine, from its bundled GM LS V8:
+Every car's sound is loops rendered offline with
+[engine-sim](https://github.com/ange-yaghi/engine-sim) (MIT), a physically
+modelled combustion engine:
 
-- a free-running idle (about 700 rpm);
-- 8 rev points from 1,200 to 6,300 rpm, each held on engine-sim's dynamometer
-  twice: at **full throttle (on-load)** and at **closed throttle (overrun)**.
+| Card | Engine script | Idle / redline |
+|---|---|---|
+| V8, American muscle | GM LS V8, bundled with engine-sim | 700 / 6,500 |
+| V10, LFA-style | LFA V10, bundled | 890 / 9,000 |
+| V8, Ferrari-style flat-plane | F136 V8, bundled (idles only with the throttle cracked: `ES_IDLE_THROTTLE=0.02`) | 1,060 / 9,000 |
+| Flat-6, GT3-style | our own `scripts/engine-sim/flat6_gt3.mr`, written on the pattern of engine-sim's Subaru boxer (engine-sim has no flat-6) | 930 / 9,000 |
 
-Each run is heard from two places, which the **Exhaust** setting crossfades
-(equal power, default half and half):
+Each car is a free-running idle plus 8–9 rev points up to just under its
+redline, each held on engine-sim's dynamometer twice: at **full throttle
+(on-load)** and at **closed throttle (overrun)**. Every run is heard from
+two places, crossfaded by the **Exhaust** setting (equal power, default half
+and half):
 
-- **Engine** (`static/sounds/v8-es-*`): through engine-sim's "real engine"
-  impulse response.
-- **Exhaust** (`v8-ex-*`): through its "minimal muffling" response, a near
-  straight pipe, raspier, with its weight at 160–320 Hz.
+- **Engine** (`<car>-es-*`): through engine-sim's "real engine" impulse
+  response.
+- **Exhaust** (`<car>-ex-*`): through its "minimal muffling" response, a
+  near straight pipe, raspier, with its weight at 160–320 Hz.
 
-That makes 34 loops at 64 kbit/s, 455 kB.
+That makes 148 loops at 64 kbit/s, about 2 MB, and the car downloads only
+the chosen car's (about 0.5 MB).
 
 **How it plays:**
 
@@ -248,6 +257,24 @@ car and asked for them to be removed. `docs/rev-sound-sources.md` keeps why
 they sounded fake, the recordings and what was rejected, and the other sources
 for better sound.
 
+### Gauges under CarPlay
+
+While the engine sound is on, the main page asks the Pi for CarPlay's
+**wide** format: the page sends `{type: 'aspect', value: 'wide'}`, and the
+server restarts CarPlay at 1920 × `CARPLAY_WIDE_HEIGHT`. CarPlay then fills
+a top band, and the band below (`#carplay-dock`) shows the same cluster as
+`rev.html`, fed by the engine that makes the sound. Switching the engine
+sound off asks for **full** again. The page rebuilds itself on every format
+change, as it already did.
+
+- **The height.** Wide at the old default height, 840, made this dongle drop
+  off USB in a loop (measured 2026-09-02, see `index.js`). The Pi now runs
+  `CARPLAY_WIDE_HEIGHT=960` (2:1, a multiple of 16), set with
+  `scripts/set-wide-height.sh`.
+- **The fallback.** If CarPlay keeps starting over while wide (4 "starting"
+  phases in 10 minutes without reaching "plugged"), the page goes back to
+  full and stops asking, until the engine sound is next switched on.
+
 ### The cluster
 
 | | Idle | Mid-rev | At the limiter |
@@ -299,7 +326,7 @@ sound on the main page.
    full-screen or another app. `visibilitychange` would pause it, which is the
    right behaviour, but it means no engine unless the browser is on screen.
 4. **The bass in the cabin.** The low end was raised to within a few dB of
-   real V8 recordings (measured, see [The sound](#the-sound-an-engine-sim-v8)),
+   real V8 recordings (measured, see [The sound](#the-sound-four-engine-sim-cars)),
    but the car's speakers and EQ decide what is heard.
 5. **Dragging on the car's screen.** Pointer events in the desktop browser
    follow the finger within about 0.1 s. Whether the car's touchscreen

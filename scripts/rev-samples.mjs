@@ -188,7 +188,8 @@ function credits() {
     if (c.kind === 'render') {
       lines.push(`## ${c.title} by ${c.author}`, '',
         `- What: ${c.recording}`,
-        `- Source: ${c.url} at commit ${c.commit}, engine script \`${c.engineScript}\``,
+        `- Source: ${c.url} at commit ${c.commit}`,
+        `- Engine scripts: ${c.engineScripts.map((x) => '`' + x + '`').join(', ')}`,
         `- Author: ${c.author}`,
         `- Licence: [${c.licence}](${c.licenceUrl})`,
         `- Used for: ${used.join(', ')}`, '')
@@ -220,9 +221,16 @@ function printLevels(car) {
     for (const l of loops) r[l.render] ??= rms(stretchFor(set, l, l.seconds))
     const on = loops.filter((l) => l.layer === 'on' && l.render !== 'idle').sort((a, b) => a.rpm - b.rpm)
     const ref = Math.max(...on.map((l) => r[l.render]))
-    const lv = (k) => Math.round(Math.sqrt(r[k] / ref) * 1000) / 1000
-    console.log(`${group}: idle`, Math.round(0.6 * lv(on[0].render) * 1000) / 1000)
-    console.log('  [' + on.map((l) => `[${l.rpm}, ${lv(l.render)}, ${lv(`off-${l.rpm}`)}]`).join(', ') + ']')
+    const raw = (k) => Math.sqrt(r[k] / ref)
+    // Resonances in a simulation can make one rev point several dB louder
+    // than its neighbours, which pumps as you rev. Each layer is smoothed
+    // across rpm with a 3-point geometric mean, keeping the overall rise.
+    const smooth = (xs) => xs.map((x, i) => Math.cbrt((xs[i - 1] ?? x) * x * (xs[i + 1] ?? x)))
+    const onL = smooth(on.map((l) => raw(l.render))), offL = smooth(on.map((l) => raw(`off-${l.rpm}`)))
+    const top = Math.max(...onL)
+    const q = (x) => Math.round((x / top) * 1000) / 1000
+    console.log(`${group}: idle`, q(0.6 * onL[0]))
+    console.log('  [' + on.map((l, i) => `[${l.rpm}, ${q(onL[i])}, ${q(offL[i])}]`).join(', ') + ']')
   }
 }
 

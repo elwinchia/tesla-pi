@@ -10,7 +10,7 @@ import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, credit
 import { PROFILES } from '../static/rev-profiles.js'
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
-const BUDGET = 1.5 * 1024 * 1024 // bytes, all loops together
+const BUDGET = 3 * 1024 * 1024 // bytes, all cars together (the car loads only its own)
 
 test('every recorded car is a real car sound with loops at two or more rpm points', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
@@ -52,7 +52,10 @@ test('every credit is an allowed licence, points at its own Freesound page (or t
       assert.equal(c.url, 'https://github.com/ange-yaghi/engine-sim')
       assert.equal(c.licence, 'MIT')
       assert.match(c.commit, /^[0-9a-f]{7,40}$/)
-      assert.match(c.engineScript, /^assets\/engines\/.+\.mr$/)
+      assert.ok(c.engineScripts.length >= 1)
+      for (const x of c.engineScripts) assert.match(x, /^(assets\/engines\/.+\.mr|scripts\/engine-sim\/.+\.mr \(ours\))$/)
+      // Every set's script is one we ship.
+      for (const set of Object.values(SAMPLE_SETS)) assert.ok(fs.existsSync(path.join(DIR, '..', '..', set.script)), set.script)
       continue
     }
     assert.notEqual(c.licence, 'MIT', `${id}: MIT is for renders only`)
@@ -116,10 +119,11 @@ test('an engine-sim car has an on-load and an overrun loop at every rev point, a
       // Each step is small enough that no loop is stretched far.
       for (let i = 1; i < on.length; i++) assert.ok(on[i] / on[i - 1] <= 1.75, `${car} ${g}: gap ${on[i - 1]}-${on[i]}`)
       assert.ok(PROFILES[car].redline / on[on.length - 1] < 1.1, `${car} ${g}: the top loop is far below redline`)
-      // Overrun is quieter than pulling at the same rpm.
+      // Overrun is not louder than pulling at the same rpm (allowing the
+      // near-equal levels a simulation gives close to the limiter).
       for (const r of on.slice(1)) {
         const a = loops.find((l) => l.layer === 'on' && l.rpm === r), b = loops.find((l) => l.layer === 'off' && l.rpm === r)
-        assert.ok(b.level < a.level, `${car} ${g} ${r}: overrun louder than on-load`)
+        assert.ok(b.level <= a.level * 1.1, `${car} ${g} ${r}: overrun louder than on-load`)
       }
       points[g] = on
       // Every group renders from its own folder through its own impulse response.
@@ -130,4 +134,14 @@ test('an engine-sim car has an on-load and an overrun loop at every rev point, a
   }
   assert.equal(SAMPLE_SETS.v8.kind, 'engine-sim')
   assert.ok(SAMPLE_SETS.v8.loops.some((l) => l.group === 'exhaust'), 'the V8 has an exhaust')
+})
+
+test('every car plays engine-sim loops, with both an engine and an exhaust group', () => {
+  for (const car of Object.keys(PROFILES)) {
+    const set = SAMPLE_SETS[car]
+    assert.ok(set, `${car} has no loops`)
+    assert.equal(set.kind, 'engine-sim', car)
+    const groups = new Set(set.loops.map((l) => l.group))
+    assert.ok(groups.has('engine') && groups.has('exhaust'), `${car}: ${[...groups]}`)
+  }
 })

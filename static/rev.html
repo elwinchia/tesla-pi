@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Engine sound</title>
+<link rel="stylesheet" href="rev-gauge.css">
 <!--
   Engine sound: https://<device>/rev.html
 
@@ -87,65 +88,10 @@
   .seg button { border: 0; border-radius: 0; background: var(--seg); }
   .seg button[aria-pressed=true] { background: #3b5bdb; color: #fff; }
 
-  /* ── Cluster: segmented tach arc + speed pill ──────────────────────── */
-  :root {
-    --dash-a: #fbf8f4; --dash-b: #ede7df; --dash-line: rgba(0,0,0,0.06);
-    --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
-    --rv-chip-bg: #ffffff; --rv-chip-line: rgba(0,0,0,0.12); --rv-chip-text: #d9480f;
-    --rv-bar-off: #dcd6cf; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
-    --rv-hit: rgba(240, 140, 0, 0.045); --sel-bg: #fff4e6;
-  }
-  :root.night {
-    --dash-a: #121a26; --dash-b: #070a10; --dash-line: rgba(255,255,255,0.06);
-    --rv-num: #cfc7bc; --rv-dot: #7c7468; --rv-red: #ff3b30; --rv-glow-op: 0.38;
-    --rv-chip-bg: #141c28; --rv-chip-line: rgba(255,170,80,0.28); --rv-chip-text: #ffb347;
-    --rv-bar-off: #2a2f37; --rv-cap: #8a8f97; --rv-pill-line: #ffdb8f; --rv-bloom-op: 1;
-    --rv-hit: rgba(255, 170, 80, 0.035); --sel-bg: #2b1d10;
-  }
-  .dash {
-    background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
-    border-color: var(--dash-line); padding: 10px 12px 12px;
-  }
+  /* ── Cluster: static/rev-gauge.css ─────────────────────────────── */
   #cluster { max-width: 1100px; margin: 0 auto; }
-  .cluster-svg { display: block; width: 100%; height: auto; overflow: visible; }
-  .rv-bloom { opacity: var(--rv-bloom-op); }
-  .rv-glow { fill: none; stroke: #ff8a1a; stroke-width: 58; stroke-linecap: butt; opacity: var(--rv-glow-op); }
-  .rv-seg { stroke-width: 10; stroke-linecap: round; }
-  .rv-seg.red { stroke: var(--rv-red); opacity: 0.72; }
-  .rv-seg.red.on { opacity: 1; }
-  /* At the redline the red zone is the shift light: full strength, glowing. */
-  .cluster-svg[data-zone=red] .rv-seg.red { opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
-  .cluster-svg[data-zone=red] .rv-dot.red, .cluster-svg[data-zone=red] .rv-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 48, 0.8)); }
-  .rv-dot { fill: var(--rv-dot); }
-  .rv-dot.red { fill: var(--rv-red); }
-  .rv-num { fill: var(--rv-num); font: 600 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-  .rv-num.red { fill: var(--rv-red); }
-  .rv-num-unit { fill: var(--rv-num); font: 500 17px -apple-system, system-ui, sans-serif; dominant-baseline: central; opacity: 0.85; }
-  .rv-pill { stroke: var(--rv-pill-line); stroke-width: 3; }
-  .rv-speed { fill: #4a1d04; font: 800 94px -apple-system, system-ui, sans-serif; text-anchor: middle;
-              dominant-baseline: central; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-  .rv-speed-unit { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.08em; }
-  .rv-icon path { fill: none; stroke: #5c2806; stroke-width: 2.6; stroke-linecap: round; }
-  .rv-chip circle { fill: var(--rv-chip-bg); stroke: var(--rv-chip-line); stroke-width: 2; }
-  .rv-chip-text { fill: var(--rv-chip-text); font: 800 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-  .rv-chip-text.small { font-size: 13px; letter-spacing: 0.06em; }
-  .cluster-svg[data-zone=red] .rv-chip:first-of-type circle { stroke: var(--rv-red); }
-  .rv-chip-cap, .rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
-  .rv-bar rect { fill: var(--rv-bar-off); }
-  .rv-bar rect.red { fill: var(--rv-red); }
-  .rv-bar-end { fill: var(--rv-num); font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-  .rv-rpm { fill: var(--rv-num); font: 800 30px -apple-system, system-ui, sans-serif; text-anchor: middle;
-            dominant-baseline: central; font-variant-numeric: tabular-nums; }
-  .rv-rpm-unit { fill: var(--rv-cap); font: 600 12px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.12em; }
-  .rv-sim-tag { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.1em; }
-  /* Simulation mode: the arc is a control. A faint band shows where a
-     finger can grab it, and a ring follows the finger. */
-  .rv-hit { fill: none; stroke: transparent; stroke-linecap: butt; pointer-events: none; }
-  .cluster-svg[data-sim] { touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
-  .cluster-svg[data-sim] .rv-hit { stroke: var(--rv-hit); pointer-events: stroke; }
-  .cluster-svg[data-sim] .rv-rpm { fill: var(--rv-chip-text); }
-  .rv-finger { fill: rgba(255, 210, 120, 0.18); stroke: #ffd27a; stroke-width: 3; pointer-events: none; }
-  .rv-finger.red { stroke: var(--rv-red); fill: rgba(255, 59, 48, 0.2); }
+  :root { --sel-bg: #fff4e6; }
+  :root.night { --sel-bg: #2b1d10; }
   .dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 2px 4px 6px; }
   .simbtn { min-height: 56px; padding: 12px 20px; font-size: 17px; font-weight: 600; border-radius: 28px; }
   .simbtn[aria-pressed=true] { background: #f08c00; border-color: #ffa94d; color: #1a0d00; }
@@ -285,7 +231,7 @@
 
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
-  import { Cluster, tachScale } from './rev-gauge.js'
+  import { Cluster, tachScale, clusterInput } from './rev-gauge.js'
   import { CREDITS, soundKind, creditsFor, creditLine } from './rev-samples.js'
 
   const $ = (id) => document.getElementById(id)
@@ -454,15 +400,7 @@
     // Engine off reads 0, like a real cluster with the ignition off. In
     // simulation mode the speed is still the car's real speed (0, since it
     // only runs stopped) and the gear is N: a parked car being revved.
-    cluster.set({
-      rpm: s.running ? s.rpm : 0,
-      kmh: s.v * 3.6,
-      gear: !s.running ? '\u2013' : s.stopped ? 'N' : String(s.gear),
-      source: s.sim ? 'SIM' : s.source === 'sim' ? 'TEST' : 'GPS',
-      load: s.running ? s.load : 0,
-      fixRate: s.fixRate || 0,
-      stale: s.running && s.source === 'gps' && s.stale && !s.sim,
-    })
+    cluster.set(clusterInput(s))
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped
     const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')

@@ -143,6 +143,21 @@ export class ZoneLatch {
   }
 }
 
+// What the cluster shows for an engine state from RevSound (rev-sound.js).
+// Engine off reads 0, like a real cluster with the ignition off; parked
+// reads N; the source chip says where the speed comes from.
+export function clusterInput(s) {
+  return {
+    rpm: s.running ? s.rpm : 0,
+    kmh: (s.v || 0) * 3.6,
+    gear: !s.running ? '\u2013' : s.stopped ? 'N' : String(s.gear),
+    source: s.sim ? 'SIM' : s.source === 'sim' ? 'TEST' : 'GPS',
+    load: s.running ? s.load : 0,
+    fixRate: s.fixRate || 0,
+    stale: !!(s.running && s.source === 'gps' && s.stale && !s.sim),
+  }
+}
+
 // ── DOM ───────────────────────────────────────────────────────────────────
 const NS = 'http://www.w3.org/2000/svg'
 function el(name, attrs = {}, parent) {

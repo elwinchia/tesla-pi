@@ -28,8 +28,13 @@ export const CREDITS = {
     title: 'engine-sim', author: 'AngeTheGreat',
     url: 'https://github.com/ange-yaghi/engine-sim',
     licence: 'MIT', licenceUrl: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE',
-    commit: '85f7c3b', engineScript: 'assets/engines/atg-video-2/07_gm_ls.mr',
-    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from its bundled GM LS V8 script: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; heard through engine-sim\'s own "real engine" impulse response (the engine group) and its "minimal muffling" one (the exhaust group), with a dry render of the same runs as a low sub layer. scripts/engine-sim/ rebuilds it.',
+    commit: '85f7c3b',
+    // Engine scripts: three bundled with engine-sim (MIT), and our own flat-6.
+    engineScripts: [
+      'assets/engines/atg-video-2/07_gm_ls.mr', 'assets/engines/atg-video-2/10_lfa_v10.mr',
+      'assets/engines/atg-video-2/08_ferrari_f136_v8.mr', 'scripts/engine-sim/flat6_gt3.mr (ours)',
+    ],
+    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from engine scripts: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; heard through engine-sim\'s own "real engine" impulse response (the engine group) and its "minimal muffling" one (the exhaust group), with a dry render of the same runs as a low sub layer. scripts/engine-sim/ rebuilds them.',
   },
 }
 
@@ -37,51 +42,83 @@ export const CREDITS = {
 // `src` at `start` seconds, `seconds` long, recorded at `rpm`. `layer` is
 // 'on' (under load), 'off' (lifting) or 'any'. `seconds` is rounded to whole
 // engine cycles (loopSeconds), so the loop's seam falls between firings.
-// For an engine-sim set, `render` names the rendered WAV each loop is cut
-// from (scripts/engine-sim/render-set.sh), and `level` is its loudness
-// relative to the loudest on-load loop, square-rooted so overrun and idle
+// Every car is an engine-sim set: the same runs (a free-running idle, then
+// dyno holds at each rpm at full throttle, on-load, and closed throttle,
+// overrun) heard from two places, `engine` and `exhaust`, which the Exhaust
+// setting crossfades. For each loop, `render` names the WAV it is cut from
+// (scripts/engine-sim/render-set.sh) and `level` is its loudness relative
+// to its group's loudest on-load loop, square-rooted so overrun and idle
 // stay audible; the idle loop plays in both layers.
-const es = (group, rpm, layer, level, render) => ({
-  file: `v8-${group === 'exhaust' ? 'ex' : 'es'}-${render}.ogg`, src: 'enginesim', group, render,
-  start: 0.4, seconds: 1.5, rpm, layer, level,
-})
-const v8Group = (group, idle, points) => [
-  es(group, 700, 'on', idle, 'idle'), es(group, 700, 'off', idle, 'idle'),
-  ...points.flatMap(([rpm, on, off]) => [es(group, rpm, 'on', on, `on-${rpm}`), es(group, rpm, 'off', off, `off-${rpm}`)]),
-]
+//
+//   engine:  engine-sim's "real engine" impulse response (ES_IR, see
+//            scripts/engine-sim/README.md). The scripts' own responses left
+//            the first car thin (smooth_39 is centred on 320-640 Hz).
+//   exhaust: its "minimal muffling" response, a near straight pipe: raspier,
+//            with the weight at 160-320 Hz.
+// For both: the bottom octave lifted and the top softened, and the same
+// runs rendered dry (ES_CONV=0), low-passed at 100 Hz and mixed under, since
+// the impulse responses strip the octave where an idle's firing note lives.
+const IR = {
+  engine: 'es/sound-library/archive/test_engine_14_eq_adjusted_16.wav',
+  exhaust: 'es/sound-library/new/minimal_muffling_01.wav',
+}
+const EQ = [{ type: 'lowshelf', hz: 90, db: 10 }, { type: 'highshelf', hz: 3500, db: -4 }]
+
+// One car's set. engine / exhaust: [idle level, [[rpm, on level, off level]...]],
+// from `node scripts/rev-samples.mjs --print-levels <car>`.
+function engineSim({ car, renders, script, idleRpm, engine, exhaust }) {
+  const loop = (group, rpm, layer, level, render) => ({
+    file: `${car}-${group === 'exhaust' ? 'ex' : 'es'}-${render}.ogg`, src: 'enginesim', group, render,
+    start: 0.4, seconds: 1.5, rpm, layer, level,
+  })
+  const group = (g, [idle, points]) => [
+    loop(g, idleRpm, 'on', idle, 'idle'), loop(g, idleRpm, 'off', idle, 'idle'),
+    ...points.flatMap(([rpm, on, off]) => [loop(g, rpm, 'on', on, `on-${rpm}`), loop(g, rpm, 'off', off, `off-${rpm}`)]),
+  ]
+  return {
+    kind: 'engine-sim', bitrate: '64k', script,
+    renders: { engine: renders, exhaust: `${renders}-exhaust` },
+    ir: IR, eq: EQ,
+    sub: { renders: `${renders}-dry`, lowpass: 100, level: 0.7 },
+    loops: [...group('engine', engine), ...group('exhaust', exhaust)],
+  }
+}
+
 export const SAMPLE_SETS = {
-  // V8: rendered with engine-sim (GM LS V8), idle and 8 rpm points, each
-  // on-load and overrun. The sampler crossfades the two layers by load, so
-  // lifting off plays the overrun loops.
-  //
-  // Two groups of the same runs, heard from two places: `engine` and
-  // `exhaust`. The Exhaust setting crossfades between them.
-  v8: {
-    kind: 'engine-sim', bitrate: '64k',
-    renders: { engine: 'ls-v8', exhaust: 'ls-v8-exhaust' },
-    // engine: engine-sim's "real engine" impulse response (ES_IR, see
-    // scripts/engine-sim/README.md) rather than the script's smooth_39,
-    // which is centred on 320-640 Hz and left the V8 thin. exhaust: its
-    // "minimal muffling" response, a near straight pipe: raspier, with the
-    // weight at 160-320 Hz.
-    ir: {
-      engine: 'es/sound-library/archive/test_engine_14_eq_adjusted_16.wav',
-      exhaust: 'es/sound-library/new/minimal_muffling_01.wav',
-    },
-    // For both: the bottom octave lifted and the top softened...
-    eq: [{ type: 'lowshelf', hz: 90, db: 10 }, { type: 'highshelf', hz: 3500, db: -4 }],
-    // ...and the same simulation rendered dry (ES_CONV=0), low-passed at
-    // 100 Hz and mixed under it: the impulse responses strip the lowest
-    // octave, where the V8's idle firing note (about 47 Hz) lives.
-    sub: { renders: 'ls-v8-dry', lowpass: 100, level: 0.7 },
-    // Levels from `node scripts/rev-samples.mjs --print-levels v8`.
-    loops: [
-      ...v8Group('engine', 0.322, [[1200, 0.537, 0.12], [1800, 0.676, 0.184], [2500, 0.983, 0.297], [3200, 0.825, 0.275],
-        [4000, 0.857, 0.361], [4800, 0.907, 0.39], [5600, 1, 0.47], [6300, 0.838, 0.328]]),
-      ...v8Group('exhaust', 0.318, [[1200, 0.53, 0.109], [1800, 0.663, 0.153], [2500, 0.815, 0.255], [3200, 0.836, 0.28],
-        [4000, 0.719, 0.241], [4800, 0.889, 0.305], [5600, 1, 0.412], [6300, 0.913, 0.43]]),
-    ],
-  },
+  // GM LS V8, bundled with engine-sim.
+  v8: engineSim({
+    car: 'v8', renders: 'ls-v8', script: 'scripts/engine-sim/ls_v8.mr', idleRpm: 700,
+    engine: [0.378, [[1200, 0.631, 0.15], [1800, 0.771, 0.203], [2500, 0.89, 0.268], [3200, 0.964, 0.336],
+      [4000, 0.938, 0.368], [4800, 1, 0.44], [5600, 0.992, 0.426], [6300, 0.966, 0.402]]],
+    exhaust: [0.364, [[1200, 0.607, 0.13], [1800, 0.7, 0.172], [2500, 0.815, 0.236], [3200, 0.837, 0.274],
+      [4000, 0.862, 0.291], [4800, 0.915, 0.331], [5600, 0.991, 0.402], [6300, 1, 0.451]]],
+  }),
+  // LFA-style V10, bundled with engine-sim.
+  lfa: engineSim({
+    car: 'lfa', renders: 'lfa-v10', script: 'scripts/engine-sim/lfa_v10.mr', idleRpm: 890,
+    engine: [0.26, [[1300, 0.433, 0.076], [2000, 0.425, 0.082], [2800, 0.459, 0.102], [3700, 0.417, 0.106], [4600, 0.547, 0.141],
+      [5600, 0.763, 0.203], [6700, 0.925, 0.263], [7800, 1, 0.327], [8800, 0.925, 0.33]]],
+    exhaust: [0.251, [[1300, 0.418, 0.075], [2000, 0.6, 0.103], [2800, 0.887, 0.145], [3700, 0.925, 0.16], [4600, 1, 0.199],
+      [5600, 0.939, 0.221], [6700, 0.988, 0.264], [7800, 0.886, 0.241], [8800, 0.886, 0.239]]],
+  }),
+  // Ferrari F136-style flat-plane V8, bundled with engine-sim. It stalls at
+  // a fully closed throttle, so its idle is rendered with ES_IDLE_THROTTLE=0.02
+  // (about 1,060 rpm).
+  f136: engineSim({
+    car: 'f136', renders: 'f136-v8', script: 'scripts/engine-sim/f136_v8.mr', idleRpm: 1060,
+    engine: [0.276, [[1300, 0.461, 0.078], [2000, 0.541, 0.116], [2800, 0.59, 0.149], [3700, 0.539, 0.182], [4600, 0.567, 0.185],
+      [5600, 0.628, 0.213], [6700, 0.692, 0.225], [7800, 0.822, 0.277], [8800, 1, 0.353]]],
+    exhaust: [0.303, [[1300, 0.506, 0.081], [2000, 0.601, 0.108], [2800, 0.75, 0.17], [3700, 0.817, 0.241], [4600, 0.919, 0.312],
+      [5600, 1, 0.354], [6700, 0.982, 0.334], [7800, 0.891, 0.325], [8800, 0.797, 0.307]]],
+  }),
+  // GT3-style flat-6: our own engine script (engine-sim has no flat-6).
+  gt3: engineSim({
+    car: 'gt3', renders: 'flat6-gt3', script: 'scripts/engine-sim/flat6_gt3.mr', idleRpm: 930,
+    engine: [0.488, [[1400, 0.813, 0.084], [2100, 0.991, 0.144], [2900, 0.934, 0.211], [3800, 0.887, 0.305], [4800, 0.92, 0.399],
+      [5800, 0.974, 0.537], [6800, 1, 0.673], [7800, 0.856, 0.718], [8800, 0.928, 0.861]]],
+    exhaust: [0.35, [[1400, 0.584, 0.089], [2100, 0.644, 0.136], [2900, 0.785, 0.232], [3800, 0.877, 0.332], [4800, 1, 0.439],
+      [5800, 0.946, 0.523], [6800, 0.964, 0.657], [7800, 0.828, 0.729], [8800, 0.775, 0.801]]],
+  }),
 }
 
 // Each file holds the loop with PAD_SECONDS of its own wrap-around before
