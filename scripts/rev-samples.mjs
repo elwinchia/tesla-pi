@@ -12,6 +12,10 @@
 //
 // It needs `ffmpeg` and `curl` on the machine building the files. The car
 // needs neither: it plays the .ogg files with its own browser.
+//
+// engine-sim sets (kind: 'engine-sim') are cut from our own renders instead,
+// in .cache/engine-sim/out/<set.renders>/: run scripts/engine-sim/build.sh
+// and scripts/engine-sim/render-set.sh first (see scripts/engine-sim/README.md).
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -86,29 +90,47 @@ function wav(file, x) {
   fs.writeFileSync(file, Buffer.concat([h, pcm]))
 }
 
+// An engine-sim set's rendered WAV for one loop.
+function renderFile(set, loop) {
+  const f = path.join(ROOT, '.cache', 'engine-sim', 'out', set.renders, loop.render + '.wav')
+  if (!fs.existsSync(f)) throw new Error(`${f} is missing: render it with scripts/engine-sim/render-set.sh (see scripts/engine-sim/README.md)`)
+  return f
+}
+
 // static/sounds/CREDITS.md, from the same data the page and tests use.
 function credits() {
   const lines = [
     '# Engine sound recordings',
     '',
-    'The loops in this folder are cut from the recordings below. They are **not**',
-    "covered by this repository's BSD licence: each keeps its own licence, as listed.",
-    'Every one was recorded and uploaded to Freesound by the person named, and is',
-    'used under CC0 (no conditions) or CC BY (credit required, given here and on',
-    '`rev.html` next to the car it is used for).',
+    'The loops in this folder are cut from the recordings and renders below.',
+    "The recordings are **not** covered by this repository's BSD licence: each",
+    'keeps its own licence, as listed. Every one was recorded and uploaded to',
+    'Freesound by the person named, and is used under CC0 (no conditions) or',
+    'CC BY (credit required, given here and on `rev.html` next to the car it is',
+    'used for). The copies used are the 128 kbit/s MP3 previews Freesound serves',
+    "on each sound's own page (the original files need a Freesound login).",
     '',
-    'Changes made to every recording: a stretch was cut, made to loop by',
-    'crossfading its end into its start, mixed to mono, filtered below 25 Hz,',
-    'levelled, and encoded as Ogg Opus at 48 kbit/s. `scripts/rev-samples.mjs`',
-    'does all of it from `static/rev-samples.js`, which says exactly which',
-    'stretch each loop is.',
+    'The `v8-es-*` loops are our own renders, made with engine-sim (MIT) from',
+    'its bundled engine script; engine-sim is credited below all the same.',
     '',
-    'The copies used are the 128 kbit/s MP3 previews Freesound serves on each',
-    "sound's own page (the original files need a Freesound login).",
+    'Changes made to every recording or render: a stretch was cut, made to loop',
+    'by crossfading its end into its start, mixed to mono, filtered below 25 Hz,',
+    'levelled, and encoded as Ogg Opus. `scripts/rev-samples.mjs` does all of',
+    'it from `static/rev-samples.js`, which says exactly which stretch each loop',
+    'is.',
     '',
   ]
   for (const [id, c] of Object.entries(CREDITS)) {
-    const used = Object.entries(SAMPLE_SETS).flatMap(([car, set]) => set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm)`))
+    const used = [...new Set(Object.entries(SAMPLE_SETS).flatMap(([car, set]) => set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm${l.layer && l.layer !== 'any' ? ', ' + l.layer : ''})`)))]
+    if (c.kind === 'render') {
+      lines.push(`## ${c.title} by ${c.author}`, '',
+        `- What: ${c.recording}`,
+        `- Source: ${c.url} at commit ${c.commit}, engine script \`${c.engineScript}\``,
+        `- Author: ${c.author}`,
+        `- Licence: [${c.licence}](${c.licenceUrl})`,
+        `- Used for: ${used.join(', ')}`, '')
+      continue
+    }
     lines.push(`## "${c.title}" by ${c.author}`, '',
       `- Recording: ${c.recording}`,
       `- Page: ${c.url}`,
@@ -127,14 +149,20 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   let total = 0
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
     if (only && car !== only) continue
+    const done = new Set()
     for (const loop of set.loops) {
+      if (done.has(loop.file)) continue // one file can serve both layers
+      done.add(loop.file)
       const len = Math.round(loopSeconds(loop) * SR)
       const fade = Math.round(Math.min(0.12, loopSeconds(loop) * 0.25) * SR)
-      const seg = decode(source(loop.src), loop.start, (len + fade) / SR + 0.05)
-      // Every loop is levelled alike, then louder with revs, the way the
-      // engine is: idle about 6 dB under the redline.
+      const rendered = set.kind === 'engine-sim'
+      const from = rendered ? renderFile(set, loop) : source(loop.src)
+      const seg = decode(from, loop.start, (len + fade) / SR + 0.05)
+      // Recordings are levelled alike, then louder with revs, the way the
+      // engine is: idle about 6 dB under the redline. Renders keep the
+      // engine's own levels, which `level` carries (see rev-samples.js).
       const rise = 0.5 + 0.5 * Math.min(1, loop.rpm / PROFILES[car].redline)
-      const x = level(makeLoop(seg, len, fade), 0.3 * rise * (loop.level || 1))
+      const x = level(makeLoop(seg, len, fade), rendered ? 0.25 * loop.level : 0.3 * rise * (loop.level || 1))
       // Wrap-around padding either side (see PAD_SECONDS).
       const pad = Math.round(PAD_SECONDS * SR)
       const padded = new Float32Array(x.length + 2 * pad)
@@ -142,7 +170,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       const tmp = path.join(CACHE, loop.file + '.wav')
       wav(tmp, padded)
       const dest = path.join(OUT, loop.file)
-      execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-c:a', 'libopus', '-b:a', '48k', '-ac', '1', '-ar', String(SR),
+      execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-c:a', 'libopus', '-b:a', set.bitrate || '48k', '-ac', '1', '-ar', String(SR),
         '-map_metadata', '-1', '-metadata', `comment=${CREDITS[loop.src].title} by ${CREDITS[loop.src].author}, ${CREDITS[loop.src].licence}, ${CREDITS[loop.src].url}`, dest])
       const size = fs.statSync(dest).size
       total += size

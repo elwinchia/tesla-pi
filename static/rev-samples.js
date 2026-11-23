@@ -6,19 +6,31 @@
 // Only recordings their own uploader made, under a licence that allows
 // reuse in a public repository: CC0, or CC BY with visible credit. Nothing
 // NC/ND, nothing ripped from a game, app, video or commercial product, and
-// nothing from TesRev. static/sounds/CREDITS.md has the same list for
+// nothing from TesRev. Or loops we render ourselves with engine-sim (MIT),
+// a physically modelled engine simulator (scripts/engine-sim/). static/sounds/CREDITS.md has the same list for
 // people, and docs/rev-sound.md says what was rejected and why.
 
 export const ALLOWED_LICENCES = {
   'CC0 1.0': { url: 'https://creativecommons.org/publicdomain/zero/1.0/', attribution: false },
   'CC BY 3.0': { url: 'https://creativecommons.org/licenses/by/3.0/', attribution: true },
   'CC BY 4.0': { url: 'https://creativecommons.org/licenses/by/4.0/', attribution: true },
+  // The renderer's licence. The loops are our own output; engine-sim is
+  // credited anyway.
+  'MIT': { url: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE', attribution: true },
 }
 
 // One entry per recording. `audio` is the copy Freesound serves on that
 // sound's own page (its 128 kbit/s MP3 preview: the original file needs a
 // Freesound login); `fetched` is when it was downloaded.
 export const CREDITS = {
+  enginesim: {
+    kind: 'render',
+    title: 'engine-sim', author: 'AngeTheGreat',
+    url: 'https://github.com/ange-yaghi/engine-sim',
+    licence: 'MIT', licenceUrl: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE',
+    commit: '85f7c3b', engineScript: 'assets/engines/atg-video-2/07_gm_ls.mr',
+    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from its bundled GM LS V8 script: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle. scripts/engine-sim/ rebuilds it.',
+  },
   fs112075: {
     title: 'Lambo idle and rev.mp3', author: 'cheesepuff',
     url: 'https://freesound.org/people/cheesepuff/sounds/112075/',
@@ -46,7 +58,24 @@ export const CREDITS = {
 // `src` at `start` seconds, `seconds` long, recorded at `rpm`. `layer` is
 // 'on' (under load), 'off' (lifting) or 'any'. `seconds` is rounded to whole
 // engine cycles (loopSeconds), so the loop's seam falls between firings.
+// For an engine-sim set, `render` names the rendered WAV each loop is cut
+// from (scripts/engine-sim/render-set.sh), and `level` is its loudness
+// relative to the loudest on-load loop, square-rooted so overrun and idle
+// stay audible; the idle loop plays in both layers.
+const es = (rpm, layer, level, render) => ({ file: `v8-es-${render}.ogg`, src: 'enginesim', render, start: 0.4, seconds: 1.5, rpm, layer, level })
 export const SAMPLE_SETS = {
+  // V8: rendered with engine-sim (GM LS V8), idle and 8 rpm points, each
+  // on-load and overrun. The sampler crossfades the two layers by load, so
+  // lifting off plays the overrun loops.
+  v8: {
+    kind: 'engine-sim', renders: 'ls-v8', bitrate: '64k',
+    loops: [
+      es(700, 'on', 0.192, 'idle'), es(700, 'off', 0.192, 'idle'),
+      ...[[1200, 0.32, 0.057], [1800, 0.393, 0.09], [2500, 0.475, 0.133], [3200, 0.577, 0.152],
+        [4000, 0.641, 0.181], [4800, 0.69, 0.183], [5600, 0.682, 0.223], [6300, 1.0, 0.327]]
+        .flatMap(([rpm, on, off]) => [es(rpm, 'on', on, `on-${rpm}`), es(rpm, 'off', off, `off-${rpm}`)]),
+    ],
+  },
   // V12: a fast idle after start, and one steady rev hold. Firing order
   // lines measured from the recording: 3rd order 59.2 Hz at idle, 145.2 Hz
   // in the hold.
@@ -97,6 +126,8 @@ export function loopSeconds(loop) {
 }
 
 export const hasRecording = (car) => Object.hasOwn(SAMPLE_SETS, car)
+// 'engine-sim', 'recorded' or 'synth': what the car picker shows.
+export const soundKind = (car) => (!hasRecording(car) ? 'synth' : SAMPLE_SETS[car].kind === 'engine-sim' ? 'engine-sim' : 'recorded')
 
 // The credits for one car, in the order its sources are listed.
 export function creditsFor(car) {
@@ -107,5 +138,6 @@ export function creditsFor(car) {
 
 // "Title" by author, licence: the line shown under a recorded car.
 export function creditLine(c) {
+  if (c.kind === 'render') return `rendered with ${c.title} by ${c.author}, ${c.licence}`
   return `“${c.title}” by ${c.author} (Freesound), ${c.licence}`
 }

@@ -298,10 +298,19 @@ export class RevSound {
   loadSet(car) {
     if (!this.sampleCache.has(car)) {
       const ctx = this.ctx
+      // One fetch and decode per file: a file can serve both layers.
+      const files = new Map()
+      const decoded = (file) => {
+        if (!files.has(file)) {
+          files.set(file, fetch(new URL('./sounds/' + file, import.meta.url)).then((r) => {
+            if (!r.ok) throw new Error(file + ': HTTP ' + r.status)
+            return r.arrayBuffer()
+          }).then((ab) => ctx.decodeAudioData(ab)))
+        }
+        return files.get(file)
+      }
       this.sampleCache.set(car, Promise.all(SAMPLE_SETS[car].loops.map(async (l) => {
-        const r = await fetch(new URL('./sounds/' + l.file, import.meta.url))
-        if (!r.ok) throw new Error(l.file + ': HTTP ' + r.status)
-        const buf = await ctx.decodeAudioData(await r.arrayBuffer())
+        const buf = await decoded(l.file)
         return { rpm: l.rpm, layer: l.layer || 'any', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
       })).then((loops) => ({ loops })))
     }

@@ -41,17 +41,26 @@ test('every file is in the folder, is Ogg Opus, and the folder holds nothing els
   assert.ok(total <= BUDGET, `${(total / 1024).toFixed(0)} kB of loops, budget ${BUDGET / 1024} kB`)
 })
 
-test('every credit is an allowed licence, points at its own Freesound page, and is used', () => {
+test('every credit is an allowed licence, points at its own Freesound page (or the official engine-sim repo), and is used', () => {
   const used = new Set(Object.values(SAMPLE_SETS).flatMap((s) => s.loops.map((l) => l.src)))
   for (const [id, c] of Object.entries(CREDITS)) {
     assert.ok(Object.hasOwn(ALLOWED_LICENCES, c.licence), `${id}: ${c.licence} is not allowed`)
     assert.equal(c.licenceUrl, ALLOWED_LICENCES[c.licence].url, `${id} licence link`)
+    assert.ok(used.has(id), `${id} is credited but not used`)
+    if (c.kind === 'render') {
+      // Our own renders: only from the official engine-sim repo, MIT.
+      assert.equal(c.url, 'https://github.com/ange-yaghi/engine-sim')
+      assert.equal(c.licence, 'MIT')
+      assert.match(c.commit, /^[0-9a-f]{7,40}$/)
+      assert.match(c.engineScript, /^assets\/engines\/.+\.mr$/)
+      continue
+    }
+    assert.notEqual(c.licence, 'MIT', `${id}: MIT is for renders only`)
     const n = id.replace(/^fs/, '')
     assert.equal(c.url, `https://freesound.org/people/${c.author}/sounds/${n}/`, `${id} page`)
     assert.match(c.audio, new RegExp(`^https://cdn\\.freesound\\.org/previews/${n.slice(0, -3) || '0'}/${n}_\\d+-hq\\.mp3$`), `${id} audio`)
     assert.match(c.fetched, /^\d{4}-\d{2}-\d{2}$/)
     for (const f of ['title', 'author', 'recording']) assert.ok(typeof c[f] === 'string' && c[f].length > 2, `${id}.${f}`)
-    assert.ok(used.has(id), `${id} is credited but not used`)
   }
 })
 
@@ -61,7 +70,7 @@ test('CREDITS.md names every recording, its author, page and licence', () => {
   const md = fs.readFileSync(path.join(DIR, 'CREDITS.md'), 'utf8')
   for (const id of ids) {
     const c = CREDITS[id]
-    for (const s of [c.url, c.author, c.licence, c.audio]) assert.ok(md.includes(s), `CREDITS.md lacks ${s}`)
+    for (const s of [c.url, c.author, c.licence, c.kind === 'render' ? c.commit : c.audio]) assert.ok(md.includes(s), `CREDITS.md lacks ${s}`)
   }
 })
 
@@ -90,4 +99,25 @@ test('a cut is made into a seamless loop, even when it is not a whole number of 
   assert.ok(seam <= worst, `seam ${seam} vs largest step ${worst}`)
   assert.ok(raw > 5 * worst, 'the plain cut would have clicked')
   assert.throws(() => makeLoop(seg, len + 1, fade))
+})
+
+test('an engine-sim car has an on-load and an overrun loop at every rev point, and idles in both', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    if (set.kind !== 'engine-sim') continue
+    const on = set.loops.filter((l) => l.layer === 'on').map((l) => l.rpm).sort((a, b) => a - b)
+    const off = set.loops.filter((l) => l.layer === 'off').map((l) => l.rpm).sort((a, b) => a - b)
+    assert.deepEqual(on, off, `${car}: layers cover different rpm`)
+    assert.ok(on.length >= 6, `${car}: ${on.length} rev points`)
+    assert.ok(set.loops.every((l) => l.src === 'enginesim' && l.level > 0 && l.level <= 1 && typeof l.render === 'string'), car)
+    // Each step is small enough that no loop is stretched far (about ±15 %).
+    for (let i = 1; i < on.length; i++) assert.ok(on[i] / on[i - 1] <= 1.75, `${car}: gap ${on[i - 1]}-${on[i]}`)
+    const p = PROFILES[car]
+    assert.ok(p.redline / on[on.length - 1] < 1.1, `${car}: the top loop is far below redline`)
+    // Overrun is quieter than pulling at the same rpm.
+    for (const r of on.slice(1)) {
+      const a = set.loops.find((l) => l.layer === 'on' && l.rpm === r), b = set.loops.find((l) => l.layer === 'off' && l.rpm === r)
+      assert.ok(b.level < a.level, `${car} ${r}: overrun louder than on-load`)
+    }
+  }
+  assert.equal(SAMPLE_SETS.v8.kind, 'engine-sim')
 })

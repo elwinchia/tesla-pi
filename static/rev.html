@@ -213,7 +213,7 @@
     <div class="card span2">
       <h2>Car sound</h2>
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
-      <p class="hint">Recorded cars play loops cut from real recordings, crossfaded and pitched to the engine's revs; Synth cars are synthesised on this screen. Your choice is remembered.</p>
+      <p class="hint">Recorded cars play loops cut from real recordings; the engine-sim car plays loops rendered with engine-sim, a physically modelled engine, with separate sounds for pulling and lifting off. Both are crossfaded and pitched to the engine's revs. Synth cars are synthesised on this screen. Your choice is remembered.</p>
       <div class="credits" id="credits"></div>
     </div>
 
@@ -228,7 +228,7 @@
         <label for="recorded">Recorded sounds</label>
         <button id="recorded" type="button" aria-pressed="true">On</button>
       </div>
-      <p class="hint">On, cars marked Recorded use real recordings; off, every car is synthesised.</p>
+      <p class="hint">On, cars marked Recorded or engine-sim play their loops; off, every car is synthesised.</p>
       <div class="row">
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
@@ -286,7 +286,7 @@
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
   import { Cluster, tachScale } from './rev-gauge.js'
-  import { CREDITS, hasRecording, creditsFor, creditLine } from './rev-samples.js'
+  import { CREDITS, soundKind, creditsFor, creditLine } from './rev-samples.js'
 
   const $ = (id) => document.getElementById(id)
   const rs = new RevSound({ onState: render })
@@ -320,11 +320,11 @@
     const b = document.createElement('button')
     b.type = 'button'; b.className = 'carcard'; b.dataset.profile = k
     b.innerHTML = '<span class="kind"></span><span class="style"></span><b></b><span class="blurb"></span><span class="credit"></span><span class="rng"></span>'
-    const rec = hasRecording(k)
-    b.querySelector('.kind').textContent = rec ? 'Recorded' : 'Synth'
-    b.querySelector('.kind').classList.toggle('rec', rec)
+    const kind = soundKind(k)
+    b.querySelector('.kind').textContent = kind === 'engine-sim' ? 'engine-sim' : kind === 'recorded' ? 'Recorded' : 'Synth'
+    b.querySelector('.kind').classList.toggle('rec', kind !== 'synth')
     // Credit on the card itself, where the sound is chosen.
-    b.querySelector('.credit').textContent = creditsFor(k).map((c) => 'Recording: ' + creditLine(c)).join('; ')
+    b.querySelector('.credit').textContent = creditsFor(k).map((c) => (c.kind === 'render' ? 'Sound: ' : 'Recording: ') + creditLine(c)).join('; ')
     b.querySelector('.style').textContent = p.style
     b.querySelector('b').textContent = p.name
     b.querySelector('.blurb').textContent = p.blurb
@@ -349,9 +349,9 @@
     const list = Object.entries(CREDITS)
     const box = $('credits')
     if (list.length) {
-      box.append('Sound credits (recordings from Freesound, cut into loops and re-encoded): ')
+      box.append('Sound credits (recordings from Freesound and renders from engine-sim, cut into loops and re-encoded): ')
       list.forEach(([id, c], i) => {
-        const a = document.createElement('a'); a.href = c.url; a.textContent = '\u201c' + c.title + '\u201d'; a.target = '_blank'; a.rel = 'noopener'
+        const a = document.createElement('a'); a.href = c.url; a.textContent = c.kind === 'render' ? c.title : '\u201c' + c.title + '\u201d'; a.target = '_blank'; a.rel = 'noopener'
         const l = document.createElement('a'); l.href = c.licenceUrl; l.textContent = c.licence; l.target = '_blank'; l.rel = 'noopener'
         box.append(a, ' by ' + c.author + ', ', l, i < list.length - 1 ? '; ' : '.')
       })
