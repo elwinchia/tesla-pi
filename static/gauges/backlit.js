@@ -3,8 +3,9 @@
 // cluster. The speedometer carries a glowing sweep and a big italic
 // seven-segment speed ringed by small yellow dots; the tachometer reads
 // x100 with a red end and the gear in a glowing orange disc. Between them,
-// two small panels: the battery and water temperature as bars, marked by
-// their icons alone, as on the original.
+// two small panels: the battery's charge (the car's own over Bluetooth, else
+// made up) and water temperature as bars, marked by their icons alone, as
+// on the original.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, sevenRow } from './kit.js'
 
 // Wide (3.1:1): the dash gives the gauge everything beside its one column
@@ -19,12 +20,12 @@ const R = { well: 184, ring: 175, tickOut: 167, tickIn: 151, tickMinor: 158, swe
 // The lit sweep fades in toward its tip: a faint full run, a brighter
 // tail and a hot tip, stacked (a gradient cannot follow an arc in SVG).
 const TAIL = 70, TIP = 22
-// The centre bars: the battery in volts, water in °C. The battery reads red
-// when it runs low, the water when it runs hot.
+// The centre bars: the battery's charge in %, water in °C. The battery
+// reads red when it runs low, the water when it runs hot.
 const MID = 620
 const BAR = { x: MID - 150, w: 300, h: 14 }
 const BARS = {
-  volts: { top: 4, lo: 8, hi: 16, labels: ['8', '12', '16'], key: 'volts', low: 11 },
+  batt:  { top: 4, lo: 0, hi: 1, labels: ['0', '50', '100'], key: 'fuel', low: 0.15 },
   water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
 }
 
@@ -171,7 +172,7 @@ export default class BacklitStyle extends GaugeStyle {
   }
   icon(g, kind, x, y) {
     const ic = el('g', { class: 'bl-icon', transform: `translate(${x} ${y}) scale(1.25)` }, g)
-    if (kind === 'volts') {
+    if (kind === 'batt') {
       // A battery: a box with its two terminals, + and −.
       el('path', { d: 'M-16 -8 H16 V12 H-16 Z M-11 -8 V-12 H-5 V-8 M5 -8 V-12 H11 V-8' }, ic)
       el('path', { d: 'M-11 2 H-5 M5 2 H11 M8 -1 V5' }, ic)

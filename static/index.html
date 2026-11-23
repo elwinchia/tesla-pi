@@ -4553,6 +4553,9 @@
       dock.classList.add('rv-dock', 'dash');
       revDash = new m.Dash(dock, {
         rs, hand: () => serverHand, onSettings: openRevSheet,
+        // The car's real battery charge, range and odometer over Bluetooth,
+        // when Settings → Network → Experimental allows it (rev-car.js).
+        car: new m.CarReader(),
         theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day'),
         // START/STOP on the dash is the owner's word for this session.
         onEngine: (on) => {

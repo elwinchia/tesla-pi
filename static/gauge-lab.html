@@ -10,7 +10,8 @@
      style without a car. Nothing links here.
        ?style=<key>|all  &rpm=4500 &kmh=92 &gear=3 &water=90 &running=1
        &theme=night|day  &w=1280 &h=357 (the dock's size)  &redline=9000 &idle=900
-       &hand=1|0  &anim=1 (sweep the revs) -->
+       &hand=1|0  &anim=1 (sweep the revs)
+       &soc=0.62 &range=320 (a reading from the car, as over Bluetooth) -->
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; padding: 12px; font: 14px -apple-system, system-ui, sans-serif; background: #eee; }
@@ -45,6 +46,7 @@
     box.appendChild(dock); document.body.appendChild(box)
     const d = new Dash(dock, { rs, hand: () => num('hand', 1), onSettings: () => {}, storage: { getItem: () => null, setItem() {} },
       theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') })
+    if (q.has('soc')) d.onCar({ soc: num('soc', 0.5), rangeKm: q.has('range') ? num('range', 0) : null, at: Date.now() })
     d.inst.water = num('water', 90); d.inst.oil = num('oil', 98); d.inst.trip = num('trip', 641.9); d.inst.odo = num('odo', 73998)
     dashes.push(d)
     await d.setStyle(k)

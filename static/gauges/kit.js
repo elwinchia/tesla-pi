@@ -221,9 +221,13 @@ export function sevenRow(parent, { x, y, n, w, h, t, gap, skew = 0.08, cls = 'se
 //   rpm, kmh, load (-1..1)            the engine and the car
 //   water, oilTemp (°C), oilPress (bar), volts, fuel (0..1), boost (bar), g
 //                                      made up (Instruments above), or rest
-//   trip, odo (km)                     real: speed integrated
+//   trip, odo (km)                     real: speed integrated, the odometer
+//                                      set from the car's when it is read
 //   gear ('–' off, 'N', '1'..), source ('GPS' | 'SIM' | 'TEST'), stale,
 //   running, car (the engine's name), clock (Date)
+//   rangeKm (null unless read), carReal  the car's own range, and whether
+//                                      fuel is its real battery charge
+//                                      (rev-car.js, over Bluetooth)
 export const EASE = { rpm: 0.08, kmh: 0.15, load: 0.12, water: 0.6, oilTemp: 0.6, oilPress: 0.25, volts: 0.4, fuel: 1.2, boost: 0.12, g: 0.2, trip: 0, odo: 0 }
 
 let UID = 0

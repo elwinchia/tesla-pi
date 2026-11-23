@@ -1,6 +1,7 @@
 // Five dials, 911-style: five round dials in a dark oval housing, as on the
-// concept this copies. Left to right: battery volts and oil temperature (a
-// split dial), water temperature and oil pressure (split), the big
+// concept this copies. Left to right: the battery's charge (where the
+// original has the tank: the car's own over Bluetooth, else made up) and oil
+// temperature (a split dial), water temperature and oil pressure (split), the big
 // tachometer with the gear and a boost bar, the speedometer with a digital
 // readout, and a clock with three small chronograph dials.
 //
@@ -92,7 +93,7 @@ export default class FiveDialStyle extends GaugeStyle {
 
     this.halves = []
     this.buildSplit('batt', D.batt, {
-      left: { word: 'BATT', key: 'volts', lo: 8, hi: 16, ends: ['8', '16'], icon: 'batt' },
+      left: { word: 'BATT', key: 'fuel', lo: 0, hi: 1, ends: ['E', 'F'], icon: 'batt' },
       right: { word: 'OEL', key: 'oilTemp', lo: 50, hi: 150, ends: ['L', 'H'], icon: 'oiltemp' },
     })
     this.buildSplit('temp', D.temp, {

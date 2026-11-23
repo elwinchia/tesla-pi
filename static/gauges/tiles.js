@@ -545,13 +545,15 @@ export default class TilesStyle extends GaugeStyle {
     }
     setText(this.speedT, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
 
-    // Fuel: the tach's arc and the range under it.
+    // Fuel: the tach's arc and the range under it. With the car read over
+    // Bluetooth, fuel is its battery's charge and the range is the car's own.
     const fuel = clamp(v.fuel, 0, 1)
-    if (force || this.fuelF == null || Math.abs(fuel - this.fuelF) > 0.002) {
-      this.fuelF = fuel
+    const range = Math.round(i.running && Number.isFinite(i.rangeKm) ? i.rangeKm : fuel * RANGE_KM)
+    if (force || this.fuelF == null || Math.abs(fuel - this.fuelF) > 0.002 || range !== this.rangeK) {
+      this.fuelF = fuel; this.rangeK = range
       this.fuelArc.setAttribute('d', fuel > 0.005 ? arcPath(TACH.cx, cy, FUEL.r, FUEL.a0, FUEL.a0 + fuel * (FUEL.a1 - FUEL.a0)) : '')
       this.fuelArc.classList.toggle('low', fuel > 0 && fuel < 0.15)
-      setText(this.rangeT, Math.round(fuel * RANGE_KM) + ' km')
+      setText(this.rangeT, range + ' km')
     }
 
     // Small dials. With the engine off they rest on a peg just past the

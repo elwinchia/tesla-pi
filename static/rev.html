@@ -252,7 +252,7 @@
 
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
-  import { Dash } from './rev-dash.js'
+  import { Dash, CarReader } from './rev-dash.js'
   import { STYLES, loadStyle } from './gauges/index.js'
   import { tachScale } from './gauges/kit.js'
   import { CREDITS, soundKind, creditsFor, creditLine } from './rev-samples.js'
@@ -274,6 +274,9 @@
   // instruments the page under it keeps.
   const cluster = new Dash($('cluster'), { rs, theme, hand: () => hand,
     storage: embedded ? { getItem: () => null, setItem() {} } : localStorage,
+    // The car's battery and range over Bluetooth; never from the sheet,
+    // whose page underneath already reads them.
+    car: embedded ? null : new CarReader(),
     onSettings: () => $('cars').scrollIntoView({ behavior: 'smooth', block: 'start' }),
     onEngine: () => { if (!rs.running) { rs.setSim(false); setSimUi(false) } syncSettings() } })
   if (!embedded) cluster.setStyle(rs.settings.gauge)

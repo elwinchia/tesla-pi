@@ -1,7 +1,11 @@
 # Reading Tesla telemetry — the options
 
 Status: **Tier 2 is working end to end. Tier 1 measured parked. The Drive run is
-the one thing still outstanding.** Nothing is wired into the product UI yet.
+the one thing still outstanding.** Two things use Tier 2: the "Your car" card
+(button-driven), and the engine sound's dash (`static/rev-car.js`), which reads
+`charge` and `drive` once when the engine sound starts and `charge` every five
+minutes while it runs, for its battery and fuel gauges. Both go through
+`/telemetry/ble` and its cache and queue.
 
 Split out of [`llm-companion-options.md`](llm-companion-options.md) §6 when the
 companion was shelved (2026-08-27). Telemetry now has to justify itself on its

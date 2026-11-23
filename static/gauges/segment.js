@@ -1,6 +1,7 @@
 // Segment arc, S2000-style: a wide segmented tachometer arc, an old-school
 // seven-segment speed readout in an LCD window, a trip/odometer LCD under
-// it, and two segmented bars, water temperature and the battery. The
+// it, and two segmented bars, water temperature and the battery's charge
+// (the car's own, read over Bluetooth, when there is one; else made up). The
 // geometry is in static/rev-gauge.js (tested); this file draws it. It is
 // the one style with a day palette as well as night (static/rev-gauge.css).
 import {
@@ -13,13 +14,11 @@ import { GaugeStyle, el, text, setText, polar, mix, sevenRow } from './kit.js'
 const OFF = { night: ['#5a4434', '#3a3d43'], day: ['#e6d5c8', '#d3d7dd'] }
 // Water: C is 50 °C, H is 130 °C; the needle sits mid-way at a warm 90.
 export const WATER = { lo: 50, hi: 130 }
-// Battery: 8 to 16 V; a charging system reads about 14.
-export const VOLTS = { lo: 8, hi: 16 }
 // Everything in the middle is centred on the arc (ARC.cx).
 const MID = 620
 const BARS = {
   water: { x: 150, y: 322, w: 240, lo: 'C', hi: 'H', caption: 'WATER TEMP' },
-  volts: { x: 850, y: 322, w: 240, lo: 'L', hi: 'H', caption: 'BATTERY' },
+  batt:  { x: 850, y: 322, w: 240, lo: 'E', hi: 'F', caption: 'BATTERY' },
 }
 
 export default class SegmentStyle extends GaugeStyle {
@@ -188,7 +187,7 @@ export default class SegmentStyle extends GaugeStyle {
 
     const w = (this.v.water - WATER.lo) / (WATER.hi - WATER.lo)
     this.paintBar(this.bars.water, i.running ? w : 0, force)
-    this.paintBar(this.bars.volts, (this.v.volts - VOLTS.lo) / (VOLTS.hi - VOLTS.lo), force)
+    this.paintBar(this.bars.batt, this.v.fuel, force)
   }
 
   paintBar(bar, f, force) {
@@ -199,11 +198,11 @@ export default class SegmentStyle extends GaugeStyle {
       const on = k < lit
       const t = k / (BAR_N - 1)
       // Water's hot end is red, lit or not; the battery is red when it
-      // runs low (under about 10 V), like a fuel gauge near empty.
+      // runs low, like a fuel gauge near empty.
       const hot = bar.kind === 'water' && t > 0.85
       e.classList.toggle('on', on)
       e.classList.toggle('hot', hot)
-      const red = on && (hot || (bar.kind === 'volts' && t < 0.25))
+      const red = on && (hot || (bar.kind === 'batt' && t < 0.15))
       e.classList.toggle('red', red)
       e.style.fill = on && !red ? litColor(bar.kind === 'water' ? 0.25 + t * 0.6 : 0.35 + t * 0.6) : ''
     })

@@ -9,6 +9,7 @@
 import { Instruments, tachScale, hhmm } from './gauges/kit.js'
 import { STYLES, loadStyle, styleKey } from './gauges/index.js'
 import { clusterInput } from './rev-gauge.js'
+import { FRESH_MS } from './rev-car.js'
 
 const SAVE_KEY = 'revInstruments'
 const SAVE_EVERY_MS = 5000
@@ -17,9 +18,13 @@ const GEAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="curre
 export class Dash {
   // rs: a RevSound. hand(): 1 for a right-hand-drive car, 0 for left.
   // onSettings(): open the engine sound's settings. onEngine(on): the
-  // start/stop button turned the engine on or off.
-  constructor(host, { rs, hand = () => 1, theme = () => 'night', onSettings = null, onEngine = () => {}, storage = globalThis.localStorage } = {}) {
+  // start/stop button turned the engine on or off. car: a CarReader
+  // (rev-car.js) for the car's real battery, range and odometer, or null.
+  constructor(host, { rs, hand = () => 1, theme = () => 'night', onSettings = null, onEngine = () => {}, storage = globalThis.localStorage, car = null } = {}) {
     this.rs = rs; this.hand = hand; this.theme = theme; this.onEngine = onEngine; this.storage = storage
+    // The car's own readings, when there are any: see onCar().
+    this.car = car; this.real = null
+    if (car) car.onRead = (r) => this.onCar(r)
     this.st = null
     this.style = null; this.styleKey = null; this.loading = null
     this.scale = tachScale(rs.engine.profile.redline, rs.engine.profile.idle)
@@ -77,6 +82,11 @@ export class Dash {
     this.st = st
     this.fitScale()
     this.startBtn.setAttribute('aria-pressed', String(!!st.running))
+    // Read the car while the engine sound runs, and never while it is off.
+    if (this.car) {
+      if (st.running && !this.car.active) this.car.start()
+      else if (!st.running && this.car.active) this.car.stop()
+    }
     // Revving is for when the car is stopped (RevSound refuses it moving).
     this.moving = !!(st.running && !st.stopped)
     if (this.moving && this.revving != null) this.endRev()
@@ -99,6 +109,13 @@ export class Dash {
     this.fitScale()
     const st = this.st || {}
     const read = this.inst.step(dt, { running: st.running, rpm: st.rpm, load: st.load, v: st.v, a: st.a, redline: this.scale.redFrom })
+    // The car's real charge stands in for the made-up fuel (every battery
+    // and fuel gauge), and its range for the made-up one. Resting with the
+    // engine off, as every gauge does.
+    const real = this.real && Date.now() - this.real.at < FRESH_MS ? this.real : null
+    if (real && st.running && real.soc != null) read.fuel = real.soc
+    read.rangeKm = real && real.rangeKm != null ? real.rangeKm : null
+    read.carReal = !!(real && real.soc != null)
     if (this.style) {
       this.style.set({ ...read, clock: new Date() })
       this.style.frame(dt)
@@ -110,6 +127,13 @@ export class Dash {
     if (!now && t - this.savedAt < SAVE_EVERY_MS) return
     this.savedAt = t
     try { this.storage.setItem(SAVE_KEY, JSON.stringify(this.inst.snapshot(t))) } catch {}
+  }
+
+  // A reading from the car. Its odometer replaces the one counted from GPS
+  // (which then carries on from the car's figure between reads).
+  onCar(r) {
+    this.real = { ...(this.real || {}), ...r }
+    if (r.odoKm != null) this.inst.odo = r.odoKm
   }
 
   async toggleEngine() {
@@ -168,6 +192,7 @@ export class Dash {
   }
 
   destroy() {
+    if (this.car) this.car.stop()
     this.save(true)
     removeEventListener('pagehide', this.onHide)
     if (this.style) this.style.destroy()
@@ -176,3 +201,4 @@ export class Dash {
 }
 
 export { STYLES, hhmm }
+export { CarReader } from './rev-car.js'
