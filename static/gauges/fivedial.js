@@ -10,7 +10,7 @@
 // itself, a glowing stroke from the rim inwards. Numerals are a wide,
 // medium-weight sans (stretched sideways, since no system font is
 // reliably extended); the big gear and speed digits are thin.
-import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, hhmm } from './kit.js'
+import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, hhmm, follow } from './kit.js'
 
 // About 3.2:1, the gauge area's shape. The reference is wider (3.9:1), so
 // the side dials are a little smaller next to the tach than on it.
@@ -36,6 +36,13 @@ const SPEED = { a0: 133, a1: 413, max: 200 }
 const LEFT = { a0: 125, a1: 235 }
 const RIGHT = { a0: 55, a1: -55 }
 const ORANGE = '#ff5a24'
+// The trace a moving needle leaves on the rim: its tail follows the needle
+// this slowly (s), so a sweep draws a glowing streak that shrinks back into
+// the needle once it stops. Under this many degrees it is not drawn.
+const TRACE_TAU = 0.35, TRACE_MIN = 0.6
+// The clock's seconds are a trace too, sweeping round the rim; slower, so
+// it shows as a steady comet about 25° long.
+const SECONDS_TAU = 4.2
 const SX = 1.2  // the numerals' sideways stretch
 
 const f1 = (x) => x.toFixed(1)
@@ -166,14 +173,11 @@ export default class FiveDialStyle extends GaugeStyle {
     return text(parent, 0, 0, cls, s, { transform: `translate(${f1(x)} ${f1(y)}) scale(${sx} 1)` })
   }
 
-  // The orange needle: an arc along the rim from the scale's start a0 to
-  // the value, fading out towards a0, and a radial stroke from the rim to
-  // rIn that fades inwards. `shade` adds the needle's soft shadow on the
-  // side not yet swept (the big dials). Returns a painter for an angle.
-  sweep(parent, name, cx, R, { a0, rIn, w = 1, shade = false, fade = 0.85 }) {
-    const rA = R * RING.arc
-    const [sx, sy] = polar(cx, CY, rA, a0)
-    this.grad('radialGradient', name + '-fade', { gradientUnits: 'userSpaceOnUse', cx: f1(sx), cy: f1(sy), r: f1(rA * fade) },
+  // A glowing streak along the rim that trails a moving angle: its tail
+  // follows the head with time constant tau, fading out towards the tail.
+  // Returns a painter, (a) => still moving; call it every frame.
+  trace(parent, name, cx, rA, w, tau) {
+    const fade = this.grad('radialGradient', name + '-fade', { gradientUnits: 'userSpaceOnUse', cx, cy: CY, r: 1 },
       [[0, ORANGE, 0], [0.45, ORANGE, 0.3], [1, ORANGE, 1]])
     // One path, drawn three times: a wide haze, a glow and the bright core.
     const arc = el('path', { id: this.id(name + '-arc') }, this.defs)
@@ -181,6 +185,38 @@ export default class FiveDialStyle extends GaugeStyle {
     for (const [sw, op] of [[13 * w, 0.12], [7 * w, 0.3], [3.4 * w, 1]]) {
       el('use', { href: '#' + this.id(name + '-arc'), 'stroke-width': sw, opacity: op }, g)
     }
+    let tail = null, shown = false, t = 0
+    return (a) => {
+      const now = performance.now()
+      const dt = t ? Math.min(0.1, (now - t) / 1000) : 0
+      t = now
+      // A jump of more than half a turn (the clock at midnight, a redraw)
+      // is not a movement: start again from there.
+      if (tail == null || Math.abs(a - tail) > 180) tail = a
+      tail = follow(tail, a, dt, tau)
+      if (Math.abs(a - tail) < TRACE_MIN) {
+        // Hidden, but the tail keeps following: a slow sweep (the seconds)
+        // still grows its streak from here.
+        if (shown) { arc.setAttribute('d', ''); shown = false }
+        return false
+      }
+      arc.setAttribute('d', arcPath(cx, CY, rA, tail, a))
+      // The fade runs from clear at the tail to full at the needle.
+      const [tx, ty] = polar(cx, CY, rA, tail), [hx, hy] = polar(cx, CY, rA, a)
+      fade.setAttribute('cx', f1(tx)); fade.setAttribute('cy', f1(ty))
+      fade.setAttribute('r', f1(Math.max(1, Math.hypot(hx - tx, hy - ty))))
+      shown = true
+      return true
+    }
+  }
+
+  // The orange needle: a radial stroke from the rim to rIn that fades
+  // inwards, leaving a trace on the rim while it moves (trace above).
+  // `shade` adds the needle's soft shadow on the side not yet swept (the
+  // big dials). Returns a painter for an angle, to call every frame.
+  sweep(parent, name, cx, R, { a0, rIn, w = 1, shade = false }) {
+    const rA = R * RING.arc
+    const trace = this.trace(parent, name, cx, rA, w, TRACE_TAU)
     // The needle, drawn pointing right (0°) and turned about the centre.
     const ng = el('g', {}, parent)
     if (shade) {
@@ -195,9 +231,10 @@ export default class FiveDialStyle extends GaugeStyle {
     const x0 = f1(cx + rIn), x1 = f1(cx + rA + 1.7 * w)
     el('line', { x1: x0, y1: CY, x2: x1, y2: CY, stroke: this.url(name + '-ndl'), 'stroke-width': 8 * w, opacity: 0.22 }, ng)
     el('line', { x1: x0, y1: CY, x2: x1, y2: CY, stroke: this.url(name + '-ndl'), 'stroke-width': 2.8 * w }, ng)
+    let last = null
     return (a) => {
-      arc.setAttribute('d', Math.abs(a - a0) > 0.3 ? arcPath(cx, CY, rA, a0, a) : '')
-      ng.setAttribute('transform', rot(a, cx))
+      trace(a)
+      if (a !== last) { last = a; ng.setAttribute('transform', rot(a, cx)) }
     }
   }
 
@@ -264,7 +301,7 @@ export default class FiveDialStyle extends GaugeStyle {
       lab(side.a1 + sx * 11, h.ends[1])
       const [ix, iy] = polar(cx, CY, R * 0.58, sx < 0 ? 180 : 0)
       this.icon(g, h.icon, ix, iy, R > 100 ? 1.05 : 0.95)
-      const paint = this.sweep(sweeps, `${name}-${sx < 0 ? 'l' : 'r'}`, cx, R, { a0: side.a0, rIn: R * 0.47, w: R > 100 ? 0.95 : 0.85, fade: 1.05 })
+      const paint = this.sweep(sweeps, `${name}-${sx < 0 ? 'l' : 'r'}`, cx, R, { a0: side.a0, rIn: R * 0.47, w: R > 100 ? 0.95 : 0.85 })
       this.halves.push({ ...h, side, paint })
     }
     el('circle', { cx, cy: CY, r: R * 0.075, fill: this.url('knob'), stroke: '#000', 'stroke-width': 1 }, this.svg)
@@ -300,7 +337,7 @@ export default class FiveDialStyle extends GaugeStyle {
     this.boostGlow = el('ellipse', { cy: by + bh / 2, rx: 20, ry: 14, fill: this.url('bglow'), style: 'display:none' }, g)
     this.boostBar = el('rect', { x: f1(bx), y: by, width: 0, height: bh, rx: bh / 2, fill: this.url('bfill') }, g)
     // Needle above the scale, the gear above the needle.
-    this.tachSweep = this.sweep(g, 'tach', cx, R, { a0: TACH.a0, rIn: R * 0.2, shade: true, fade: 0.7 })
+    this.tachSweep = this.sweep(g, 'tach', cx, R, { a0: TACH.a0, rIn: R * 0.2, shade: true })
     this.gear = this.wide(g, cx, CY + 22, 'fd-gear', '–', 1.2)
     text(g, cx + 3, CY + 46, 'fd-cap', 'GEAR')
     this.finger = el('circle', { r: 22, class: 'rv-finger', style: 'display:none' }, g)
@@ -362,7 +399,7 @@ export default class FiveDialStyle extends GaugeStyle {
     // Odometer chip under the top numeral.
     el('rect', { x: cx - 31, y: CY - 46, width: 62, height: 18, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1 }, g)
     this.odo = text(g, cx, CY - 36.5, 'fd-odo', '000000')
-    this.speedSweep = this.sweep(g, 'speed', cx, R, { a0: SPEED.a0, rIn: R * 0.2, w: 0.9, shade: true, fade: 0.7 })
+    this.speedSweep = this.sweep(g, 'speed', cx, R, { a0: SPEED.a0, rIn: R * 0.2, w: 0.9, shade: true })
     this.kmh = this.wide(g, cx, CY + 14, 'fd-kmh', '0', 1.2)
     text(g, cx, CY + 38, 'fd-unit', 'km/h')
     // Trip under it, with a small road icon.
@@ -377,8 +414,8 @@ export default class FiveDialStyle extends GaugeStyle {
   }
 
   // ── Clock ─────────────────────────────────────────────────────────────
-  // Hours and minutes in orange, the minute hand trailing the same glowing
-  // arc as the needles; three small dials: running seconds (left), the
+  // Hours and minutes in orange, and the seconds as a trace sweeping round
+  // the rim, the streak the needles leave when they move; three small dials: running seconds (left), the
   // minutes of a half hour (right), and the hours (bottom).
   buildClock() {
     const { cx, R } = D.clock
@@ -403,17 +440,11 @@ export default class FiveDialStyle extends GaugeStyle {
       el('circle', { cx: f1(sx), cy: f1(sy), r: 2, fill: '#dcdcdc' }, g)
       this.subs.push({ hand, sx, sy, n })
     }
-    // The minute hand and its trailing arc, drawn at 12 and turned.
+    // The seconds: a trace sweeping round the rim, as the needles leave.
     const rA = R * RING.arc
-    const tail = 220
+    this.secTrace = this.trace(g, 'sec', cx, rA, 0.85, SECONDS_TAU)
+    // The minute hand, drawn at 12 and turned.
     this.minG = el('g', {}, g)
-    const [tx, ty] = polar(cx, CY, rA, -90 - tail)
-    this.grad('radialGradient', 'ctail', { gradientUnits: 'userSpaceOnUse', cx: f1(tx), cy: f1(ty), r: f1(rA * 1.3) },
-      [[0, ORANGE, 0], [0.5, ORANGE, 0.35], [1, ORANGE, 1]])
-    const td = arcPath(cx, CY, rA, -90 - tail, -90)
-    for (const [sw, op] of [[11, 0.12], [6, 0.3], [3, 1]]) {
-      el('path', { d: td, fill: 'none', stroke: this.url('ctail'), 'stroke-width': sw, opacity: op }, this.minG)
-    }
     el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 7, opacity: 0.2 }, this.minG)
     el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 2.6 }, this.minG)
     this.hourH = el('line', { x1: cx, y1: CY - R * 0.12, x2: cx, y2: CY - R * 0.52, stroke: '#f2582a', 'stroke-width': 4.6, 'stroke-linecap': 'round' }, g)
@@ -433,12 +464,13 @@ export default class FiveDialStyle extends GaugeStyle {
     // Angles rounded to a tenth of a degree: finer is invisible.
     const q = (a) => Math.round(a * 10) / 10
     const ta = q(dialAngle(v.rpm, 0, this.scale.max, TACH.a0, TACH.a1))
-    if (this.moved('tach', ta, force)) this.tachSweep(ta)
+    // Every frame: a needle that has stopped still has a trace to fade.
+    this.tachSweep(ta)
     const sa = q(dialAngle(v.kmh, 0, SPEED.max, SPEED.a0, SPEED.a1))
-    if (this.moved('speed', sa, force)) this.speedSweep(sa)
+    this.speedSweep(sa)
     this.halves.forEach((h, k) => {
       const a = q(dialAngle(v[h.key], h.lo, h.hi, h.side.a0, h.side.a1))
-      if (this.moved('h' + k, a, force)) h.paint(a)
+      h.paint(a)
     })
     // Boost: the bar grows from its left cap; the glow sits on its end.
     const { bx, bw, bh } = this.boost
@@ -453,8 +485,13 @@ export default class FiveDialStyle extends GaugeStyle {
     setText(this.kmh, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
     setText(this.odo, String(Math.floor(v.odo) % 1000000).padStart(6, '0'))
     setText(this.tripN, (Math.floor(v.trip * 10) / 10).toFixed(1))
-    // The clock: turn the hands only when the second changes.
+    // The clock: the seconds trace moves every frame, smoothly; the hands
+    // turn only when the second changes.
     const c = i.clock instanceof Date ? i.clock : new Date()
+    // Counted through the day, not the minute, so the trace runs on past
+    // 12 instead of jumping back.
+    const secs = c.getHours() * 3600 + c.getMinutes() * 60 + c.getSeconds() + c.getMilliseconds() / 1000
+    this.secTrace(secs * 6 - 90)
     const sec = c.getHours() * 3600 + c.getMinutes() * 60 + c.getSeconds()
     if (this.moved('clock', sec, force)) {
       const { cx } = D.clock

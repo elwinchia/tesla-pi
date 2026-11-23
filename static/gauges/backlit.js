@@ -63,7 +63,7 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit[data-zone=red] .bl-tach .bl-sweep { stroke: #ff2d20; }
       .gs-backlit .bl-cap { fill: #ff6a2a; font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.04em; }
       .gs-backlit .bl-dot { fill: #e8d23a; }
-      .gs-backlit .bl-seg .on { fill: #ff5a24; }
+      .gs-backlit .bl-seg .on { fill: #ff5a24; filter: drop-shadow(0 0 3px rgba(255, 106, 42, 0.95)) drop-shadow(0 0 12px rgba(255, 80, 30, 0.55)); }
       .gs-backlit .bl-seg .off { fill: #ff5a24; opacity: 0.06; }
       .gs-backlit .bl-gear-disc { fill: #ff5a1f; }
       .gs-backlit .bl-gear { fill: #2a0c04; font: italic 700 50px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
@@ -80,8 +80,9 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit .bl-finger { fill: rgba(255, 140, 60, 0.18); stroke: #ffb07a; stroke-width: 3; pointer-events: none; }
     `)
     const defs = el('defs', {}, s)
-    // Soft backlight behind the speed digits and the gear disc: a radial
-    // gradient, not a blur, so it costs nothing per frame.
+    // Soft backlight behind the gear disc: a radial gradient, not a blur,
+    // so it costs nothing per frame. The speed digits glow themselves (CSS
+    // drop-shadow on the lit segments, redrawn only when a digit changes).
     const glow = el('radialGradient', { id: this.id('glow') }, defs)
     el('stop', { offset: '0', 'stop-color': '#ff6a2a', 'stop-opacity': '0.4' }, glow)
     el('stop', { offset: '0.5', 'stop-color': '#ff5a1f', 'stop-opacity': '0.12' }, glow)
@@ -112,7 +113,6 @@ export default class BacklitStyle extends GaugeStyle {
       }
     }
     this.speedSweep = this.sweep(sp)
-    el('circle', { cx: SPEEDO.cx, cy: SPEEDO.cy, r: 86, fill: this.url('glow') }, sp)
     for (let k = 0; k < 16; k++) {
       const [x, y] = polar(SPEEDO.cx, SPEEDO.cy, 80, k * 22.5)
       el('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: 2.6, class: 'bl-dot' }, sp)
