@@ -5,6 +5,7 @@
 // by the car's browser, so the Pi's CarPlay service never sees it.
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
+import { SAMPLE_SETS, hasRecording, loopSlice } from './rev-samples.js'
 import {
   CARS, DEFAULT_CAR, MODES, DEFAULT_MODE,
   SpeedTracker, Gearbox, FreeRev, SimCar, loadFromMotion, clamp,
@@ -19,6 +20,7 @@ export const DEFAULTS = Object.freeze({
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
+  recorded: true,      // use real recordings for the cars that have them
 })
 // Below this the car counts as stopped: the gearbox hands over to the free
 // revving engine, and the Rev control is allowed. ~4 km/h.
@@ -46,6 +48,7 @@ export function sanitise(raw) {
   if (Object.hasOwn(PROFILES, raw.profile)) s.profile = raw.profile
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
+  if (typeof raw.recorded === 'boolean') s.recorded = raw.recorded
   return s
 }
 
@@ -162,6 +165,10 @@ export class RevSound {
     this.sim = { car: new SimCar(CARS[this.settings.car]), pedal: 0, brake: 0, fixMs: 1000, lastFix: -Infinity }
     this.error = null
     this.last = 0
+    // Which sound is playing: 'synth', 'loading' or 'recorded'.
+    this.sound = 'synth'
+    this.soundNote = null
+    this.sampleCache = new Map() // car -> Promise of its decoded loops
     this.onVisibility = () => (document.hidden ? this.pause() : this.resume())
   }
 
@@ -170,6 +177,7 @@ export class RevSound {
     this.engine.configure(this.settings)
     this.sim.car.setCar(CARS[this.settings.car])
     if (partial.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
+    if ('profile' in partial || 'recorded' in partial) this.syncSound()
     return this.settings
   }
 
@@ -253,6 +261,51 @@ export class RevSound {
     node.port.postMessage({ profile: this.engine.profile, params: { gain: 0 } })
     this.ctx = ctx; this.node = node
     if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+    this.syncSound()
+  }
+
+  // Recorded or synthesised: recorded when the car has recordings and the
+  // owner has not turned them off. The synthesiser plays while they load,
+  // and stays if they cannot be loaded.
+  async syncSound() {
+    if (!this.node) return
+    const car = this.settings.profile
+    this.soundFor = car
+    this.soundNote = null
+    if (!this.settings.recorded || !hasRecording(car)) {
+      this.node.port.postMessage({ samples: null })
+      this.sound = 'synth'
+      return
+    }
+    this.node.port.postMessage({ samples: null })
+    this.sound = 'loading'
+    try {
+      const set = await this.loadSet(car)
+      if (this.soundFor !== car || !this.settings.recorded || !this.node) return // changed meanwhile
+      this.node.port.postMessage({ samples: set })
+      this.sound = 'recorded'
+    } catch (e) {
+      this.sampleCache.delete(car)
+      if (this.soundFor !== car) return
+      this.sound = 'synth'
+      this.soundNote = 'The recordings could not be loaded, so this is the synthesised sound. (' + (e && e.message ? e.message : e) + ')'
+    }
+  }
+
+  // Fetch and decode one car's loops, once. Each file carries a little of
+  // its own wrap-around either side; loopSlice takes the exact loop, so the
+  // codec's start and end never land in the seam.
+  loadSet(car) {
+    if (!this.sampleCache.has(car)) {
+      const ctx = this.ctx
+      this.sampleCache.set(car, Promise.all(SAMPLE_SETS[car].loops.map(async (l) => {
+        const r = await fetch(new URL('./sounds/' + l.file, import.meta.url))
+        if (!r.ok) throw new Error(l.file + ': HTTP ' + r.status)
+        const buf = await ctx.decodeAudioData(await r.arrayBuffer())
+        return { rpm: l.rpm, layer: l.layer || 'any', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
+      })).then((loops) => ({ loops })))
+    }
+    return this.sampleCache.get(car)
   }
 
   startGps() {
@@ -306,6 +359,7 @@ export class RevSound {
   emit(t) {
     this.onState({ ...this.engine.state, source: this.source, fixRate: this.rate.get(t),
       simSpeed: this.sim.car.v, running: this.running, error: this.error,
+      sound: this.sound, soundNote: this.soundNote,
       redline: this.engine.profile.redline, idle: this.engine.profile.idle })
   }
 }

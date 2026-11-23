@@ -165,6 +165,16 @@
   .carcard .rng { font-size: 12px; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; margin-top: auto; }
   .carcard[aria-pressed=true] { border: 2px solid #f08c00; background: var(--sel-bg); padding: 11px 13px; }
   .carcard[aria-pressed=true] .style { color: #e8590c; }
+  .carcard { position: relative; }
+  .carcard .style { padding-right: 86px; }
+  .carcard .kind {
+    position: absolute; top: 10px; right: 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 8px; border: 1px solid var(--ctl-line); color: var(--muted);
+  }
+  .carcard .kind.rec { color: #fff; background: #2b8a3e; border-color: #40c057; }
+  .carcard .credit { font-size: 11px; color: var(--muted); font-weight: 400; line-height: 1.3; }
+  .credits { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .credits a { color: var(--muted); }
   .dash-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 4px 6px 0; color: var(--muted); font-size: 13px; }
 
   .pedals { display: flex; gap: 12px; margin-top: 8px; }
@@ -203,7 +213,8 @@
     <div class="card span2">
       <h2>Car sound</h2>
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
-      <p class="hint">Every sound is synthesised on this screen from a few numbers; no recordings. Your choice is remembered.</p>
+      <p class="hint">Recorded cars play loops cut from real recordings, crossfaded and pitched to the engine's revs; Synth cars are synthesised on this screen. Your choice is remembered.</p>
+      <div class="credits" id="credits"></div>
     </div>
 
     <div class="card">
@@ -213,6 +224,11 @@
         <button id="enabled" type="button" aria-pressed="false">Off</button>
       </div>
       <p class="hint">On, the engine also plays on the main page (under CarPlay) once you tap the screen. Off by default.</p>
+      <div class="row">
+        <label for="recorded">Recorded sounds</label>
+        <button id="recorded" type="button" aria-pressed="true">On</button>
+      </div>
+      <p class="hint">On, cars marked Recorded use real recordings; off, every car is synthesised.</p>
       <div class="row">
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
@@ -270,6 +286,7 @@
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
   import { Cluster, tachScale } from './rev-gauge.js'
+  import { CREDITS, hasRecording, creditsFor, creditLine } from './rev-samples.js'
 
   const $ = (id) => document.getElementById(id)
   const rs = new RevSound({ onState: render })
@@ -285,8 +302,9 @@
     if (tachFor === p) return
     tachFor = p
     cluster.setScale(tachScale(p.redline, p.idle))
-    $('cluster-cap').textContent = p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    capText = p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
   }
+  let capText = ''
   let lastFrame = performance.now()
   function frame(now) {
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
@@ -301,7 +319,12 @@
   for (const [k, p] of Object.entries(PROFILES)) {
     const b = document.createElement('button')
     b.type = 'button'; b.className = 'carcard'; b.dataset.profile = k
-    b.innerHTML = '<span class="style"></span><b></b><span class="blurb"></span><span class="rng"></span>'
+    b.innerHTML = '<span class="kind"></span><span class="style"></span><b></b><span class="blurb"></span><span class="credit"></span><span class="rng"></span>'
+    const rec = hasRecording(k)
+    b.querySelector('.kind').textContent = rec ? 'Recorded' : 'Synth'
+    b.querySelector('.kind').classList.toggle('rec', rec)
+    // Credit on the card itself, where the sound is chosen.
+    b.querySelector('.credit').textContent = creditsFor(k).map((c) => 'Recording: ' + creditLine(c)).join('; ')
     b.querySelector('.style').textContent = p.style
     b.querySelector('b').textContent = p.name
     b.querySelector('.blurb').textContent = p.blurb
@@ -320,6 +343,20 @@
     if (!cluster.touch) rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
   }
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
+
+  // Every recording, credited with a link to its page and its licence.
+  {
+    const list = Object.entries(CREDITS)
+    const box = $('credits')
+    if (list.length) {
+      box.append('Sound credits (recordings from Freesound, cut into loops and re-encoded): ')
+      list.forEach(([id, c], i) => {
+        const a = document.createElement('a'); a.href = c.url; a.textContent = '\u201c' + c.title + '\u201d'; a.target = '_blank'; a.rel = 'noopener'
+        const l = document.createElement('a'); l.href = c.licenceUrl; l.textContent = c.licence; l.target = '_blank'; l.rel = 'noopener'
+        box.append(a, ' by ' + c.author + ', ', l, i < list.length - 1 ? '; ' : '.')
+      })
+    }
+  }
 
   // ── Simulation mode ─────────────────────────────────────────────────
   // The rev meter becomes a control: the finger sets the rpm, lifting lets
@@ -351,6 +388,9 @@
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
+    $('recorded').setAttribute('aria-pressed', String(s.recorded))
+    $('recorded').textContent = s.recorded ? 'On' : 'Off'
+    $('recorded').classList.toggle('on', s.recorded)
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
     for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
@@ -368,6 +408,7 @@
     if (!on && rs.running && rs.source === 'gps') rs.stop()
     syncSettings()
   }
+  $('recorded').onclick = () => { rs.update({ recorded: !rs.settings.recorded }); syncSettings() }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
@@ -426,9 +467,12 @@
     })
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped
+    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'recorded' : s.sound === 'loading' ? 'loading recording\u2026' : 'synthesised') : '')
+    if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
     const err = $('err')
-    err.hidden = !s.error
-    if (s.error) err.textContent = s.error
+    const msg = s.error || s.soundNote
+    err.hidden = !msg
+    if (msg) err.textContent = msg
     $('state-line').textContent = !s.running ? 'Off.'
       : s.sim ? (s.limiter ? 'Simulation: on the limiter.' : s.touching ? 'Simulation: following your finger.' : 'Simulation: idling.')
       : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed\u2026'

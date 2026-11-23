@@ -16,6 +16,8 @@
 // `node --test` can render it offline (test/rev-worklet.test.mjs); the
 // processor registers itself only inside an AudioWorkletGlobalScope.
 
+import { SampleVoice } from './rev-sampler.js'
+
 // Deterministic noise, so a test render is repeatable.
 function rng(seed) {
   let s = seed >>> 0 || 1
@@ -270,15 +272,19 @@ if (typeof AudioWorkletProcessor !== 'undefined' && typeof registerProcessor ===
       super()
       // `sampleRate` is a global of the worklet scope.
       this.voice = new EngineVoice(sampleRate, 0x5eed)
+      // Recorded loops, when the chosen car has them (static/rev-sampler.js).
+      // `samples: null` goes back to the synthesiser.
+      this.sampler = new SampleVoice(sampleRate)
       this.port.onmessage = (e) => {
         const m = e.data || {}
         if (m.profile) this.voice.setProfile(m.profile)
-        if (m.params) this.voice.set(m.params)
+        if ('samples' in m) this.sampler.setSet(m.samples)
+        if (m.params) { this.voice.set(m.params); this.sampler.set(m.params) }
       }
     }
     process(_inputs, outputs) {
       const out = outputs[0]
-      if (out && out.length) this.voice.render(out, out[0].length)
+      if (out && out.length) (this.sampler.ready ? this.sampler : this.voice).render(out, out[0].length)
       return true
     }
   }

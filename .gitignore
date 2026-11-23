@@ -62,3 +62,6 @@ __pycache__/
 
 # Engine sound renders (scripts/rev-render.mjs)
 rev-*.wav
+
+# Recordings fetched by scripts/rev-samples.mjs
+.cache/

@@ -12,16 +12,17 @@ function memStorage(init = {}) {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }
 }
 
-test('engine sound is off by default', () => {
+test('engine sound is off by default, and uses recordings where a car has them', () => {
   assert.equal(DEFAULTS.enabled, false)
+  assert.equal(DEFAULTS.recorded, true)
   assert.equal(loadSettings(memStorage()).enabled, false)
 })
 
 test('settings survive a round trip and garbage is replaced by defaults', () => {
   const st = memStorage()
-  saveSettings({ enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p' }, st)
-  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p' })
-  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null }),
+  saveSettings({ enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p', recorded: false }, st)
+  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p', recorded: false })
+  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null, recorded: 'no' }),
     { ...DEFAULTS, volume: 1 })
   assert.deepEqual(loadSettings(memStorage({ revSound: '{not json' })), DEFAULTS)
 })

@@ -7,6 +7,8 @@
 //   node scripts/rev-render.mjs --fix-ms 100          # as if GPS gave 10 fixes/s
 //   node scripts/rev-render.mjs --profile rotary --scene rev   # simulation mode
 //   node scripts/rev-render.mjs --all --scene demo --out-dir rev-demos
+//   node scripts/rev-render.mjs --all --scene demo --recorded --out-dir rev-demos
+//                                 # the recorded loops (needs ffmpeg to decode them)
 //
 // It runs the same code the car's browser runs (static/rev-*.js): a simulated
 // car reports its speed once a second like the car's GPS, the Engine turns
@@ -24,6 +26,10 @@ import { Engine, DEFAULTS, sanitise } from '../static/rev-sound.js'
 import { SimCar, CARS } from '../static/rev-model.js'
 import { PROFILES } from '../static/rev-profiles.js'
 import { EngineVoice } from '../static/rev-worklet.js'
+import { SampleVoice } from '../static/rev-sampler.js'
+import { SAMPLE_SETS, hasRecording, loopSlice } from '../static/rev-samples.js'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const args = process.argv.slice(2)
 const opt = (name, def) => {
@@ -33,11 +39,12 @@ const opt = (name, def) => {
 if (args.includes('--help') || args.includes('-h')) {
   console.log('usage: rev-render.mjs [--profile ' + Object.keys(PROFILES).join('|') + ' | --all] [--mode comfort|normal|sport]\n' +
     '                     [--car ' + Object.keys(CARS).join('|') + '] [--scene drive|rev|demo]\n' +
-    '                     [--fix-ms 1000] [--out file.wav | --out-dir dir]')
+    '                     [--recorded] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
   process.exit(0)
 }
 const fixMs = Number(opt('fix-ms', 1000))
 const sceneName = opt('scene', 'drive')
+const recorded = args.includes('--recorded')
 
 const SR = 48000, TICK = 0.02, BLOCK = SR * TICK // 960 frames per 20 ms tick
 const drive = (t) => {
@@ -76,11 +83,16 @@ const demo = (t, p) => {
 const SCENES = { drive: [drive, 45], rev: [rev, 11], demo: [demo, 22] }
 if (!SCENES[sceneName]) { console.error('unknown scene'); process.exit(2) }
 
-const names = args.includes('--all') ? Object.keys(PROFILES) : [opt('profile', DEFAULTS.profile)]
+let names = args.includes('--all') ? Object.keys(PROFILES) : [opt('profile', DEFAULTS.profile)]
+if (recorded) {
+  const none = names.filter((n) => !hasRecording(n))
+  if (none.length) console.log('no recording (synth only): ' + none.join(', '))
+  names = names.filter(hasRecording)
+}
 for (const name of names) {
   if (!Object.hasOwn(PROFILES, name)) { console.error('unknown profile ' + name); process.exit(2) }
   const settings = sanitise({ ...DEFAULTS, profile: name, mode: opt('mode', DEFAULTS.mode), car: opt('car', DEFAULTS.car) })
-  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}.wav`
+  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}${recorded ? '-recorded' : ''}.wav`
   const out = names.length === 1 && opt('out') ? opt('out') : path.join(opt('out-dir', '.'), file)
   render(settings, out)
 }
@@ -90,8 +102,21 @@ const [script, seconds] = SCENES[sceneName]
 const p = PROFILES[settings.profile]
 const engine = new Engine(settings)
 const sim = new SimCar(CARS[settings.car])
-const voice = new EngineVoice(SR, 0x5eed)
-voice.setProfile(PROFILES[settings.profile])
+let voice
+if (recorded) {
+  // The same loops the car plays, decoded here by ffmpeg (the car's browser
+  // decodes them itself).
+  voice = new SampleVoice(SR)
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
+  voice.setSet({ loops: SAMPLE_SETS[settings.profile].loops.map((l) => {
+    const b = execFileSync('ffmpeg', ['-v', 'error', '-i', path.join(dir, l.file), '-ac', '1', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 26 })
+    const data = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length))
+    return { rpm: l.rpm, layer: l.layer, gain: l.gain, data: loopSlice(data, SR, l), sr: SR }
+  }) })
+} else {
+  voice = new EngineVoice(SR, 0x5eed)
+  voice.setProfile(PROFILES[settings.profile])
+}
 voice.set({ gain: 0.5 })
 
 const frames = Math.round(seconds / TICK) * BLOCK
@@ -129,6 +154,6 @@ head.writeUInt32LE(SR, 24); head.writeUInt32LE(SR * 4, 28); head.writeUInt16LE(4
 head.write('data', 36); head.writeUInt32LE(pcm.length, 40)
 fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true })
 fs.writeFileSync(out, Buffer.concat([head, pcm]))
-console.log(`${out}: ${seconds} s ${sceneName}, ${p.name} (${p.style}), ${settings.mode}, ${CARS[settings.car].name}; ` +
+console.log(`${out}: ${seconds} s ${sceneName}${recorded ? ' (recorded)' : ''}, ${p.name} (${p.style}), ${settings.mode}, ${CARS[settings.car].name}; ` +
   `top ${maxKmh.toFixed(0)} km/h in gear ${maxGear}, speed fix every ${fixMs} ms`)
 }
