@@ -10,7 +10,6 @@
 //   firing ──► pulse ──► bank resonators ─┐
 //                                         ├─► tone filter ─► saturation ─► gain
 //   induction noise (gated by pulses) ────┘
-//   turbo whistle and blow-off (if the engine has one) ───────────► mixed after
 //
 // Nothing here touches the DOM or the network. EngineVoice is exported so
 // `node --test` can render it offline (test/rev-worklet.test.mjs); the
@@ -89,9 +88,6 @@ export class EngineVoice {
     this.dcX = [0, 0]; this.dcY = [0, 0]
     this.lpQ = 0.8
     this.profile = null
-    // Turbo: boost 0..1, the whistle's oscillator phase, and the blow-off
-    // envelope.
-    this.boost = 0; this.whPhase = 0; this.bov = 0
   }
 
   setProfile(p) {
@@ -110,9 +106,6 @@ export class EngineVoice {
     this.intake = new Biquad().bandpass(p.intake[0], 1.2, sr)
     this.pulseLen = Math.max(2, Math.round(p.pulseMs * sr / 1000))
     this.pending.n = 0; this.pulses.n = 0; this.pops.n = 0
-    this.boost = 0; this.bov = 0
-    this.whNoise = new Biquad().bandpass(p.turbo ? p.turbo.whistle[0] : 3000, 6, sr)
-    this.bovFilt = new Biquad().bandpass(1600, 0.9, sr)
   }
 
   // rpm, load (-1..1) and output gain are targets; the voice glides to them
@@ -129,7 +122,7 @@ export class EngineVoice {
     // Idle and overrun pulses are soft, full load hits hard; a little jitter
     // per firing keeps it from sounding like a loop.
     let amp = (0.25 + 0.75 * pos + (this.load < 0 ? 0.08 : 0)) * c.trim * (0.92 + 0.16 * this.rand())
-    // Lope: a big cam or a rotary's ports make idle firings uneven, now and
+    // Lope: a big cam makes idle firings uneven, now and
     // then nearly a miss. It smooths out as the revs rise.
     const lope = (p.lope || 0) * Math.max(0, 1 - this.rpm / (p.idle * 3))
     if (lope > 0) {
@@ -164,24 +157,6 @@ export class EngineVoice {
     const drive = 1 + (p.drive - 1) * Math.max(0, this.load)
     const norm = 1 / Math.tanh(drive)
 
-    // Turbo, per block: boost builds with load and revs over the spool time
-    // and bleeds off faster. Lifting with boost up opens the blow-off valve.
-    const tb = p.turbo
-    let whF = 0, whAmp = 0
-    if (tb) {
-      const blockS = n / sr
-      const want = Math.max(0, this.load) * Math.min(1, Math.max(0, (rpmFrac - 0.2) / 0.4))
-      const tau = want > this.boost ? tb.spool : 0.25
-      this.boost += (want - this.boost) * (1 - Math.exp(-blockS / tau))
-      if (this.load < -0.05 && this.boost > 0.3 && this.bov < 0.05) {
-        this.bov = this.boost * tb.bov
-        this.boost *= 0.3
-      }
-      whF = tb.whistle[0] + (tb.whistle[1] - tb.whistle[0]) * this.boost
-      whAmp = tb.level * this.boost * this.boost
-      this.whNoise.bandpass(whF, 6, sr)
-    }
-    const kBov = Math.exp(-1 / (0.28 * sr))
 
     for (let i = 0; i < n; i++) {
       this.rpm += (this.rpmTarget - this.rpm) * kRpm
@@ -243,16 +218,6 @@ export class EngineVoice {
       const l = nBanks > 1 ? bankOut[0] + 0.55 * bankOut[1] : bankOut[0]
       const r = nBanks > 1 ? bankOut[1] + 0.55 * bankOut[0] : bankOut[0]
 
-      // Turbo whistle (a tone plus a breath of noise around it) and the
-      // blow-off's hiss. Mixed after the saturation, so they stay clean.
-      let turbo = 0
-      if (tb) {
-        this.whPhase += whF / sr
-        if (this.whPhase >= 1) this.whPhase -= 1
-        turbo = whAmp * (Math.sin(2 * Math.PI * this.whPhase) + 1.5 * this.whNoise.run(noise))
-        if (this.bov > 1e-4) { turbo += this.bov * this.bovFilt.run(noise) * 1.6; this.bov *= kBov }
-      }
-
       for (let ch = 0; ch < outs.length; ch++) {
         const s = (ch === 0 ? l : r) * 0.9 + intake + pop * 0.6
         // Saturation for grit under load, then a DC blocker: the pulses are
@@ -260,7 +225,7 @@ export class EngineVoice {
         const sat = Math.tanh(s * drive) * norm
         const dc = sat - this.dcX[ch] + 0.995 * this.dcY[ch]
         this.dcX[ch] = sat; this.dcY[ch] = dc
-        outs[ch][i] = Math.max(-1, Math.min(1, (dc + turbo) * this.gain * 0.7))
+        outs[ch][i] = Math.max(-1, Math.min(1, dc * this.gain * 0.7))
       }
     }
   }

@@ -20,7 +20,6 @@ export const DEFAULTS = Object.freeze({
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
-  recorded: true,      // use real recordings for the cars that have them
 })
 // Below this the car counts as stopped: the gearbox hands over to the free
 // revving engine, and the Rev control is allowed. ~4 km/h.
@@ -48,7 +47,6 @@ export function sanitise(raw) {
   if (Object.hasOwn(PROFILES, raw.profile)) s.profile = raw.profile
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
-  if (typeof raw.recorded === 'boolean') s.recorded = raw.recorded
   return s
 }
 
@@ -177,7 +175,7 @@ export class RevSound {
     this.engine.configure(this.settings)
     this.sim.car.setCar(CARS[this.settings.car])
     if (partial.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
-    if ('profile' in partial || 'recorded' in partial) this.syncSound()
+    if ('profile' in partial) this.syncSound()
     return this.settings
   }
 
@@ -264,15 +262,14 @@ export class RevSound {
     this.syncSound()
   }
 
-  // Recorded or synthesised: recorded when the car has recordings and the
-  // owner has not turned them off. The synthesiser plays while they load,
-  // and stays if they cannot be loaded.
+  // The car's loops when it has them. The synthesiser plays while they
+  // load, and stays if they cannot be loaded.
   async syncSound() {
     if (!this.node) return
     const car = this.settings.profile
     this.soundFor = car
     this.soundNote = null
-    if (!this.settings.recorded || !hasRecording(car)) {
+    if (!hasRecording(car)) {
       this.node.port.postMessage({ samples: null })
       this.sound = 'synth'
       return
@@ -281,7 +278,7 @@ export class RevSound {
     this.sound = 'loading'
     try {
       const set = await this.loadSet(car)
-      if (this.soundFor !== car || !this.settings.recorded || !this.node) return // changed meanwhile
+      if (this.soundFor !== car || !this.node) return // changed meanwhile
       this.node.port.postMessage({ samples: set })
       this.sound = 'recorded'
     } catch (e) {

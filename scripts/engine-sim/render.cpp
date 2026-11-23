@@ -87,9 +87,15 @@ int main(int argc, char **argv) {
     // every sample: an unreachable target holds it at its maximum, 1.9x.)
     if (getenv("ES_GAIN")) { ap.levelerTarget = 1e12f; ap.volume = (float)std::atof(getenv("ES_GAIN")); }
     sim->synthesizer().setAudioParameters(ap);
+    // ES_CONV: how much of the exhaust impulse response is mixed in (the
+    // app's "convolution level", default 1). ES_IR: a different impulse
+    // response (a 16-bit WAV) for every exhaust, at the script's volume.
+    if (getenv("ES_CONV")) ap.convolution = (float)std::atof(getenv("ES_CONV"));
+    sim->synthesizer().setAudioParameters(ap);
     for (int i = 0; i < engine->getExhaustSystemCount(); ++i) {
         ImpulseResponse *ir = engine->getExhaustSystem(i)->getImpulseResponse();
-        std::vector<int16_t> d = readWav16(ir->getFilename());
+        const std::string irPath = getenv("ES_IR") ? std::string(getenv("ES_IR")) : ir->getFilename();
+        std::vector<int16_t> d = readWav16(irPath);
         sim->synthesizer().initializeImpulseResponse(d.data(), (unsigned)d.size(), (float)ir->getVolume(), i);
     }
 

@@ -103,13 +103,13 @@ test('an upshift cuts the load briefly', () => {
 
 test('slowing down shifts back down', () => {
   const up = (t) => Math.max(0, kmh(120) - t / 1000 * 4)
-  const run = drive(PROFILES.i6, 'normal', (t) => (t < 30000 ? Math.min(kmh(120), t / 1000 * 3) : up(t - 30000)), (t) => (t < 30000 ? 0.4 : -0.4), 58)
+  const run = drive(PROFILES.v8, 'normal', (t) => (t < 30000 ? Math.min(kmh(120), t / 1000 * 3) : up(t - 30000)), (t) => (t < 30000 ? 0.4 : -0.4), 58)
   const top = Math.max(...run.map((s) => s.gear))
   assert.ok(run[run.length - 1].gear <= 2, `ended in ${run[run.length - 1].gear} from ${top}`)
 })
 
 test('FreeRev climbs to the limiter, bounces off it, and falls back to idle', () => {
-  const p = PROFILES.v10
+  const p = PROFILES.v8
   const fr = new FreeRev(p)
   let max = 0, cuts = 0, below = true
   for (let i = 0; i < 150; i++) {
@@ -175,7 +175,7 @@ test('a held finger: the engine reaches it in about a tenth of a second and stay
 })
 
 test('a dragging finger is followed closely, up and down', () => {
-  const fr = new FreeRev(PROFILES.i6)
+  const fr = new FreeRev(PROFILES.v8)
   let worst = 0, target = 0
   // Sweep 1000 → 6000 → 1000 rpm over two seconds.
   run(fr, 2, (i) => {
@@ -232,7 +232,7 @@ test('a finger in the red holds the engine on the limiter; a tap there is one ba
   assert.equal(tap.rpm, p.idle)
 })
 
-test('each engine has its own limiter: a race engine bounces faster than a muscle car', () => {
+test('the limiter cut sets the bounce: a short cut bounces faster than the V8\'s lazy one', () => {
   const rate = (p) => {
     const fr = new FreeRev(p)
     let hits = 0, below = true
@@ -242,7 +242,8 @@ test('each engine has its own limiter: a race engine bounces faster than a muscl
     })
     return hits
   }
-  assert.ok(rate(PROFILES.flat6) > rate(PROFILES.v8) * 1.5, `flat6 ${rate(PROFILES.flat6)} v8 ${rate(PROFILES.v8)}`)
+  const race = { ...PROFILES.v8, limiter: 45 }
+  assert.ok(rate(race) > rate(PROFILES.v8) * 1.5, `45 ms ${rate(race)} v8 ${rate(PROFILES.v8)}`)
 })
 
 test('changing engine lets go of the finger, and the finger is kept inside the engine range', () => {
@@ -251,7 +252,7 @@ test('changing engine lets go of the finger, and the finger is kept inside the e
   assert.equal(fr.target, PROFILES.v8.idle)
   fr.hold(NaN)
   assert.equal(fr.target, PROFILES.v8.idle)
-  fr.setProfile(PROFILES.v12)
+  fr.setProfile({ ...PROFILES.v8 })
   assert.ok(!fr.touching)
 })
 

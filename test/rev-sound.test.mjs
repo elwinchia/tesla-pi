@@ -12,18 +12,19 @@ function memStorage(init = {}) {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }
 }
 
-test('engine sound is off by default, and uses recordings where a car has them', () => {
+test('engine sound is off by default', () => {
   assert.equal(DEFAULTS.enabled, false)
-  assert.equal(DEFAULTS.recorded, true)
   assert.equal(loadSettings(memStorage()).enabled, false)
 })
 
 test('settings survive a round trip and garbage is replaced by defaults', () => {
   const st = memStorage()
-  saveSettings({ enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p', recorded: false }, st)
-  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v10', mode: 'sport', car: 'm3p', recorded: false })
-  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null, recorded: 'no' }),
+  saveSettings({ enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p' }, st)
+  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p' })
+  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null }),
     { ...DEFAULTS, volume: 1 })
+  // A car that was removed (the owner had picked one) falls back to the V8.
+  assert.equal(sanitise({ profile: 'flat6' }).profile, 'v8')
   assert.deepEqual(loadSettings(memStorage({ revSound: '{not json' })), DEFAULTS)
 })
 
@@ -87,12 +88,13 @@ test('Rev works only while stopped', () => {
   assert.ok(e.state.rpm < p.redline * 0.6, `rpm ${e.state.rpm} while moving with Rev held`)
 })
 
-test('changing engine and gearbox on the fly takes effect', () => {
+test('changing the gearbox mode on the fly takes effect', () => {
   const e = new Engine(DEFAULTS)
-  e.configure({ ...DEFAULTS, profile: 'v10', mode: 'sport' })
-  assert.equal(e.profile, PROFILES.v10)
+  e.configure({ ...DEFAULTS, mode: 'sport' })
+  assert.equal(e.settings.mode, 'sport')
+  assert.equal(e.profile, PROFILES.v8)
   e.step(0, 0.02)
-  assert.ok(e.state.rpm >= PROFILES.v10.idle * 0.7)
+  assert.ok(e.state.rpm >= PROFILES.v8.idle * 0.7)
 })
 
 // ── Simulation mode is for a stopped car only ───────────────────────────

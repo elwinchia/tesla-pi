@@ -29,28 +29,7 @@ export const CREDITS = {
     url: 'https://github.com/ange-yaghi/engine-sim',
     licence: 'MIT', licenceUrl: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE',
     commit: '85f7c3b', engineScript: 'assets/engines/atg-video-2/07_gm_ls.mr',
-    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from its bundled GM LS V8 script: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle. scripts/engine-sim/ rebuilds it.',
-  },
-  fs112075: {
-    title: 'Lambo idle and rev.mp3', author: 'cheesepuff',
-    url: 'https://freesound.org/people/cheesepuff/sounds/112075/',
-    licence: 'CC0 1.0', licenceUrl: 'https://creativecommons.org/publicdomain/zero/1.0/',
-    audio: 'https://cdn.freesound.org/previews/112/112075_682033-hq.mp3', fetched: '2026-11-23',
-    recording: 'Lamborghini Murci\u00e9lago LP 670-4 SuperVeloce (V12), idling and revving at a dealer; recorded by the uploader (tags: murcielago, lp-670, superveloce, v12).',
-  },
-  fs457733: {
-    title: 'Audi R8 Idling Reving Backfire.wav', author: 'Jonas_Jocys',
-    url: 'https://freesound.org/people/Jonas_Jocys/sounds/457733/',
-    licence: 'CC BY 4.0', licenceUrl: 'https://creativecommons.org/licenses/by/4.0/',
-    audio: 'https://cdn.freesound.org/previews/457/457733_1900571-hq.mp3', fetched: '2026-11-23',
-    recording: 'Audi R8 idling and held at several rpm, recorded by the uploader (MKH 416 above the engine, a condenser behind the car). The page does not say which engine; its harmonics do: the strongest lines are the 2.5th and 5th engine orders, the firing pattern of a V10 (a V8 fires on the 4th).',
-  },
-  fs669618: {
-    title: 'Car Engine Contact Recording-Mini Cooper S 2019.wav', author: 'TheLittleCrow',
-    url: 'https://freesound.org/people/TheLittleCrow/sounds/669618/',
-    licence: 'CC0 1.0', licenceUrl: 'https://creativecommons.org/publicdomain/zero/1.0/',
-    audio: 'https://cdn.freesound.org/previews/669/669618_5672786-hq.mp3', fetched: '2026-11-23',
-    recording: '2019 Mini Cooper S (turbocharged inline-4) driven in sport mode, recorded by the uploader with two contact microphones on the chassis and the engine block: the raw engine, no wind or road.',
+    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from its bundled GM LS V8 script: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; through engine-sim\'s own "real engine" exhaust impulse response, with a dry render of the same runs as a low sub layer. scripts/engine-sim/ rebuilds it.',
   },
 }
 
@@ -69,42 +48,23 @@ export const SAMPLE_SETS = {
   // lifting off plays the overrun loops.
   v8: {
     kind: 'engine-sim', renders: 'ls-v8', bitrate: '64k',
+    // Rendered with engine-sim's "real engine" exhaust impulse response
+    // (ES_IR, see scripts/engine-sim/README.md) rather than the script's
+    // smooth_39, which is centred on 320-640 Hz and left the V8 thin; then
+    // the bottom octave lifted and the top softened, so it has a real
+    // engine's weight.
+    ir: 'es/sound-library/archive/test_engine_14_eq_adjusted_16.wav',
+    eq: [{ type: 'lowshelf', hz: 90, db: 10 }, { type: 'highshelf', hz: 3500, db: -4 }],
+    // ...and the same simulation rendered dry (ES_CONV=0), low-passed at
+    // 100 Hz and mixed under it: the impulse response strips the lowest
+    // octave, where the V8's idle firing note (about 47 Hz) lives.
+    sub: { renders: 'ls-v8-dry', lowpass: 100, level: 0.7 },
     loops: [
-      es(700, 'on', 0.192, 'idle'), es(700, 'off', 0.192, 'idle'),
-      ...[[1200, 0.32, 0.057], [1800, 0.393, 0.09], [2500, 0.475, 0.133], [3200, 0.577, 0.152],
-        [4000, 0.641, 0.181], [4800, 0.69, 0.183], [5600, 0.682, 0.223], [6300, 1.0, 0.327]]
+      // Levels from `node scripts/rev-samples.mjs --print-levels v8`.
+      es(700, 'on', 0.322, 'idle'), es(700, 'off', 0.322, 'idle'),
+      ...[[1200, 0.537, 0.12], [1800, 0.676, 0.184], [2500, 0.983, 0.297], [3200, 0.825, 0.275],
+        [4000, 0.857, 0.361], [4800, 0.907, 0.39], [5600, 1, 0.47], [6300, 0.838, 0.328]]
         .flatMap(([rpm, on, off]) => [es(rpm, 'on', on, `on-${rpm}`), es(rpm, 'off', off, `off-${rpm}`)]),
-    ],
-  },
-  // V12: a fast idle after start, and one steady rev hold. Firing order
-  // lines measured from the recording: 3rd order 59.2 Hz at idle, 145.2 Hz
-  // in the hold.
-  // Turbo 4: idle, then steady stretches of driving under load in several
-  // gears. 2nd order (the firing rate of a four) measured: 30.0 Hz at idle,
-  // 99.6, 124.8, 161.4 and 184.7 Hz on the road.
-  i4t: {
-    loops: [
-      { file: 'i4t-900.ogg', src: 'fs669618', start: 0.3, seconds: 1.3, rpm: 900 },
-      { file: 'i4t-2988.ogg', src: 'fs669618', start: 10.7, seconds: 1.5, rpm: 2988 },
-      { file: 'i4t-3744.ogg', src: 'fs669618', start: 55.6, seconds: 1.5, rpm: 3744 },
-      { file: 'i4t-4842.ogg', src: 'fs669618', start: 48.6, seconds: 1.5, rpm: 4842 },
-      { file: 'i4t-5541.ogg', src: 'fs669618', start: 42.1, seconds: 1.3, rpm: 5541 },
-    ],
-  },
-  // V10: idle and three steady holds. The 2.5th order (each bank's firing)
-  // measured: 33.6 Hz at idle, 80.4, 115.7 and 169.6 Hz in the holds.
-  v10: {
-    loops: [
-      { file: 'v10-806.ogg', src: 'fs457733', start: 0.3, seconds: 1.6, rpm: 806 },
-      { file: 'v10-1930.ogg', src: 'fs457733', start: 22.5, seconds: 1.5, rpm: 1930 },
-      { file: 'v10-2777.ogg', src: 'fs457733', start: 34.3, seconds: 2.0, rpm: 2777 },
-      { file: 'v10-4070.ogg', src: 'fs457733', start: 49.0, seconds: 2.0, rpm: 4070 },
-    ],
-  },
-  v12: {
-    loops: [
-      { file: 'v12-1184.ogg', src: 'fs112075', start: 3.0, seconds: 2.0, rpm: 1184 },
-      { file: 'v12-2904.ogg', src: 'fs112075', start: 58.75, seconds: 0.9, rpm: 2904 },
     ],
   },
 }

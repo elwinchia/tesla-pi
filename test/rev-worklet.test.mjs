@@ -42,9 +42,20 @@ for (const [name, p] of Object.entries(PROFILES)) {
   })
 }
 
+// An even-fire inline six, to check the synthesiser itself.
+const EVEN6 = {
+  ...PROFILES.v8, lope: 0,
+  cylinders: [1, 5, 3, 6, 2, 4].map((c, i) => ({ at: i / 6, bank: c <= 3 ? 0 : 1 })),
+  banks: [
+    [[135, 3.0, 0.85], [300, 4.0, 0.6], [700, 5.0, 0.36], [1850, 6.0, 0.16]],
+    [[142, 3.0, 0.85], [315, 4.0, 0.6], [735, 5.0, 0.36], [1950, 6.0, 0.16]],
+  ],
+  pulseMs: 1.5,
+}
+
 test('the note repeats at the firing interval of an even-fire engine', () => {
   // Inline six at 3000 rpm fires 150 times a second: every 320 samples.
-  const { out } = render(PROFILES.i6, { rpm: 3000, load: 0.7, seconds: 0.5 })
+  const { out } = render(EVEN6, { rpm: 3000, load: 0.7, seconds: 0.5 })
   const ac = (lag) => {
     let s = 0, e = 0
     for (let i = 0; i + lag < out.length; i++) { s += out[i] * out[i + lag]; e += out[i] * out[i] }
@@ -56,8 +67,8 @@ test('the note repeats at the firing interval of an even-fire engine', () => {
 
 test('overrun pops appear only when lifting off at speed', () => {
   const peak = (a) => a.reduce((m, x) => Math.max(m, Math.abs(x)), 0)
-  const lift = render(PROFILES.flat4, { rpm: 5000, load: -1, seconds: 2 }).out
-  const cruise = render(PROFILES.flat4, { rpm: 5000, load: 0, seconds: 2 }).out
+  const lift = render(PROFILES.v8, { rpm: 5000, load: -1, seconds: 2 }).out
+  const cruise = render(PROFILES.v8, { rpm: 5000, load: 0, seconds: 2 }).out
   assert.ok(peak(lift) > 2 * peak(cruise), `lift ${peak(lift)} cruise ${peak(cruise)}`)
 })
 
@@ -107,38 +118,9 @@ test('every car sound is complete and has its own name', () => {
       assert.ok(c.at >= 0 && c.at < 1, k)
       assert.ok(Number.isInteger(c.bank) && c.bank >= 0 && c.bank < p.banks.length && c.bank < 2, `${k} bank`)
     }
-    if (p.turbo) {
-      const t = p.turbo
-      assert.ok(t.whistle[0] < t.whistle[1] && t.whistle[1] < 20000 && t.level > 0 && t.spool > 0 && t.bov >= 0, `${k} turbo`)
-    }
   }
   assert.equal(names.size, Object.keys(PROFILES).length)
-  assert.ok(Object.keys(PROFILES).length >= 8)
-})
-
-test('a turbo spools up under load and blows off when you lift', () => {
-  const v = new EngineVoice(SR, 2)
-  v.setProfile(PROFILES.i4t)
-  v.rpm = 5000; v.load = 1
-  v.set({ rpm: 5000, load: 1, gain: 1 })
-  const L = new Float32Array(128), R = new Float32Array(128)
-  const blocks = (s) => { for (let i = 0; i < Math.round(s * SR / 128); i++) v.render([L, R], 128) }
-  blocks(0.15)
-  const early = v.boost
-  blocks(2)
-  assert.ok(v.boost > 0.7 && v.boost > early * 2, `boost ${early} → ${v.boost}`)
-  v.set({ load: -0.6 })
-  blocks(0.05)
-  assert.ok(v.bov > 0.02, `blow-off ${v.bov}`)
-  assert.ok(v.boost < 0.4)
-  blocks(2)
-  assert.ok(v.bov < 1e-3, 'the blow-off dies away')
-
-  const n = new EngineVoice(SR, 2)
-  n.setProfile(PROFILES.v12)
-  n.set({ rpm: 6000, load: 1, gain: 1 })
-  for (let i = 0; i < 400; i++) n.render([L, R], 128)
-  assert.equal(n.boost, 0, 'no turbo, no boost')
+  assert.deepEqual(Object.keys(PROFILES), ['v8'], 'one car: the V8')
 })
 
 test('a lumpy cam lopes at idle and smooths out with revs', () => {
@@ -157,8 +139,9 @@ test('a lumpy cam lopes at idle and smooths out with revs', () => {
     return Math.sqrt(got.reduce((a, b) => a + (b - m) ** 2, 0) / got.length) / m
   }
   const v8Idle = amps(PROFILES.v8, PROFILES.v8.idle)
-  const v12Idle = amps(PROFILES.v12, PROFILES.v12.idle)
+  const smooth = { ...PROFILES.v8, lope: 0 }
+  const flatIdle = amps(smooth, smooth.idle)
   const v8High = amps(PROFILES.v8, PROFILES.v8.idle * 4)
-  assert.ok(v8Idle > 2 * v12Idle, `V8 ${v8Idle.toFixed(3)} vs V12 ${v12Idle.toFixed(3)} at idle`)
+  assert.ok(v8Idle > 2 * flatIdle, `V8 ${v8Idle.toFixed(3)} vs no lope ${flatIdle.toFixed(3)} at idle`)
   assert.ok(v8High < v8Idle / 2, `V8 at 4× idle ${v8High.toFixed(3)}`)
 })

@@ -114,3 +114,84 @@ Most likely causes, in order:
 3. **Skip:** Sonniss (licence, and no confirmed engine loops) and Freesound originals (small gain).
 
 Whatever the source, the 1 Hz GPS lag will keep driving sound slightly detached from the pedal. Parked, in simulation mode, the new sound would be heard at its best.
+
+## History: the removed cars
+
+The first version offered eight cars. Seven were synthesised from numbers by
+a source–filter model (cross-plane V8, V12, flat-6, inline-6, rotary, turbo 4,
+V10 and flat-4). Three of them also played Freesound recordings. The owner
+found all of them fake and asked for them to be removed; only the engine-sim
+V8 remains. What the recordings were, and the research behind choosing them,
+is kept below for reference.
+
+### The recordings that were used (removed)
+
+The owner asked whether the sounds could come from TesRev or other engine
+sound projects. Not TesRev's: they are its own and come with no licence to
+reuse. But real recordings under a licence that allows reuse in this public
+repository can, and three cars now use them.
+
+**The bar.** A recording is used only if all of these hold:
+
+- the person who uploaded it recorded it themselves;
+- it is CC0 or CC BY (never NC, ND, Sampling+ or unclear, never from a game,
+  app, video or commercial product);
+- its page or tags identify the engine, or its harmonics do;
+- it has steady stretches at **two or more rpm** of one engine: idle alone
+  cannot be pitched convincingly across a rev range;
+- the engine is not buried under crowds, other engines or wind.
+
+**Where the files come from.** Freesound's own page for each sound. Without a
+login Freesound serves a 128 kbit/s MP3 preview of every sound (the original
+file needs an account), and that preview is what was fetched, on 2026-11-23,
+from the address recorded in each credit. `scripts/rev-samples.mjs` fetches
+from exactly those addresses and nothing else.
+
+| Car | Recording | Author | Licence | Loops (rpm) |
+|---|---|---|---|---|
+| V12, Italian GT | [Lambo idle and rev.mp3](https://freesound.org/people/cheesepuff/sounds/112075/): a Murciélago LP 670-4 SuperVeloce at a dealer | cheesepuff | CC0 1.0 | 1,184 (fast idle), 2,904 |
+| Turbo 4, hot hatch | [Car Engine Contact Recording-Mini Cooper S 2019.wav](https://freesound.org/people/TheLittleCrow/sounds/669618/): contact mics on the engine block, driven in sport mode | TheLittleCrow | CC0 1.0 | 900, 2,988, 3,744, 4,842, 5,541 |
+| V10, supercar | [Audi R8 Idling Reving Backfire.wav](https://freesound.org/people/Jonas_Jocys/sounds/457733/): idle and holds at several rpm | Jonas_Jocys | **CC BY 4.0** | 806, 1,930, 2,777, 4,070 |
+
+The CC BY recording is credited on its card in the picker, in the credits
+line under it, and in `static/sounds/CREDITS.md`.
+
+**How each loop was cut.** Each recording's spectrum was read at high
+resolution (2.7 Hz per bin) to find stretches where the engine holds a speed
+within a few percent. Its rpm comes from the spacing of its harmonics and
+the engine's firing order: the 3rd order (one bank) of the V12, the 2nd
+order (the firing rate) of the four, and the 2.5th order (one bank) of the
+V10. The R8 page does not say whether it is the V8 or the V10. In every hold,
+the strongest lines are the 2.5th and 5th orders, the pattern of a V10 (a V8
+fires on the 4th), so it is filed as the V10. Each stretch is made to loop by
+crossfading its end into its start, levelled (louder with revs), and padded
+with 20 ms of its own wrap-around so the codec's edges never fall in the
+seam. Every seam was checked after encoding: no step at a seam is larger
+than the loop's largest ordinary step.
+
+**How it plays.** The player follows the same rpm as the synthesiser (GPS,
+Test drive or the finger). Between two recorded rpm points it crossfades;
+past the last one it pitches the top loop up, at most 3.2×. The V12's top
+loop is 2,904 rpm, so its top end is the most stretched. All loops are
+"under load or idle" (single layer): none of the recordings has a long enough
+lift-off at a steady rpm for an off-load layer. **Recorded sounds** in the
+Sound card switches every car back to the synthesiser; if the files cannot
+be loaded, the synthesiser plays and the page says so.
+
+**What was rejected, and why.**
+
+| Source | Why not |
+|---|---|
+| TesRev | Its own sounds, published with no licence to reuse. |
+| [engine-sim](https://github.com/ange-yaghi/engine-sim) (MIT) | Its `sound-library` holds impulse responses for its convolution stage, not recordings of engines. |
+| OpenGameArt engine loops | "Racing car engine sound loops" has its licence questioned in its own comments; the CC0 alternatives are synthesised or made with a mouth. |
+| Freesound, Sampling+ (a retired licence, not CC0 or CC BY) | djbono's Ferrari 456 V12 and Porsche 911T, Fuser10's rotary engine. |
+| Freesound, NC | FritzSounds' Porsche 911 GT3 Cup (CC BY-NC). |
+| Freesound, licence fine, recording not | Hot-rod V8 at Summernats (Ears68, CC BY 3.0): festival ambience, other engines running under it. Parade of open-header V8s (holderall, CC0): several cars and a crowd. "Classic Car Idle", a 350 Rocket V8 (jackthemurray, CC0): idle only. Ford 460 V8 (Henaway, CC0): one 3.7 s blip. Subaru WRX (ulose2piranha, CC0): a clean idle, but the revs are blips with no hold. VW Golf GTI (EverydaySounds, CC0): drive-aways past the mic. BMW M6 (Kinoton, CC0): a V10 or V8, not an inline-6, and driving away. The Murciélago's 5 s clip (cheesepuff, CC0): one blip. Lamborghini start-up (florianreichelt, CC0), "Porsche idle" (victormalloy, CC0), "Supercar rev" (richwise, CC0), Lotus (wikusv, CC BY 4.0): the engine is not identified. 2012 Civic (thepodcastdoctor, CC0): not turbocharged. Drag cars (lonemonk, CC BY 4.0): several cars at once. |
+
+**Cars with no usable recording:** **V8** (no recording of one V8 with
+steady stretches at two rpm; it now uses engine-sim, below), **Flat-6** (the
+911 recordings are Sampling+ or NC), **Inline-6** (none found), **Rotary**
+(the only rotary is Sampling+) and **Flat-4** (the WRX has only its idle
+steady). The bar was not lowered for them.
+

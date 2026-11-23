@@ -3,9 +3,9 @@
 // without the car or a browser:
 //
 //   node scripts/rev-render.mjs                       # V8, writes rev-v8.wav
-//   node scripts/rev-render.mjs --profile i6 --mode sport --out /tmp/i6.wav
+//   node scripts/rev-render.mjs --mode sport --out /tmp/v8-sport.wav
 //   node scripts/rev-render.mjs --fix-ms 100          # as if GPS gave 10 fixes/s
-//   node scripts/rev-render.mjs --profile rotary --scene rev   # simulation mode
+//   node scripts/rev-render.mjs --scene rev               # simulation mode
 //   node scripts/rev-render.mjs --all --scene demo --out-dir rev-demos
 //   node scripts/rev-render.mjs --all --scene demo --recorded --out-dir rev-demos
 //                                 # the recorded loops (needs ffmpeg to decode them)

@@ -213,7 +213,7 @@
     <div class="card span2">
       <h2>Car sound</h2>
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
-      <p class="hint">Recorded cars play loops cut from real recordings; the engine-sim car plays loops rendered with engine-sim, a physically modelled engine, with separate sounds for pulling and lifting off. Both are crossfaded and pitched to the engine's revs. Synth cars are synthesised on this screen. Your choice is remembered.</p>
+      <p class="hint">The V8 plays loops rendered with engine-sim, a physically modelled engine, at idle and eight rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
       <div class="credits" id="credits"></div>
     </div>
 
@@ -224,11 +224,6 @@
         <button id="enabled" type="button" aria-pressed="false">Off</button>
       </div>
       <p class="hint">On, the engine also plays on the main page (under CarPlay) once you tap the screen. Off by default.</p>
-      <div class="row">
-        <label for="recorded">Recorded sounds</label>
-        <button id="recorded" type="button" aria-pressed="true">On</button>
-      </div>
-      <p class="hint">On, cars marked Recorded or engine-sim play their loops; off, every car is synthesised.</p>
       <div class="row">
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
@@ -388,9 +383,6 @@
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
-    $('recorded').setAttribute('aria-pressed', String(s.recorded))
-    $('recorded').textContent = s.recorded ? 'On' : 'Off'
-    $('recorded').classList.toggle('on', s.recorded)
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
     for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
@@ -408,7 +400,6 @@
     if (!on && rs.running && rs.source === 'gps') rs.stop()
     syncSettings()
   }
-  $('recorded').onclick = () => { rs.update({ recorded: !rs.settings.recorded }); syncSettings() }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
@@ -467,7 +458,7 @@
     })
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped
-    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'recorded' : s.sound === 'loading' ? 'loading recording\u2026' : 'synthesised') : '')
+    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
     const err = $('err')
     const msg = s.error || s.soundNote

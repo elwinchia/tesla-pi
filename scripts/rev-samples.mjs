@@ -2,7 +2,7 @@
 // Build the recorded engine loops in static/sounds/ from their sources.
 //
 //   node scripts/rev-samples.mjs            # build every loop
-//   node scripts/rev-samples.mjs --car v12  # one car
+//   node scripts/rev-samples.mjs --car v8   # one car
 //
 // Every loop is described in static/rev-samples.js: which recording, where in
 // it, how long, and the rpm it was recorded at. This script fetches each
@@ -48,6 +48,74 @@ function decode(file, start, seconds) {
   const buf = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(start), '-t', String(seconds), '-i', file,
     '-ac', '1', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 28 })
   return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length))
+}
+
+// RBJ shelving filter: { type: 'lowshelf' | 'highshelf', hz, db }, shelf
+// slope 1. Applied to a whole buffer in place.
+export function shelf(x, sr, { type, hz, db }) {
+  const A = Math.pow(10, db / 40), w = 2 * Math.PI * hz / sr, c = Math.cos(w), sn = Math.sin(w)
+  const alpha = sn / 2 * Math.SQRT2, k = 2 * Math.sqrt(A) * alpha
+  let b0, b1, b2, a0, a1, a2
+  if (type === 'lowshelf') {
+    b0 = A * ((A + 1) - (A - 1) * c + k); b1 = 2 * A * ((A - 1) - (A + 1) * c); b2 = A * ((A + 1) - (A - 1) * c - k)
+    a0 = (A + 1) + (A - 1) * c + k; a1 = -2 * ((A - 1) + (A + 1) * c); a2 = (A + 1) + (A - 1) * c - k
+  } else if (type === 'highshelf') {
+    b0 = A * ((A + 1) + (A - 1) * c + k); b1 = -2 * A * ((A - 1) + (A + 1) * c); b2 = A * ((A + 1) + (A - 1) * c - k)
+    a0 = (A + 1) - (A - 1) * c + k; a1 = 2 * ((A - 1) - (A + 1) * c); a2 = (A + 1) - (A - 1) * c - k
+  } else throw new Error('unknown filter ' + type)
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0
+  for (let i = 0; i < x.length; i++) {
+    const x0 = x[i]
+    const y0 = (b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0
+    x[i] = y0
+  }
+  return x
+}
+
+// RBJ low-pass, Butterworth Q; run twice for 24 dB/octave.
+export function lowpass(x, sr, hz) {
+  const w = 2 * Math.PI * hz / sr, c = Math.cos(w), alpha = Math.sin(w) / (2 * Math.SQRT1_2)
+  const a0 = 1 + alpha, b0 = (1 - c) / 2 / a0, b1 = (1 - c) / a0, b2 = b0, a1 = -2 * c / a0, a2 = (1 - alpha) / a0
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0
+  for (let i = 0; i < x.length; i++) {
+    const x0 = x[i], y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+    x2 = x1; x1 = x0; y2 = y1; y1 = y0
+    x[i] = y0
+  }
+  return x
+}
+
+// Decode a loop's stretch with a set's EQ applied. The filters run from
+// WARM seconds earlier, so they have settled before the stretch begins
+// (a cold start would leave a step at the seam).
+const WARM = 0.3
+function decodeEq(file, start, seconds, eq) {
+  if (!eq || !eq.length) return decode(file, start, seconds)
+  const pre = Math.min(WARM, start)
+  const x = decode(file, start - pre, seconds + pre)
+  for (const f of eq) shelf(x, SR, f)
+  return x.slice(Math.round(pre * SR))
+}
+
+// The stretch a loop is cut from. For an engine-sim set with `sub`, the
+// same simulation rendered dry (no exhaust impulse response) is low-passed
+// and mixed under it: the impulse response that gives the main render its
+// body also strips the lowest octave, and the dry render still has the
+// engine's own firing pulse there. The sub layer's RMS is `sub.level` x the
+// main stretch's, so every loop gets the same share.
+function stretchFor(set, loop, seconds) {
+  const main = decodeEq(renderFile(set, loop), loop.start, seconds, set.eq)
+  if (!set.sub) return main
+  const pre = Math.min(WARM, loop.start)
+  const subFile = renderFile({ renders: set.sub.renders }, loop)
+  const sub = decode(subFile, loop.start - pre, seconds + pre)
+  lowpass(sub, SR, set.sub.lowpass); lowpass(sub, SR, set.sub.lowpass)
+  const s2 = sub.slice(Math.round(pre * SR), Math.round(pre * SR) + main.length)
+  const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length) || 1
+  const g = set.sub.level * rms(main) / rms(s2)
+  for (let i = 0; i < main.length; i++) main[i] += g * (s2[i] || 0)
+  return main
 }
 
 // A seamless loop of `len` samples: the stretch after the loop's end is
@@ -99,27 +167,21 @@ function renderFile(set, loop) {
 
 // static/sounds/CREDITS.md, from the same data the page and tests use.
 function credits() {
-  const lines = [
-    '# Engine sound recordings',
-    '',
-    'The loops in this folder are cut from the recordings and renders below.',
-    "The recordings are **not** covered by this repository's BSD licence: each",
-    'keeps its own licence, as listed. Every one was recorded and uploaded to',
-    'Freesound by the person named, and is used under CC0 (no conditions) or',
-    'CC BY (credit required, given here and on `rev.html` next to the car it is',
-    'used for). The copies used are the 128 kbit/s MP3 previews Freesound serves',
-    "on each sound's own page (the original files need a Freesound login).",
-    '',
-    'The `v8-es-*` loops are our own renders, made with engine-sim (MIT) from',
-    'its bundled engine script; engine-sim is credited below all the same.',
-    '',
-    'Changes made to every recording or render: a stretch was cut, made to loop',
-    'by crossfading its end into its start, mixed to mono, filtered below 25 Hz,',
-    'levelled, and encoded as Ogg Opus. `scripts/rev-samples.mjs` does all of',
-    'it from `static/rev-samples.js`, which says exactly which stretch each loop',
-    'is.',
-    '',
-  ]
+  const recordings = Object.values(CREDITS).some((c) => c.kind !== 'render')
+  const lines = ['# Engine sound credits', '']
+  if (recordings) lines.push(
+    'Some loops in this folder are cut from recordings. They are **not** covered',
+    "by this repository's BSD licence: each keeps its own licence, as listed. Each",
+    'was recorded and uploaded to Freesound by the person named, and is used under',
+    'CC0 or CC BY (credit given here and on `rev.html` next to the car it is used',
+    "for), from the 128 kbit/s MP3 preview on the sound's own page.", '')
+  lines.push(
+    'The `*-es-*` loops are our own renders, made with engine-sim (MIT) from its',
+    'bundled engine scripts; engine-sim is credited below all the same. They are',
+    'rendered with `scripts/engine-sim/`, then cut, made to loop by crossfading',
+    'each end into its start, equalised and given a low-passed dry sub layer where',
+    '`static/rev-samples.js` says so, filtered below 25 Hz, levelled and encoded as',
+    'Ogg Opus by `scripts/rev-samples.mjs`.', '')
   for (const [id, c] of Object.entries(CREDITS)) {
     const used = [...new Set(Object.entries(SAMPLE_SETS).flatMap(([car, set]) => set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm${l.layer && l.layer !== 'any' ? ', ' + l.layer : ''})`)))]
     if (c.kind === 'render') {
@@ -142,7 +204,24 @@ function credits() {
   return lines.join('\n')
 }
 
+// --print-levels <car>: an engine-sim set's `level` for every loop, from its
+// renders with its EQ: each loop's RMS over the loudest on-load loop's,
+// square-rooted so overrun and idle stay audible; idle at 0.6 x the lowest
+// on-load loop. Paste them into static/rev-samples.js.
+function printLevels(car) {
+  const set = SAMPLE_SETS[car]
+  const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length)
+  const r = {}
+  for (const l of set.loops) r[l.render] ??= rms(stretchFor(set, l, l.seconds))
+  const on = set.loops.filter((l) => l.layer === 'on' && l.render !== 'idle').sort((a, b) => a.rpm - b.rpm)
+  const ref = Math.max(...on.map((l) => r[l.render]))
+  const lv = (k) => Math.round(Math.sqrt(r[k] / ref) * 1000) / 1000
+  console.log('idle', Math.round(0.6 * lv(on[0].render) * 1000) / 1000)
+  for (const l of on) console.log(l.rpm, 'on', lv(l.render), 'off', lv(`off-${l.rpm}`))
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  if (args.includes('--print-levels')) { printLevels(args[args.indexOf('--print-levels') + 1]); process.exit(0) }
   fs.mkdirSync(OUT, { recursive: true })
   fs.writeFileSync(path.join(OUT, 'CREDITS.md'), credits())
   if (args.includes('--credits')) process.exit(0)
@@ -156,8 +235,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       const len = Math.round(loopSeconds(loop) * SR)
       const fade = Math.round(Math.min(0.12, loopSeconds(loop) * 0.25) * SR)
       const rendered = set.kind === 'engine-sim'
-      const from = rendered ? renderFile(set, loop) : source(loop.src)
-      const seg = decode(from, loop.start, (len + fade) / SR + 0.05)
+      const secs = (len + fade) / SR + 0.05
+      const seg = rendered ? stretchFor(set, loop, secs) : decode(source(loop.src), loop.start, secs)
       // Recordings are levelled alike, then louder with revs, the way the
       // engine is: idle about 6 dB under the redline. Renders keep the
       // engine's own levels, which `level` carries (see rev-samples.js).

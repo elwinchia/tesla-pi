@@ -16,8 +16,13 @@ Nothing here runs on the Pi or in the car. Only the finished `.ogg` loops ship.
 ```bash
 brew install cmake boost bison                      # names from engine-sim's README
 scripts/engine-sim/build.sh                         # clone (pinned), patch a copy, build: ~1 min
-scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8 1200 1800 2500 3200 4000 4800 5600 6300
-node scripts/rev-samples.mjs --car v8                # cut, loop, level, encode into static/sounds/
+# The V8: through engine-sim's "real engine" exhaust impulse response...
+ES_IR=es/sound-library/archive/test_engine_14_eq_adjusted_16.wav \
+  scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8 1200 1800 2500 3200 4000 4800 5600 6300
+# ...and dry (no impulse response), for its low sub layer
+ES_CONV=0 scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-dry 1200 1800 2500 3200 4000 4800 5600 6300
+node scripts/rev-samples.mjs --print-levels v8       # the levels static/rev-samples.js holds
+node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the sub, level, encode into static/sounds/
 ```
 
 Everything lands in the git-ignored `.cache/engine-sim/`:
@@ -53,6 +58,15 @@ audio. Nothing is dropped and nothing is padded.
   At closed throttle the engine is 15–30× quieter than at full load, so idle
   needs care. `rev-samples.js` stores each loop's level relative to the
   loudest on-load loop.
+- **Impulse response:** `ES_IR` swaps the exhaust impulse response for every
+  exhaust (a 16-bit WAV, relative to the source root), and `ES_CONV` sets how
+  much of it is mixed in (0 = dry).
+  - The LS V8 script's own `smooth_39` is centred on 320–640 Hz and left the V8
+    thin. engine-sim's "real engine" response (`archive/test_engine_14_eq_adjusted_16.wav`,
+    its `real_engine_0`) has the body at 80–160 Hz.
+  - Both responses strip the lowest octave. That is why `rev-samples.js` mixes a
+    low-passed dry render under the main one (`sub`), and lifts the bottom
+    octave with a shelf (`eq`).
 - **Pinning the gain:** the leveller's min and max are read only at start-up,
   but its target is read every sample. An unreachable target therefore holds
   it at its maximum gain, and `ES_VOLUME` / `ES_GAIN` scale that.
@@ -103,7 +117,9 @@ To add one:
 
 1. Write a two-line wrapper like `ls_v8.mr`.
 2. Render with `render-set.sh`.
-3. Add a set to `static/rev-samples.js` like `v8`: compute the levels the
-   same way, as the square root of each loop's RMS over the loudest on-load
-   loop, with idle at 0.6 × the lowest on-load loop.
+3. Add a set to `static/rev-samples.js` like `v8`, with its `ir`, `eq` and
+   `sub` if wanted. Fill in the levels from
+   `node scripts/rev-samples.mjs --print-levels <key>`: the square root of each
+   loop's RMS over the loudest on-load loop's, with idle at 0.6 × the lowest
+   on-load loop.
 4. Build with `node scripts/rev-samples.mjs --car <key>`.
