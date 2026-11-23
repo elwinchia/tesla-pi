@@ -163,13 +163,14 @@ test('a point on the arc reads back as the value drawn there', () => {
     }
   }
   // Past either end clamps to that end.
-  const [lx, ly] = polar(ARC.cx, ARC.cy, 615, ARC.a0 - 4)
-  const [rx, ry] = polar(ARC.cx, ARC.cy, 615, ARC.a1 + 4)
+  const rm = (ARC.rIn + ARC.rOut) / 2
+  const [lx, ly] = polar(ARC.cx, ARC.cy, rm, ARC.a0 - 4)
+  const [rx, ry] = polar(ARC.cx, ARC.cy, rm, ARC.a1 + 4)
   assert.equal(valueAt(lx, ly, max), 0)
   assert.equal(valueAt(rx, ry, max), max)
 })
 
-test('the arc is easy to grab, but the pill and the bars are not part of it', () => {
+test('the arc is easy to grab, but the speed LCD and the bars are not part of it', () => {
   const s = segmentsFor(tachScale(6800))
   for (const seg of s) {
     for (const r of [ARC.rIn - 60, ARC.rIn, ARC.rOut, ARC.rOut + 60]) {
@@ -178,9 +179,10 @@ test('the arc is easy to grab, but the pill and the bars are not part of it', ()
     }
   }
   assert.ok(HIT.rMax - HIT.rMin >= 180, 'a band at least 180 units deep')
-  assert.ok(!onArc(500, 259), 'the speed pill')
-  assert.ok(!onArc(500, 352), 'the rpm digits')
-  assert.ok(!onArc(225, 330), 'the load bar')
+  assert.ok(!onArc(ARC.cx, 259), 'the speed LCD')
+  assert.ok(!onArc(ARC.cx, 352), 'the trip and odometer LCD')
+  assert.ok(!onArc(270, 330), 'the water bar')
+  assert.ok(!onArc(970, 330), 'the battery bar')
   assert.ok(!onArc(-200, 380), 'off the picture')
 })
 

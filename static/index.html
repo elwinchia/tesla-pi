@@ -142,13 +142,15 @@
     background: #000;
   }
   /* With the engine sound on, the band under CarPlay is its dash: the gauge
-     style chosen in its settings between ENGINE START/STOP and a rev pedal
-     (static/rev-dash.js, static/gauges/, rev-gauge.css), scaled to fit. */
+     style chosen in its settings beside ENGINE START/STOP; holding the rev
+     meter revs the engine (static/rev-dash.js, static/gauges/,
+     rev-gauge.css), scaled to fit. Dark styles always sit on the night
+     gradient, with no panel of their own around them. */
   #carplay-dock.rv-dock {
     align-items: center; justify-content: center; padding: 6px 16px; border: 0;
     background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
   }
-  #carplay-dock.rv-dock.rv-dark { background: #000; }
+  #carplay-dock.rv-dock.rv-dark { background: radial-gradient(120% 90% at 50% 38%, #121a26 0%, #070a10 100%); }
   /* The engine sound's settings (rev.html?embed=1) in a sheet over CarPlay,
      so changing car or gauge style does not leave the page and drop CarPlay. */
   #rev-sheet {
@@ -4502,7 +4504,7 @@
   let serverAspect = null;
   let revDash = null;
   // CarPlay's drive side (0 left-hand drive, 1 right-hand drive), which puts
-  // the dash's rev pedal on the driver's side. The server says on connect;
+  // the dash's buttons on the passenger's side of the gauge. The server says on connect;
   // the last answer is kept for the first paint.
   let serverHand = lsGet('carplayHand') === '0' ? 0 : 1;
   const WIDE_BLOCK_KEY = 'carplayWideBlocked';

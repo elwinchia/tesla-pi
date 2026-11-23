@@ -1,6 +1,6 @@
 // Segment arc, S2000-style: a wide segmented tachometer arc, an old-school
 // seven-segment speed readout in an LCD window, a trip/odometer LCD under
-// it, and two segmented bars, water temperature and GPS readings. The
+// it, and two segmented bars, water temperature and the battery. The
 // geometry is in static/rev-gauge.js (tested); this file draws it. It is
 // the one style with a day palette as well as night (static/rev-gauge.css).
 import {
@@ -13,15 +13,19 @@ import { GaugeStyle, el, text, setText, polar, mix, sevenRow } from './kit.js'
 const OFF = { night: ['#5a4434', '#3a3d43'], day: ['#e6d5c8', '#d3d7dd'] }
 // Water: C is 50 °C, H is 130 °C; the needle sits mid-way at a warm 90.
 export const WATER = { lo: 50, hi: 130 }
+// Battery: 8 to 16 V; a charging system reads about 14.
+export const VOLTS = { lo: 8, hi: 16 }
+// Everything in the middle is centred on the arc (ARC.cx).
+const MID = 620
 const BARS = {
-  water: { x: 130, y: 322, w: 200, lo: 'C', hi: 'H', caption: 'WATER TEMP' },
-  gps:   { x: 670, y: 322, w: 200, lo: '0', hi: '1/s', caption: 'GPS READINGS' },
+  water: { x: 150, y: 322, w: 240, lo: 'C', hi: 'H', caption: 'WATER TEMP' },
+  volts: { x: 850, y: 322, w: 240, lo: 'L', hi: 'H', caption: 'BATTERY' },
 }
 
 export default class SegmentStyle extends GaugeStyle {
   static meta = {
     key: 'segment', name: 'Segment arc', era: 'S2000-style', view: VIEW, dark: false,
-    blurb: 'A 9,000 rpm-style segmented arc, a seven-segment speed LCD, trip and odometer.',
+    blurb: 'A wide segmented rev arc, a seven-segment speed LCD, trip and odometer, water temperature and battery.',
   }
 
   build() {
@@ -44,7 +48,7 @@ export default class SegmentStyle extends GaugeStyle {
     el('feGaussianBlur', { stdDeviation: '9' }, blur)
 
     // Layers, back to front.
-    el('ellipse', { cx: 500, cy: 262, rx: 300, ry: 150, fill: this.url('bloom'), class: 'rv-bloom' }, s)
+    el('ellipse', { cx: MID, cy: 262, rx: 360, ry: 150, fill: this.url('bloom'), class: 'rv-bloom' }, s)
     this.glow = el('path', { class: 'rv-glow', filter: this.url('blur') }, s)
     this.tipGlow = el('circle', { r: 70, fill: this.url('tip'), class: 'rv-tipglow' }, s)
     // The band a finger can grab, shown faintly in simulation mode.
@@ -55,19 +59,19 @@ export default class SegmentStyle extends GaugeStyle {
 
     // Speed: three seven-segment digits in a dark red LCD window, the
     // unlit segments faintly showing, as on the old cluster.
-    el('rect', { x: 372, y: 198, width: 256, height: 116, rx: 26, class: 'rv-lcd', fill: this.url('lcd') }, s)
-    this.speed = sevenRow(s, { x: 392, y: 214, n: 3, w: 52, h: 82, t: 12, gap: 16, skew: 0.1, cls: 'seg7 rv-speed7' })
-    text(s, 598, 300, 'rv-lcd-unit', 'km/h')
-    this.simTag = text(s, 400, 232, 'rv-sim-tag', 'SIM')
+    el('rect', { x: MID - 128, y: 198, width: 256, height: 116, rx: 26, class: 'rv-lcd', fill: this.url('lcd') }, s)
+    this.speed = sevenRow(s, { x: MID - 108, y: 214, n: 3, w: 52, h: 82, t: 12, gap: 16, skew: 0.1, cls: 'seg7 rv-speed7' })
+    text(s, MID + 98, 300, 'rv-lcd-unit', 'km/h')
+    this.simTag = text(s, MID - 100, 232, 'rv-sim-tag', 'SIM')
     this.simTag.style.display = 'none'
 
     // Trip and odometer LCD, under the speed.
-    el('rect', { x: 386, y: 324, width: 228, height: 44, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, s)
-    text(s, 398, 340, 'rv-lcd-label', 'ODO')
-    this.odo = sevenRow(s, { x: 397, y: 345, n: 6, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
-    text(s, 520, 340, 'rv-lcd-label', 'TRIP A')
-    this.trip = sevenRow(s, { x: 520, y: 345, n: 5, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
-    el('circle', { cx: 584.2, cy: 362, r: 1.8, class: 'rv-lcd-dot' }, s)
+    el('rect', { x: MID - 114, y: 324, width: 228, height: 44, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, s)
+    text(s, MID - 102, 340, 'rv-lcd-label', 'ODO')
+    this.odo = sevenRow(s, { x: MID - 103, y: 345, n: 6, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
+    text(s, MID + 20, 340, 'rv-lcd-label', 'TRIP A')
+    this.trip = sevenRow(s, { x: MID + 20, y: 345, n: 5, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
+    el('circle', { cx: MID + 84.2, cy: 362, r: 1.8, class: 'rv-lcd-dot' }, s)
 
     // Where the reference has arrows: the gear on the left, the speed
     // source on the right.
@@ -78,8 +82,8 @@ export default class SegmentStyle extends GaugeStyle {
       text(s, x, 302, 'rv-chip-cap', cap)
       return t
     }
-    this.gear = chip(316, 'GEAR', 'rv-chip-text')
-    this.src = chip(684, 'SPEED', 'rv-chip-text small')
+    this.gear = chip(MID - 184, 'GEAR', 'rv-chip-text')
+    this.src = chip(MID + 184, 'SPEED', 'rv-chip-text small')
 
     // Side bars, with the icons the reference has at their outer ends.
     this.bars = {}
@@ -96,15 +100,14 @@ export default class SegmentStyle extends GaugeStyle {
       this.bars[k] = { segs, lit: -1, kind: k }
     }
     // Coolant: a thermometer over waves.
-    const th = el('g', { class: 'rv-icon-line', transform: 'translate(86 331)' }, s)
+    const th = el('g', { class: 'rv-icon-line', transform: 'translate(106 331)' }, s)
     el('path', { d: 'M0 -14 V4' }, th)
     el('circle', { cx: 0, cy: 7, r: 4 }, th)
     el('path', { d: 'M4 -10 H8 M4 -5 H8 M4 0 H8' }, th)
     el('path', { d: 'M-14 14 q3.5 -3 7 0 t7 0 t7 0 t7 0' }, th)
-    // GPS: a satellite dish.
-    const sat = el('g', { class: 'rv-icon-line', transform: 'translate(918 331)' }, s)
-    el('path', { d: 'M-10 -4 A12 12 0 0 0 4 10 Z' }, sat)
-    el('path', { d: 'M-3 3 L6 -6 M6 -14 A8 8 0 0 1 14 -6 M6 -20 A14 14 0 0 1 20 -6' }, sat)
+    // Battery: the usual box with + and − terminals.
+    const bat = el('g', { class: 'rv-icon-line', transform: 'translate(1148 331)' }, s)
+    el('path', { d: 'M-13 -7 H13 V11 H-13 Z M-8 -7 V-11 H-3 V-7 M3 -7 V-11 H8 V-7 M-8 2 H-3 M3 2 H8 M5.5 -0.5 V4.5' }, bat)
   }
 
   onScale(scale) {
@@ -185,7 +188,7 @@ export default class SegmentStyle extends GaugeStyle {
 
     const w = (this.v.water - WATER.lo) / (WATER.hi - WATER.lo)
     this.paintBar(this.bars.water, i.running ? w : 0, force)
-    this.paintBar(this.bars.gps, i.fixRate || 0, force)
+    this.paintBar(this.bars.volts, (this.v.volts - VOLTS.lo) / (VOLTS.hi - VOLTS.lo), force)
   }
 
   paintBar(bar, f, force) {
@@ -195,12 +198,12 @@ export default class SegmentStyle extends GaugeStyle {
     bar.segs.forEach((e, k) => {
       const on = k < lit
       const t = k / (BAR_N - 1)
-      // Water's hot end is red, lit or not; GPS readings are red when there
-      // are too few, like a fuel gauge near empty.
+      // Water's hot end is red, lit or not; the battery is red when it
+      // runs low (under about 10 V), like a fuel gauge near empty.
       const hot = bar.kind === 'water' && t > 0.85
       e.classList.toggle('on', on)
       e.classList.toggle('hot', hot)
-      const red = on && (hot || (bar.kind === 'gps' && t < 0.15))
+      const red = on && (hot || (bar.kind === 'volts' && t < 0.25))
       e.classList.toggle('red', red)
       e.style.fill = on && !red ? litColor(bar.kind === 'water' ? 0.25 + t * 0.6 : 0.35 + t * 0.6) : ''
     })

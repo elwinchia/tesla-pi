@@ -266,6 +266,10 @@ export class GaugeStyle {
   // Simulation mode (rev.html): the rpm under a point in picture units, or
   // null if the point is not on the tach. Default: across the whole width.
   rpmAt(x, y) { return clamp(x / this.meta.view.w, 0, 1) * this.scale.max }
+  // Is the point on the rev meter (picture units)? Pressing and holding it
+  // revs the engine (rev-dash.js), so be generous: the whole tach dial or
+  // panel, not just its scale. Default: wherever rpmAt answers.
+  tachHit(x, y) { return this.rpmAt(x, y) != null }
 
   // ── Plumbing ──
   setScale(scale) {

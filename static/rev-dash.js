@@ -1,13 +1,11 @@
-// The engine sound's dash: the chosen gauge style (static/gauges/) between
-// two columns of buttons.
+// The engine sound's dash: the chosen gauge style (static/gauges/) beside a
+// column with ENGINE START/STOP and a shortcut to the engine sound's
+// settings. Press and hold the rev meter to rev the engine (parked only).
 //
-//   driver's side      a rev pedal: hold it to rev the engine, parked only
-//   the other side     ENGINE START/STOP, and a shortcut to the engine
-//                      sound's settings
-//
-// The driver's side follows CarPlay's own drive-side setting (Settings →
-// CarPlay → Drive side): right for a right-hand-drive car. Used by the dock
-// under CarPlay on index.html and by rev.html.
+// The column sits on the passenger's side of the gauge, away from the
+// driver: CarPlay's own drive-side setting (Settings → CarPlay → Drive side)
+// puts it on the left in a right-hand-drive car. Used by the dock under
+// CarPlay on index.html and by rev.html.
 import { Instruments, tachScale, hhmm } from './gauges/kit.js'
 import { STYLES, loadStyle, styleKey } from './gauges/index.js'
 import { clusterInput } from './rev-gauge.js'
@@ -16,13 +14,6 @@ const SAVE_KEY = 'revInstruments'
 const SAVE_EVERY_MS = 5000
 
 const GEAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.5 7.5 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>'
-// A drilled aluminium sports pedal with rubber strips.
-const PEDAL = '<svg viewBox="0 0 100 160" aria-hidden="true">' +
-  '<defs><linearGradient id="rvd-alu" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9ecef"/><stop offset=".5" stop-color="#adb5bd"/><stop offset="1" stop-color="#6c757d"/></linearGradient></defs>' +
-  '<rect x="6" y="4" width="88" height="152" rx="18" fill="url(#rvd-alu)" stroke="#343a40" stroke-width="3"/>' +
-  [0, 1, 2, 3, 4, 5].map((k) => `<rect x="20" y="${18 + k * 22}" width="60" height="10" rx="5" fill="#212529"/>`).join('') +
-  [0, 1, 2].map((k) => `<circle cx="${30 + k * 20}" cy="146" r="3.4" fill="#343a40"/>`).join('') + '</svg>'
-
 export class Dash {
   // rs: a RevSound. hand(): 1 for a right-hand-drive car, 0 for left.
   // onSettings(): open the engine sound's settings. onEngine(on): the
@@ -44,18 +35,14 @@ export class Dash {
         '<button type="button" class="rvd-btn rvd-start" aria-pressed="false" aria-label="Engine start and stop">' +
           '<span class="w1">ENGINE</span><span class="w2">START</span><span class="rule"></span><span class="w2">STOP</span></button>' +
       '</div>' +
-      '<div class="rvd-gauge"></div>' +
-      '<div class="rvd-side rvd-ped">' +
-        '<button type="button" class="rvd-btn rvd-pedal" aria-label="Accelerator: hold to rev the engine (parked only)">' + PEDAL + '</button>' +
-      '</div>'
+      '<div class="rvd-gauge" title="Press and hold the rev meter to rev the engine"></div>'
     host.appendChild(root)
     this.gaugeHost = root.querySelector('.rvd-gauge')
     this.startBtn = root.querySelector('.rvd-start')
-    this.pedalBtn = root.querySelector('.rvd-pedal')
     const set = root.querySelector('.rvd-set')
     if (set) set.addEventListener('click', () => onSettings())
     this.startBtn.addEventListener('click', () => this.toggleEngine())
-    this.listenPedal()
+    this.listenRev()
     this.setHand(hand())
     this.onHide = () => this.save(true)
     addEventListener('pagehide', this.onHide)
@@ -88,10 +75,11 @@ export class Dash {
   // Engine state from RevSound's onState.
   state(st) {
     this.st = st
-    const p = this.rs.engine.profile
-    if (p !== this.profile) { this.profile = p; this.setScale(tachScale(p.redline, p.idle)) }
+    this.fitScale()
     this.startBtn.setAttribute('aria-pressed', String(!!st.running))
-    this.pedalBtn.disabled = !!(st.running && !st.stopped)
+    // Revving is for when the car is stopped (RevSound refuses it moving).
+    this.moving = !!(st.running && !st.stopped)
+    if (this.moving && this.revving != null) this.endRev()
     this.push()
   }
   push() {
@@ -100,7 +88,15 @@ export class Dash {
     this.style.set({ ...clusterInput(this.st), car: p.name + ' · ' + p.style })
   }
 
+  // The rev meter's scale follows the chosen engine's redline. Checked every
+  // frame too: a car picked with the engine stopped sends no state.
+  fitScale() {
+    const p = this.rs.engine.profile
+    if (p !== this.profile) { this.profile = p; this.setScale(tachScale(p.redline, p.idle)) }
+  }
+
   frame(dt) {
+    this.fitScale()
     const st = this.st || {}
     const read = this.inst.step(dt, { running: st.running, rpm: st.rpm, load: st.load, v: st.v, a: st.a, redline: this.scale.redFrom })
     if (this.style) {
@@ -120,6 +116,7 @@ export class Dash {
     const rs = this.rs
     if (rs.running) {
       if (rs.engine.sim) rs.setSim(false)
+      if (this.revving != null) this.endRev()
       rs.setRev(0)
       rs.stop()
       this.onEngine(false)
@@ -132,34 +129,42 @@ export class Dash {
     }
   }
 
-  // Hold to rev. Pointer capture keeps the hold when a finger slides off
-  // the pedal; lostpointercapture catches every way it ends. With the
-  // engine off it nudges the start button instead.
-  listenPedal() {
-    const b = this.pedalBtn
-    let held = null
-    b.addEventListener('pointerdown', (e) => {
+  // Press and hold the rev meter to rev; lifting lets it fall back to idle.
+  // Pointer capture keeps the hold when the finger slides off the dial, and
+  // lostpointercapture catches every way it ends. With the engine off a
+  // press nudges the start button instead. In simulation mode (rev.html)
+  // the style's own touch handling sets the rpm, so this stands aside.
+  listenRev() {
+    const g = this.gaugeHost
+    this.revving = null
+    g.addEventListener('pointerdown', (e) => {
+      const style = this.style
+      if (!style || style.touch || this.revving != null) return
+      const p = style.toPicture(e)
+      if (!p || !style.tachHit(p[0], p[1])) return
       e.preventDefault()
-      if (held != null) return
       if (!this.rs.running) {
         this.startBtn.classList.remove('nudge'); void this.startBtn.offsetWidth; this.startBtn.classList.add('nudge')
         return
       }
-      held = e.pointerId
-      try { b.setPointerCapture(e.pointerId) } catch {}
-      b.classList.add('held')
+      if (this.moving) return
+      this.revving = e.pointerId
+      try { g.setPointerCapture(e.pointerId) } catch {}
+      this.root.classList.add('revving')
       this.rs.setRev(1)
     })
-    const end = (e) => {
-      if (held == null || e.pointerId !== held) return
-      held = null
-      b.classList.remove('held')
-      this.rs.setRev(0)
-    }
-    b.addEventListener('pointerup', end)
-    b.addEventListener('pointercancel', end)
-    b.addEventListener('lostpointercapture', end)
-    b.addEventListener('contextmenu', (e) => e.preventDefault())
+    const end = (e) => { if (this.revving != null && e.pointerId === this.revving) this.endRev() }
+    g.addEventListener('pointerup', end)
+    g.addEventListener('pointercancel', end)
+    g.addEventListener('lostpointercapture', end)
+    g.addEventListener('contextmenu', (e) => e.preventDefault())
+  }
+  endRev() {
+    const id = this.revving
+    this.revving = null
+    this.root.classList.remove('revving')
+    try { this.gaugeHost.releasePointerCapture(id) } catch {}
+    this.rs.setRev(0)
   }
 
   destroy() {

@@ -9,18 +9,20 @@
 // everywhere.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
 
-const VIEW = { w: 1040, h: 400 }
+// Wide (3.1:1): the dash gives the gauge everything beside its one column
+// of buttons.
+const VIEW = { w: 1240, h: 400 }
 const CY = 200
-const TACH = { cx: 330, r: 176, a0: 105, a1: 385 }
-const SPEED = { cx: 710, r: 176, a0: 160, a1: 380, max: 320 }
+const TACH = { cx: 430, r: 176, a0: 105, a1: 385 }
+const SPEED = { cx: 810, r: 176, a0: 160, a1: 380, max: 200 }
 // Fuel: E at the lower left of the speedometer's foot, F at the lower right.
 const FUEL = { a0: 124, a1: 56, r: 150 }
 // Side half-dials: ticks on the side facing the big dials.
 const SIDE = {
-  water: { cx: 92, cy: 118, r: 64, a0: 48, a1: -48, lo: 50, hi: 130 },
-  oil:   { cx: 92, cy: 286, r: 64, a0: 48, a1: -48, lo: 0, hi: 8 },
-  g:     { cx: 948, cy: 118, r: 64 },
-  volts: { cx: 948, cy: 286, r: 64, a0: 132, a1: 228, lo: 8, hi: 16 },
+  water: { cx: 132, cy: 118, r: 64, a0: 48, a1: -48, lo: 50, hi: 130 },
+  oil:   { cx: 132, cy: 286, r: 64, a0: 48, a1: -48, lo: 0, hi: 8 },
+  g:     { cx: 1108, cy: 118, r: 64 },
+  volts: { cx: 1108, cy: 286, r: 64, a0: 132, a1: 228, lo: 8, hi: 16 },
 }
 const ORANGE = '#ff8a1a'
 const TAIL = 64  // degrees of comet tail behind a needle
@@ -115,8 +117,6 @@ export default class TwinStyle extends GaugeStyle {
     el('stop', { offset: 0, 'stop-color': '#0e0e11' }, small)
     el('stop', { offset: 1, 'stop-color': '#08080a' }, small)
 
-    el('rect', { x: 6, y: 14, width: VIEW.w - 12, height: VIEW.h - 28, rx: 58, fill: '#141418', stroke: '#1f1f24', 'stroke-width': 2 }, s)
-
     this.buildSides()
     for (const d of [TACH, SPEED]) {
       el('circle', { cx: d.cx, cy: CY, r: d.r + 3, fill: '#000', opacity: 0.55 }, s)
@@ -177,9 +177,9 @@ export default class TwinStyle extends GaugeStyle {
       const a = dialAngle(v, 0, SPEED.max, SPEED.a0, SPEED.a1)
       const major = v % 20 === 0
       this.tick(g, cx, CY, a, r - 8, major ? r - 22 : r - 14, major ? 4 : 2, major ? 'tw-tick' : 'tw-tick dim')
-      if (v % 40 === 0) {
-        const [x, y] = polar(cx, CY, r - 55, a)
-        this.glyphs(g, String(v), x, y, 18, 2.4, '#9c9ca0')
+      if (v % 20 === 0) {
+        const [x, y] = polar(cx, CY, r - 52, a)
+        this.glyphs(g, String(v), x, y, 16, 2.2, '#9c9ca0')
       }
     }
     // The sweep: a soft band from 0 to the needle, and a comet at its head.

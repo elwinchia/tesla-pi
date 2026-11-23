@@ -1,106 +1,112 @@
-// Digital bars, Corvette C4-style: an 80s digital dash. Two panels of thin
-// bar segments that climb a rounded "L" up and to the right, speed on the
-// left and revs on the right, each with a big glowing number in a box; in
-// the middle, oil and coolant tiles, a stacked fuel bar, and trip and gear
-// readouts. Our own drawing, inspired by the C4's cluster: no marks.
-import { GaugeStyle, el, text, setText, clamp, mix } from './kit.js'
+// Digital bars, Corvette C4-style, after Blackbox Infinite's C4 cluster for
+// "CarPlay Generations": two rounded panels where a fan of thin bars sweeps
+// up from the bottom left and flattens out at the top right, speed on the
+// left and revs on the right, each with a framed readout; in the middle, the
+// oil and coolant boxes either side of a stacked fuel bar, trip and average
+// speed readouts, two turn arrows and a "now playing" pill that shows the
+// engine, the time and the throttle. Our own drawing: no logos, no CarPlay
+// tiles, and no plate behind it all (the page's own background shows).
+//
+// The picture is laid out in the reference image's own pixels (1920 x 722),
+// cropped to the panels by a translate on the root group, so every shape
+// can be checked against it directly.
+import { GaugeStyle, el, text, setText, polar, clamp, mix, hhmm } from './kit.js'
 
-const VIEW = { w: 1040, h: 400 }
+// The crop of the reference: the panels span x 92..1838, y 83..632.
+const OX = 85, OY = 75
+const VIEW = { w: 1760, h: 568 }
+
 const C = {
-  yellow: '#ffe14a', green: '#6fdc3c', tail: '#4fb432', off: '#22421c', orange: '#ff8a1f', red: '#ff3b30',
-  offRed: '#3e1a14', offOrange: '#3a2a12',
-}
-const SPEED = { max: 280, every: 40, bars: 56 }
-const TACH_BARS = 60
-const FUEL_BARS = 14
-
-// The bar column's outer edge: up from (x, yb) to (x, yc), a quarter turn
-// of radius R, then right to xe. Bars grow inward from it, wider as they
-// climb, as on the original.
-const G = { x: 66, yb: 378, yc: 232, R: 150, xe: 330, w0: 26, w1: 96 }
-const L1 = G.yb - G.yc, L2 = (Math.PI * G.R) / 2, L3 = G.xe - (G.x + G.R), LEN = L1 + L2 + L3
-const bandW = (s) => G.w0 + (G.w1 - G.w0) * s
-// Point on the outer edge at s (0..1) and the inward normal there, in
-// panel coordinates.
-function at(s) {
-  const d = clamp(s, 0, 1) * LEN
-  if (d <= L1) return { x: G.x, y: G.yb - d, nx: 1, ny: 0 }
-  if (d <= L1 + L2) {
-    const a = Math.PI + (d - L1) / G.R
-    const c = Math.cos(a), sn = Math.sin(a)
-    return { x: G.x + G.R + G.R * c, y: G.yc + G.R * sn, nx: -c, ny: -sn }
-  }
-  return { x: G.x + G.R + (d - L1 - L2), y: G.yc - G.R, nx: 0, ny: 1 }
-}
-// The inverse, for a finger: s under a point, or null if it is off the band.
-function sAt(x, y) {
-  const cands = []
-  if (y <= G.yb + 20 && y >= G.yc) cands.push([(G.yb - y) / LEN, x - G.x])
-  const cx = G.x + G.R, cy = G.yc
-  if (x <= cx && y <= cy) {
-    const a = Math.atan2(y - cy, x - cx) + 2 * Math.PI // 180°..270°
-    if (a >= Math.PI && a <= 1.5 * Math.PI) cands.push([(L1 + (a - Math.PI) * G.R) / LEN, G.R - Math.hypot(x - cx, y - cy)])
-  }
-  if (x >= cx && x <= G.xe + 20) cands.push([(L1 + L2 + x - cx) / LEN, y - (G.yc - G.R)])
-  let best = null
-  for (const [s, inward] of cands) {
-    const w = bandW(clamp(s, 0, 1))
-    if (inward < -40 || inward > w + 30) continue
-    const miss = Math.abs(inward - w / 2)
-    if (!best || miss < best[1]) best = [clamp(s, 0, 1), miss]
-  }
-  return best ? best[0] : null
-}
-const pt = (x, y) => x.toFixed(1) + ',' + y.toFixed(1)
-// One bar from s0 to s1: a quad across the band.
-function barPoints(ox, s0, s1) {
-  const a = at(s0), b = at(s1), wa = bandW(s0), wb = bandW(s1)
-  return [pt(ox + a.x, a.y), pt(ox + b.x, b.y), pt(ox + b.x + b.nx * wb, b.y + b.ny * wb), pt(ox + a.x + a.nx * wa, a.y + a.ny * wa)].join(' ')
+  yellow: '#f6e22c', tip: '#ece832', lime: '#c6dc2c', green: '#7ec832', olive: '#5a661c', oliveDark: '#3a4612',
+  off: '#1e2f22', track: '#142219', offRed: '#3a1912',
+  tGreen0: '#2c4a25', tGreen1: '#4f8a2e', tGreen2: '#8ed640', orange: '#f27a1c', red: '#ff2b1c',
+  dim: '#5c5521', fuelOff: '#1c3022',
 }
 
-// The tach's colour for an rpm: green, then yellow, orange near the
-// redline, red past it.
+// A fan: a quarter ring about (cx, cy) from 180° (pointing left, the bottom
+// of the fan) to 270° (up, its right-hand end). Bars are radial pills.
+const FAN = { cy: 578, ro: 410, ri: 335, barIn: 345, barOut: 400, n: 56 }
+const SPEED_CX = 580
+const DX = 1196                 // the right panel is the left one, moved over
+const TACH_CX = SPEED_CX + DX
+const SPEED_MAX = 200
+const FUEL_BARS = 13
+const fanAngle = (f) => 180 + 90 * clamp(f, 0, 1)
+
+// The tach's colour along its scale: dark green, green, yellow near the
+// warning band, orange through it, red from the redline.
 function tachColor(rpm, scale) {
-  const r = scale.redFrom
-  if (rpm >= r) return C.red
-  if (rpm >= scale.warnFrom) return C.orange
-  const f = rpm / r
-  if (f < 0.45) return C.green
-  if (f < 0.7) return mix(C.green, C.yellow, (f - 0.45) / 0.25)
-  return mix(C.yellow, C.orange, (f - 0.7) / Math.max(0.01, scale.warnFrom / r - 0.7))
+  if (rpm >= scale.redFrom) return C.red
+  if (rpm >= scale.warnFrom) return mix(C.tip, C.orange, (rpm - scale.warnFrom) / Math.max(1, scale.redFrom - scale.warnFrom) * 1.6)
+  const f = rpm / scale.warnFrom
+  if (f < 0.6) return mix(C.tGreen0, C.tGreen1, f / 0.6)
+  if (f < 0.85) return mix(C.tGreen1, C.tGreen2, (f - 0.6) / 0.25)
+  return mix(C.tGreen2, C.tip, (f - 0.85) / 0.15)
+}
+// The speed run is coloured from its tip back: yellow, lime, green, then
+// the long olive tail of the reference.
+function speedColor(d) {
+  if (d < 3) return mix(C.tip, C.lime, d / 3)
+  if (d < 8) return mix(C.lime, C.green, (d - 3) / 5)
+  if (d < 16) return mix(C.green, C.olive, (d - 8) / 8)
+  return mix(C.olive, C.oliveDark, (d - 16) / 34)
+}
+
+const f1 = (x) => x.toFixed(1)
+// A rounded box whose bottom edge breaks for a caption, as on the readouts.
+function gapBox(x, y, w, h, r, gap) {
+  const cx = x + w / 2, b = y + h
+  return `M${cx - gap / 2} ${b}H${x + r}A${r} ${r} 0 0 1 ${x} ${b - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}` +
+    `H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${b - r}A${r} ${r} 0 0 1 ${x + w - r} ${b}H${cx + gap / 2}`
+}
+// The ring between radii ri and ro from a0 to a1, as one closed path.
+function ringPath(cx, cy, ri, ro, a0, a1) {
+  const [x0, y0] = polar(cx, cy, ro, a0), [x1, y1] = polar(cx, cy, ro, a1)
+  const [x2, y2] = polar(cx, cy, ri, a1), [x3, y3] = polar(cx, cy, ri, a0)
+  return `M${f1(x0)} ${f1(y0)}A${ro} ${ro} 0 0 1 ${f1(x1)} ${f1(y1)}L${f1(x2)} ${f1(y2)}A${ri} ${ri} 0 0 0 ${f1(x3)} ${f1(y3)}Z`
 }
 
 const CSS = `
-.gs-digital { font-family: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", system-ui, sans-serif; }
-.gs-digital .dg-plate { fill: #0b0c09; }
-.gs-digital .dg-panel { fill: #14160f; stroke: #2b2f24; stroke-width: 2; }
-.gs-digital .dg-inset { fill: #0f110b; stroke: #2b2f24; stroke-width: 2; }
-.gs-digital .dg-bar { fill: ${C.off}; }
-.gs-digital .dg-bar.red { fill: ${C.offRed}; }
-.gs-digital .dg-bar.warn { fill: ${C.offOrange}; }
-.gs-digital .dg-num { fill: ${C.yellow}; font-size: 19px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
-.gs-digital .dg-num.red { fill: ${C.red}; }
-.gs-digital .dg-tick { stroke: ${C.yellow}; stroke-width: 2.5; stroke-linecap: round; }
-.gs-digital .dg-tick.minor { stroke-width: 1.6; opacity: 0.55; }
+.gs-digital { font-family: "SF Pro Display", -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif; }
+.gs-digital .dg-panel { stroke-width: 4; }
+.gs-digital .dg-tile { fill: #100f0b; stroke: #2a2822; stroke-width: 3; }
+.gs-digital .dg-track { fill: ${C.track}; stroke: ${C.track}; stroke-width: 12; stroke-linejoin: round; }
+.gs-digital .dg-bar { stroke: ${C.off}; stroke-width: 7.5; stroke-linecap: round; }
+.gs-digital .dg-bar.red { stroke: ${C.offRed}; }
+.gs-digital .dg-num { fill: ${C.yellow}; font-family: "SF Pro Rounded", ui-rounded, "Arial Rounded MT Bold", -apple-system, sans-serif; font-size: 34px; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
+.gs-digital .dg-tick { stroke: ${C.yellow}; stroke-width: 4.5; stroke-linecap: round; }
+.gs-digital .dg-tick.minor { stroke: #c9cf2a; stroke-width: 3.5; opacity: 0.8; }
 .gs-digital .dg-tick.red { stroke: ${C.red}; }
-.gs-digital .dg-box { fill: #12140a; stroke: #6c6a22; stroke-width: 2.5; }
-.gs-digital .dg-big { fill: ${C.yellow}; font-weight: 600; text-anchor: middle; font-variant-numeric: tabular-nums; }
-.gs-digital .dg-halo { fill: none; stroke: ${C.yellow}; stroke-width: 7; stroke-linejoin: round; opacity: 0.16; }
-.gs-digital .dg-unit { fill: ${C.yellow}; font-size: 18px; font-weight: 600; text-anchor: middle; font-style: italic; letter-spacing: 0.04em; }
-.gs-digital .dg-lab { fill: ${C.yellow}; font-size: 16px; font-weight: 700; letter-spacing: 0.03em; }
-.gs-digital .dg-lab.dim { fill: #77744a; }
+.gs-digital .dg-box { fill: #17150c; }
+.gs-digital .dg-frame { fill: none; stroke: #5b5716; stroke-width: 4; }
+.gs-digital .dg-inset { fill: #141209; stroke: #3b381a; stroke-width: 3; }
+.gs-digital .dg-big { fill: ${C.yellow}; font-weight: 400; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.gs-digital .dg-big.end { text-anchor: end; }
+.gs-digital .dg-halo { fill: none; stroke: ${C.yellow}; stroke-width: 7; stroke-linejoin: round; opacity: 0.12; }
+.gs-digital .dg-unit { fill: ${C.yellow}; font-size: 31px; font-style: italic; text-anchor: middle; dominant-baseline: central; }
+.gs-digital .dg-lab { fill: ${C.yellow}; font-size: 23px; font-weight: 500; }
+.gs-digital .dg-lab.dim { fill: ${C.dim}; }
 .gs-digital .dg-lab.mid { text-anchor: middle; }
-.gs-digital .dg-lab.end { text-anchor: end; }
-.gs-digital .dg-small { fill: ${C.yellow}; font-size: 16px; font-weight: 600; }
-.gs-digital .dg-track { fill: #3a2410; }
-.gs-digital .dg-fill { fill: ${C.orange}; }
-.gs-digital .dg-fill.hot { fill: ${C.red}; }
-.gs-digital .dg-car { fill: #b8b260; font-size: 18px; font-weight: 600; text-anchor: middle; }
-.gs-digital .dg-clock { fill: ${C.green}; font-size: 24px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
-.gs-digital .dg-finger { fill: rgba(255, 225, 74, 0.18); stroke: ${C.yellow}; stroke-width: 3; pointer-events: none; }
-.gs-digital .dg-hit { fill: none; stroke: transparent; pointer-events: none; }
-.gs-digital[data-sim] .dg-hit { stroke: rgba(255, 225, 74, 0.04); }
-.gs-digital[data-zone=red] .dg-tach-box { stroke: ${C.red}; }
+.gs-digital .dg-head { font-size: 26px; text-anchor: middle; }
+.gs-digital .dg-fuel-lab { fill: ${C.yellow}; font-size: 25px; font-weight: 500; }
+.gs-digital .dg-ftick { stroke: #3f5a37; stroke-width: 5; stroke-linecap: round; }
+.gs-digital .dg-icon { fill: none; stroke: ${C.yellow}; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.gs-digital .dg-icon-fill { fill: ${C.yellow}; }
+.gs-digital .dg-btrack { fill: #4c2b0c; }
+.gs-digital .dg-bfill { fill: ${C.orange}; }
+.gs-digital .dg-bfill.hot { fill: ${C.red}; }
+.gs-digital .dg-btick { stroke: #94440f; stroke-width: 4; stroke-linecap: round; }
+.gs-digital .dg-arrow-well { fill: #0c0d09; stroke: #1d2019; stroke-width: 3; }
+.gs-digital .dg-arrow { fill: #2f5020; stroke: #2f5020; stroke-width: 6; stroke-linejoin: round; }
+.gs-digital .dg-pill { fill: #13110c; stroke: #2d2b26; stroke-width: 4; }
+.gs-digital .dg-song { fill: ${C.yellow}; font-size: 23px; font-weight: 600; text-anchor: middle; }
+.gs-digital .dg-time { fill: #85742a; font-size: 25px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.gs-digital .dg-ptrack { fill: #24301a; }
+.gs-digital .dg-pfill { fill: ${C.orange}; }
+.gs-digital .dg-pdot { fill: #ffe14a; }
+.gs-digital .dg-sim { fill: ${C.yellow}; font-size: 24px; font-weight: 600; }
+.gs-digital .dg-finger { fill: rgba(246, 226, 44, 0.18); stroke: ${C.yellow}; stroke-width: 4; pointer-events: none; }
+.gs-digital[data-zone=red] .dg-tach-frame { stroke: ${C.red}; }
 .gs-digital[data-zone=red] .dg-tach-num { fill: ${C.red}; }
 .gs-digital[data-zone=red] .dg-tach-halo { stroke: ${C.red}; opacity: 0.3; }
 `
@@ -108,150 +114,227 @@ const CSS = `
 export default class DigitalStyle extends GaugeStyle {
   static meta = {
     key: 'digital', name: 'Digital bars', era: 'Corvette C4-style', view: VIEW, dark: true,
-    blurb: 'An 80s digital dash: climbing bar graphs for speed and revs, big glowing numbers, oil, coolant and fuel bars.',
+    blurb: 'An 80s digital dash: sweeping bar fans for speed and revs in framed panels, oil, coolant and fuel bars, trip and average speed.',
   }
 
   build() {
-    const s = this.svg
     this.css(CSS)
-    const defs = el('defs', {}, s)
+    const defs = el('defs', {}, this.svg)
+    const lin = (name, stops, attrs = { x1: 0, y1: 0, x2: 0, y2: 1 }) => {
+      const g = el('linearGradient', { id: this.id(name), ...attrs }, defs)
+      for (const [o, c, op] of stops) el('stop', { offset: o, 'stop-color': c, 'stop-opacity': op ?? 1 }, g)
+    }
+    lin('panel', [[0, '#17150f'], [1, '#0e0d0a']])
+    lin('rim', [[0, '#1c1b17'], [0.6, '#2a2925'], [1, '#3c3b37']])
+    lin('pfill', [[0, '#e8640c'], [1, '#ffa21a']], { x1: 0, y1: 0, x2: 1, y2: 0 })
     const tip = el('radialGradient', { id: this.id('tip') }, defs)
-    el('stop', { offset: '0', 'stop-color': C.yellow, 'stop-opacity': '0.45' }, tip)
-    el('stop', { offset: '1', 'stop-color': C.yellow, 'stop-opacity': '0' }, tip)
+    el('stop', { offset: '0', 'stop-color': '#e8f040', 'stop-opacity': '0.42' }, tip)
+    el('stop', { offset: '1', 'stop-color': '#e8f040', 'stop-opacity': '0' }, tip)
+    const boxGlow = el('radialGradient', { id: this.id('boxglow') }, defs)
+    el('stop', { offset: '0', 'stop-color': '#6a5e1c', 'stop-opacity': '0.55' }, boxGlow)
+    el('stop', { offset: '1', 'stop-color': '#6a5e1c', 'stop-opacity': '0' }, boxGlow)
+    // A soft glow for the static numerals only: they never change after
+    // onScale, so the blur is rasterised once.
+    const glow = el('filter', { id: this.id('glow'), x: '-30%', y: '-30%', width: '160%', height: '160%' }, defs)
+    el('feGaussianBlur', { in: 'SourceGraphic', stdDeviation: '3', result: 'b' }, glow)
+    const m = el('feMerge', {}, glow)
+    el('feMergeNode', { in: 'b' }, m); el('feMergeNode', { in: 'SourceGraphic' }, m)
 
-    el('rect', { x: 0, y: 0, width: VIEW.w, height: VIEW.h, rx: 26, class: 'dg-plate' }, s)
-    // Left: speed. Right: revs. Both panels share the bar column's shape.
-    this.SP = 0; this.TA = 696
-    el('rect', { x: 6, y: 6, width: 338, height: 388, rx: 20, class: 'dg-panel' }, s)
-    el('rect', { x: this.TA, y: 6, width: 338, height: 388, rx: 20, class: 'dg-panel' }, s)
+    const s = this.root = el('g', { transform: `translate(${-OX} ${-OY})` }, this.svg)
 
-    this.speedTip = el('circle', { r: 46, fill: this.url('tip'), style: 'display:none' }, s)
-    this.tachTip = el('circle', { r: 46, fill: this.url('tip'), style: 'display:none' }, s)
+    // ── The two big panels ──
+    const panel = (x) => el('rect', { x, y: 85, width: 548, height: 546, rx: 36, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
+    panel(94); panel(94 + DX)
 
-    // Speed bars and scale, drawn once: km/h does not change with the car.
+    // Speed: drawn once, km/h does not change with the engine.
     const sg = el('g', {}, s)
-    this.speedBars = []
-    for (let i = 0; i < SPEED.bars; i++) {
-      this.speedBars.push(el('polygon', { points: barPoints(this.SP, (i + 0.2) / SPEED.bars, (i + 0.8) / SPEED.bars), class: 'dg-bar' }, sg))
+    el('path', { d: ringPath(SPEED_CX, FAN.cy, FAN.ri + 6, FAN.ro - 6, 180, 270), class: 'dg-track' }, sg)
+    this.speedTip = el('circle', { r: 64, fill: this.url('tip'), style: 'display:none' }, s)
+    this.speedBars = this.fanBars(el('g', {}, s), SPEED_CX, () => 'dg-bar')
+    const sScale = el('g', { filter: this.url('glow') }, s)
+    for (let v = 10; v <= SPEED_MAX; v += 10) {
+      const lab = (v / 10) % 2 === 1
+      this.tick(sScale, SPEED_CX, v / SPEED_MAX, lab ? 'dg-tick' : 'dg-tick minor')
+      if (lab) this.label(sScale, SPEED_CX, v / SPEED_MAX, String(v), 'dg-num')
     }
-    this.drawScale(sg, this.SP, SPEED.max, SPEED.every, SPEED.every / 2, (v) => String(v), () => false)
+    this.speedNum = this.readout(s, 350, 'KM/H', 92, 'speed')
 
-    // The tach's bars and scale are drawn in onScale.
-    this.tachHit = el('path', { class: 'dg-hit' }, s)
+    // Revs: the track is fixed, the bars and scale follow the engine.
+    el('path', { d: ringPath(TACH_CX, FAN.cy, FAN.ri + 6, FAN.ro - 6, 180, 270), class: 'dg-track' }, s)
+    this.tachTip = el('circle', { r: 64, fill: this.url('tip'), style: 'display:none' }, s)
     this.tachG = el('g', {}, s)
-
-    // Number boxes.
-    const box = (ox, unit, cls) => {
-      el('rect', { x: ox + 150, y: 250, width: 170, height: 128, rx: 16, class: 'dg-box ' + cls }, s)
-      const halo = text(s, ox + 235, 336, 'dg-big dg-halo ' + cls.replace('box', 'halo'), '', { 'font-size': 86 })
-      const t = text(s, ox + 235, 336, 'dg-big ' + cls.replace('box', 'num'), '', { 'font-size': 86 })
-      text(s, ox + 235, 366, 'dg-unit', unit)
-      return [halo, t]
-    }
-    this.speedNum = box(this.SP, 'KM/H', 'dg-speed-box')
-    this.tachNum = box(this.TA, 'RPM/100', 'dg-tach-box')
-    this.simTag = text(s, this.TA + 300, 40, 'dg-lab end', 'SIM')
+    this.tachScaleG = el('g', { filter: this.url('glow') }, s)
+    this.tachNum = this.readout(s, 350 + DX, 'RPM/100', 140, 'tach')
+    this.simTag = text(s, 1336, 136, 'dg-sim', 'SIM')
     this.simTag.style.display = 'none'
-    this.finger = el('circle', { r: 30, class: 'dg-finger', style: 'display:none' }, s)
+    this.finger = el('circle', { r: 40, class: 'dg-finger', style: 'display:none' }, s)
 
     this.buildCentre(s)
   }
 
-  // Ticks and numbers outside the column, every `every`; minor ticks
-  // every `minor`.
-  drawScale(g, ox, max, every, minor, label, isRed) {
-    for (let v = 0; v <= max + 1e-6; v += minor) {
-      const p = at(v / max)
-      const major = Math.abs(v / every - Math.round(v / every)) < 1e-6
-      const r = isRed(v) ? ' red' : ''
-      const t0 = major ? 6 : 6, t1 = major ? 15 : 11
-      el('line', { x1: (ox + p.x - p.nx * t0).toFixed(1), y1: (p.y - p.ny * t0).toFixed(1), x2: (ox + p.x - p.nx * t1).toFixed(1), y2: (p.y - p.ny * t1).toFixed(1), class: 'dg-tick' + (major ? '' : ' minor') + r }, g)
-      if (major) text(g, (ox + p.x - p.nx * 34).toFixed(1), (p.y - p.ny * 30).toFixed(1), 'dg-num' + r, label(v))
+  // Bars for one fan, each a radial pill.
+  fanBars(g, cx, cls) {
+    const bars = []
+    for (let k = 0; k < FAN.n; k++) {
+      const a = fanAngle((k + 0.5) / FAN.n)
+      const [x1, y1] = polar(cx, FAN.cy, FAN.barIn, a), [x2, y2] = polar(cx, FAN.cy, FAN.barOut, a)
+      bars.push(el('line', { x1: f1(x1), y1: f1(y1), x2: f1(x2), y2: f1(y2), class: cls(k) }, g))
     }
+    return bars
+  }
+  tick(g, cx, f, cls) {
+    const a = fanAngle(f)
+    const [x1, y1] = polar(cx, FAN.cy, FAN.ro + 9, a), [x2, y2] = polar(cx, FAN.cy, FAN.ro + 18, a)
+    el('line', { x1: f1(x1), y1: f1(y1), x2: f1(x2), y2: f1(y2), class: cls }, g)
+  }
+  // A numeral just outside the ticks: wide numbers sit further out where
+  // the fan is upright, tall ones where it is flat.
+  label(g, cx, f, s, cls) {
+    const a = fanAngle(f), rad = (a * Math.PI) / 180
+    const r = FAN.ro + 26 + Math.abs(Math.cos(rad)) * s.length * 10.5 + Math.abs(Math.sin(rad)) * 13
+    const [x, y] = polar(cx, FAN.cy, r, a)
+    text(g, f1(x), f1(y), cls, s)
+  }
+  // The framed readout bottom right of a panel: a big number, the unit
+  // breaking the frame's bottom edge.
+  readout(s, x, unit, gap, key) {
+    el('ellipse', { cx: x + 112, cy: 500, rx: 120, ry: 70, fill: this.url('boxglow') }, s)
+    el('rect', { x, y: 433, width: 223, height: 138, rx: 22, class: 'dg-box' }, s)
+    el('path', { d: gapBox(x, 433, 223, 138, 22, gap), class: `dg-frame dg-${key}-frame` }, s)
+    text(s, x + 111.5, 571, 'dg-unit', unit)
+    const halo = text(s, x + 111.5, 537, `dg-big dg-halo dg-${key}-halo`, '', { 'font-size': 104 })
+    const num = text(s, x + 111.5, 537, `dg-big dg-${key}-num`, '', { 'font-size': 104 })
+    return [halo, num]
   }
 
   buildCentre(s) {
-    // Oil and coolant tiles: a big number, an orange bar, two labels.
-    const tile = (x, cap, sub) => {
-      el('rect', { x, y: 6, width: 116, height: 186, rx: 14, class: 'dg-panel' }, s)
-      // The unit sits in the corner, above the digits, so 117 still fits.
-      const halo = text(s, x + 58, 78, 'dg-big dg-halo', '', { 'font-size': 48 })
-      const num = text(s, x + 58, 78, 'dg-big', '', { 'font-size': 48 })
-      text(s, x + 106, 28, 'dg-small', '°C', { 'text-anchor': 'end' })
-      for (let k = 0; k <= 4; k++) el('line', { x1: x + 14 + k * 22, y1: 92, x2: x + 14 + k * 22, y2: k % 2 ? 98 : 101, class: 'dg-tick minor' }, s)
-      el('rect', { x: x + 12, y: 104, width: 92, height: 8, rx: 3, class: 'dg-track' }, s)
-      const fill = el('rect', { x: x + 12, y: 104, width: 0, height: 8, rx: 3, class: 'dg-fill' }, s)
-      text(s, x + 12, 146, 'dg-lab', cap)
-      text(s, x + 12, 174, 'dg-lab dim', sub[0])
-      const val = text(s, x + 104, 174, 'dg-lab end', '')
-      return { halo, num, fill, val, w: -1, last: '' }
+    // Oil and coolant: a big number, a bar with three ticks, the lit label
+    // over the dim one, and an icon. The temperatures are the lit ones.
+    const tile = (x, lit, dimLab, icon) => {
+      el('rect', { x, y: 85, width: 200, height: 216, rx: 22, class: 'dg-tile' }, s)
+      const halo = text(s, x + 100, 170, 'dg-big dg-halo', '', { 'font-size': 76 })
+      const num = text(s, x + 100, 170, 'dg-big', '', { 'font-size': 76 })
+      for (const k of [0, 1, 2]) el('line', { x1: x + 28 + k * 72, y1: 197, x2: x + 28 + k * 72, y2: 206, class: 'dg-btick' }, s)
+      el('rect', { x: x + 26, y: 211, width: 148, height: 10, rx: 5, class: 'dg-btrack' }, s)
+      const fill = el('rect', { x: x + 26, y: 211, width: 0, height: 10, rx: 5, class: 'dg-bfill' }, s)
+      this.fit(text(s, x + 16, 262, 'dg-lab', lit), 124)
+      this.fit(text(s, x + 16, 290, 'dg-lab dim', dimLab), 124)
+      icon(el('g', { transform: `translate(${x + 170} 266) scale(0.8)` }, s))
+      return { halo, num, fill, w: -1 }
     }
-    this.oil = tile(352, 'OIL TEMP', ['PRESS'])
-    this.water = tile(572, 'COOLANT', ['VOLTS'])
+    this.oil = tile(663, 'OIL TEMP', 'OIL PRESS', (g) => this.oilIcon(g, 0, 0))
+    this.water = tile(1082, 'COOLANT TEMP', 'VOLTS', (g) => this.batteryIcon(g, 0, 0))
 
-    // Fuel: a stack of bars, E at the bottom.
-    el('rect', { x: 474, y: 6, width: 92, height: 186, rx: 14, class: 'dg-panel' }, s)
+    // Fuel: thirteen bars, E at the bottom, red to orange to yellow to
+    // green going up, as a gauge that warns low.
     this.fuelBars = []
     for (let k = 0; k < FUEL_BARS; k++) {
-      const y = 150 - k * 9.6
-      const t = k / (FUEL_BARS - 1)
-      const col = k < 2 ? C.orange : t < 0.5 ? mix(C.yellow, '#d8ec46', t * 2) : mix('#d8ec46', C.green, (t - 0.5) * 2)
-      this.fuelBars.push({ e: el('rect', { x: 486, y: y.toFixed(1), width: 50, height: 6, rx: 2, class: 'dg-bar' }, s), col })
+      const y = 233 - k * 11.25
+      const col = k === 0 ? '#ff4a1c' : k === 1 ? C.orange : k < 4 ? mix(C.orange, '#f1d92a', (k - 1) / 3) : mix('#e6e22c', C.lime, (k - 4) / 8)
+      this.fuelBars.push({ e: el('rect', { x: 900, y: f1(y), width: 104, height: 7, rx: 3.5, fill: C.fuelOff }, s), col })
     }
-    for (let k = 0; k <= 4; k++) el('line', { x1: 541, y1: 156 - k * 33.6, x2: k % 2 ? 547 : 550, y2: 156 - k * 33.6, class: 'dg-tick minor' }, s)
-    text(s, 556, 26, 'dg-lab', 'F', { 'dominant-baseline': 'central' })
-    text(s, 556, 156, 'dg-lab', 'E', { 'dominant-baseline': 'central' })
-    text(s, 520, 180, 'dg-lab mid', 'FUEL')
+    for (let k = 0; k <= 4; k++) {
+      const y = 236.5 - k * 33.75
+      el('line', { x1: 1014, y1: y, x2: k % 2 ? 1020 : 1027, y2: y, class: 'dg-ftick' }, s)
+    }
+    text(s, 1040, 106, 'dg-fuel-lab', 'F', { 'dominant-baseline': 'central' })
+    text(s, 1040, 240, 'dg-fuel-lab', 'E', { 'dominant-baseline': 'central' })
+    this.fit(text(s, 898, 268, 'dg-fuel-lab', 'UNLEADED'), 116)
+    this.fit(text(s, 898, 293, 'dg-fuel-lab', 'FUEL ONLY'), 116)
+    this.pumpIcon(s, 1028, 258)
 
-    // Trip and gear: two readouts under headers, one header lit as on the
-    // original's mode buttons; the dim one shows the odometer and the speed
-    // source instead of a mode we do not have.
-    el('rect', { x: 352, y: 200, width: 336, height: 122, rx: 16, class: 'dg-panel' }, s)
-    this.odoLab = text(s, 368, 226, 'dg-lab dim', '')
-    text(s, 508, 226, 'dg-lab end', 'TRIP')
-    text(s, 536, 226, 'dg-lab', 'GEAR')
-    this.srcLab = text(s, 672, 226, 'dg-lab dim end', '')
-    el('rect', { x: 362, y: 238, width: 154, height: 72, rx: 12, class: 'dg-inset' }, s)
-    el('rect', { x: 524, y: 238, width: 154, height: 72, rx: 12, class: 'dg-inset' }, s)
-    text(s, 374, 290, 'dg-small', 'KM')
-    this.tripNum = text(s, 504, 292, 'dg-big', '', { 'font-size': 40, 'text-anchor': 'end' })
-    this.gearHalo = text(s, 601, 293, 'dg-big dg-halo', '', { 'font-size': 46 })
-    this.gearNum = text(s, 601, 293, 'dg-big', '', { 'font-size': 46 })
+    // Trip and average speed, each under a lit header beside a dim one,
+    // as on the original's mode buttons.
+    el('rect', { x: 655, y: 316, width: 620, height: 160, rx: 28, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
+    text(s, 778, 362, 'dg-lab dim dg-head', 'RANGE')
+    text(s, 920, 362, 'dg-lab dg-head', 'TRIP')
+    text(s, 1033, 362, 'dg-lab dg-head', 'AVERAGE')
+    text(s, 1153, 362, 'dg-lab dim dg-head', 'INSTANT')
+    el('rect', { x: 670, y: 375, width: 278, height: 72, rx: 14, class: 'dg-inset' }, s)
+    el('rect', { x: 982, y: 375, width: 278, height: 72, rx: 14, class: 'dg-inset' }, s)
+    text(s, 686, 420, 'dg-lab', 'KM')
+    this.tripNum = text(s, 932, 433, 'dg-big end', '', { 'font-size': 58 })
+    this.avgNum = text(s, 1102, 433, 'dg-big', '', { 'font-size': 58 })
+    text(s, 1246, 420, 'dg-lab', 'KM/H', { 'text-anchor': 'end' })
+    this.avg = { km: 0, s: 0, t: 0 }
 
-    // Engine name and the time, where the original has its radio strip.
-    el('rect', { x: 352, y: 330, width: 336, height: 64, rx: 16, class: 'dg-panel' }, s)
-    this.carT = text(s, 520, 356, 'dg-car', '')
-    this.clockT = text(s, 520, 384, 'dg-clock', '', { 'font-size': 22 })
+    // Turn arrows, never lit: we cannot see the indicators.
+    const arrow = (cx, dir) => {
+      el('circle', { cx, cy: 588, r: 34, class: 'dg-arrow-well' }, s)
+      const p = [[-15, 0], [-1, -14], [-1, -6], [14, -6], [14, 6], [-1, 6], [-1, 14]]
+      el('polygon', { points: p.map(([x, y]) => f1(cx + dir * x) + ',' + f1(588 + y)).join(' '), class: 'dg-arrow' }, s)
+    }
+    arrow(701, 1); arrow(1230, -1)
+
+    // The "now playing" pill: the engine's name, the time, and the
+    // throttle as the progress bar.
+    el('rect', { x: 758, y: 542, width: 414, height: 90, rx: 34, class: 'dg-pill' }, s)
+    this.song = text(s, 965, 572, 'dg-song', '')
+    this.time = text(s, 965, 598, 'dg-time', '')
+    el('rect', { x: 793, y: 602, width: 344, height: 9, rx: 4.5, class: 'dg-ptrack' }, s)
+    this.prog = el('rect', { x: 793, y: 602, width: 0, height: 9, rx: 4.5, fill: this.url('pfill') }, s)
+    this.progDot = el('circle', { cx: 793, cy: 606.5, r: 6.5, class: 'dg-pdot' }, s)
+    this.progW = -1
+  }
+
+  // Squeeze a label into `max` units if the car's font sets it wider.
+  fit(t, max) {
+    try { if (t.getComputedTextLength() > max) { t.setAttribute('textLength', max); t.setAttribute('lengthAdjust', 'spacingAndGlyphs') } } catch {}
+    return t
+  }
+
+  // Icons, small and plain, after the reference's.
+  thermo(s, x, y) {
+    el('path', { d: `M${x} ${y - 30}V${y - 14}M${x + 5} ${y - 28}h4M${x + 5} ${y - 22}h4M${x + 5} ${y - 16}h4` +
+      `M${x - 13} ${y - 3}q4 -4 8 0t8 0t8 0M${x - 13} ${y + 2}q4 -4 8 0t8 0t8 0`, class: 'dg-icon', 'stroke-width': 2 }, s)
+    el('circle', { cx: x, cy: y - 11, r: 3.5, class: 'dg-icon-fill' }, s)
+  }
+  oilIcon(s, x, y) {
+    this.thermo(s, x, y - 2)
+    el('path', { d: `M${x - 22} ${y + 12}l9 -3h22l16 -7l3 3l-16 16h-25v-6zM${x - 22} ${y + 12}l-9 -3v5l9 4M${x - 4} ${y + 9}v-4h6v4`, class: 'dg-icon' }, s)
+    el('circle', { cx: x + 26, cy: y + 18, r: 2.5, class: 'dg-icon-fill' }, s)
+  }
+  batteryIcon(s, x, y) {
+    this.thermo(s, x, y - 2)
+    el('path', { d: `M${x - 15} ${y + 8}h30v18h-30zM${x - 10} ${y + 8}v-3h5v3M${x + 5} ${y + 8}v-3h5v3M${x - 10} ${y + 17}h6M${x + 4} ${y + 17}h6M${x + 7} ${y + 14}v6`, class: 'dg-icon' }, s)
+  }
+  pumpIcon(s, x, y) {
+    el('path', { d: `M${x} ${y}h18v32h-18zM${x - 3} ${y + 32}h24`, class: 'dg-icon' }, s)
+    el('rect', { x: x + 3, y: y + 3, width: 12, height: 9, class: 'dg-icon-fill' }, s)
+    el('path', { d: `M${x + 18} ${y + 6}l6 6v14q0 4 3 4t3 -4v-12l-4 -5`, class: 'dg-icon', 'stroke-width': 2.5 }, s)
   }
 
   onScale(scale) {
-    const g = this.tachG
-    while (g.firstChild) g.removeChild(g.firstChild)
-    this.tachBars = []
-    for (let i = 0; i < TACH_BARS; i++) {
-      const rpm = (i / TACH_BARS) * scale.max
-      const cls = rpm >= scale.redFrom ? 'dg-bar red' : rpm >= scale.warnFrom ? 'dg-bar warn' : 'dg-bar'
-      const e = el('polygon', { points: barPoints(this.TA, (i + 0.2) / TACH_BARS, (i + 0.8) / TACH_BARS), class: cls }, g)
-      this.tachBars.push({ e, col: tachColor(rpm + scale.max / TACH_BARS / 2, scale) })
+    const g = this.tachG, sg = this.tachScaleG
+    for (const n of [g, sg]) while (n.firstChild) n.removeChild(n.firstChild)
+    const step = scale.max / FAN.n
+    this.tachBars = this.fanBars(g, TACH_CX, (k) => (k + 0.5) * step >= scale.redFrom ? 'dg-bar red' : 'dg-bar')
+      .map((e, k) => ({ e, col: tachColor((k + 0.5) * step, scale) }))
+    for (let v = 500; v <= scale.max + 1e-6; v += 500) {
+      const major = v % 1000 === 0
+      this.tick(sg, TACH_CX, v / scale.max, (major ? 'dg-tick' : 'dg-tick minor') + (v >= scale.redFrom ? ' red' : ''))
     }
-    this.drawScale(g, this.TA, scale.max, 1000, 500, (v) => String(v / 100), (v) => v >= scale.redFrom)
-    // The band a finger can grab, shown faintly in simulation mode.
-    const mid = (k) => { const p = at(k); const w = bandW(k) / 2; return pt(this.TA + p.x + p.nx * w, p.y + p.ny * w) }
-    const pts = []
-    for (let k = 0; k <= 40; k++) pts.push(mid(k / 40))
-    this.tachHit.setAttribute('d', 'M' + pts.join('L'))
-    this.tachHit.setAttribute('stroke-width', 70)
+    for (let v = 0; v <= scale.max + 1e-6; v += 1000) this.label(sg, TACH_CX, v / scale.max, String(v / 100), 'dg-num')
     this.tachLit = -1
   }
 
   rpmAt(x, y) {
-    const sv = sAt(x - this.TA, y)
-    return sv == null ? null : sv * this.scale.max
+    const dx = x + OX - TACH_CX, dy = y + OY - FAN.cy
+    const r = Math.hypot(dx, dy)
+    if (r < FAN.ri - 50 || r > FAN.ro + 70) return null
+    let a = (Math.atan2(dy, dx) * 180) / Math.PI
+    if (a < 0) a += 360
+    if (a < 170 || a > 280) return null
+    return clamp((a - 180) / 90, 0, 1) * this.scale.max
+  }
+  // A finger anywhere on the rev panel revs the engine.
+  tachHit(x, y) {
+    const px = x + OX, py = y + OY
+    return px >= 94 + DX && px <= 642 + DX && py >= 85 && py <= 631
   }
   onFinger(x, y, rpm) {
-    const p = at(rpm / this.scale.max), w = bandW(rpm / this.scale.max) / 2
-    this.finger.setAttribute('cx', (this.TA + p.x + p.nx * w).toFixed(1))
-    this.finger.setAttribute('cy', (p.y + p.ny * w).toFixed(1))
+    const [cx, cy] = polar(TACH_CX, FAN.cy, (FAN.barIn + FAN.barOut) / 2, fanAngle(rpm / this.scale.max))
+    this.finger.setAttribute('cx', f1(cx)); this.finger.setAttribute('cy', f1(cy))
     this.finger.style.display = ''
   }
   onFingerUp() { this.finger.style.display = 'none' }
@@ -260,25 +343,25 @@ export default class DigitalStyle extends GaugeStyle {
   paint(force) {
     if (!this.tachBars) return
     const v = this.v, i = this.i
+    const now = performance.now()
+    const dt = this.avg.t ? clamp((now - this.avg.t) / 1000, 0, 0.5) : 0
+    this.avg.t = now
 
-    // Speed: the lit run fades from green into a yellow tip.
-    const sLit = clamp(Math.round((v.kmh / SPEED.max) * SPEED.bars), 0, SPEED.bars)
+    // Speed: the lit run is coloured from its tip back.
+    const sLit = clamp(Math.round((v.kmh / SPEED_MAX) * FAN.n), 0, FAN.n)
     if (force || sLit !== this.speedLit) {
       this.speedLit = sLit
-      this.speedBars.forEach((e, k) => {
-        const d = sLit - 1 - k
-        e.style.fill = k < sLit ? (d < 2 ? C.yellow : d < 14 ? mix(C.yellow, C.green, (d - 2) / 12) : C.tail) : ''
-      })
-      this.tip(this.speedTip, this.SP, sLit, SPEED.bars)
+      this.speedBars.forEach((e, k) => { e.style.stroke = k < sLit ? speedColor(sLit - 1 - k) : '' })
+      this.tip(this.speedTip, SPEED_CX, sLit)
     }
-    // Revs: each bar keeps its own colour along the scale.
-    const tLit = clamp(Math.round((v.rpm / this.scale.max) * TACH_BARS), 0, TACH_BARS)
+    // Revs: each bar keeps its colour along the scale.
+    const tLit = clamp(Math.round((v.rpm / this.scale.max) * FAN.n), 0, FAN.n)
     if (force || tLit !== this.tachLit) {
-      const from = force || this.tachLit < 0 ? 0 : Math.min(tLit, this.tachLit)
-      const to = force || this.tachLit < 0 ? TACH_BARS : Math.max(tLit, this.tachLit)
-      for (let k = from; k < to; k++) this.tachBars[k].e.style.fill = k < tLit ? this.tachBars[k].col : ''
+      const all = force || this.tachLit < 0
+      const from = all ? 0 : Math.min(tLit, this.tachLit), to = all ? FAN.n : Math.max(tLit, this.tachLit)
+      for (let k = from; k < to; k++) this.tachBars[k].e.style.stroke = k < tLit ? this.tachBars[k].col : ''
       this.tachLit = tLit
-      this.tip(this.tachTip, this.TA, tLit, TACH_BARS)
+      this.tip(this.tachTip, TACH_CX, tLit)
     }
 
     const sp = i.stale ? '--' : String(Math.min(999, Math.round(v.kmh)))
@@ -286,37 +369,44 @@ export default class DigitalStyle extends GaugeStyle {
     const rp = String(Math.round(v.rpm / 100))
     setText(this.tachNum[0], rp); setText(this.tachNum[1], rp)
 
-    this.paintTile(this.oil, v.oilTemp, 40, 150, 130, v.oilPress.toFixed(1), force)
-    this.paintTile(this.water, v.water, 40, 130, 112, v.volts.toFixed(1), force)
+    this.paintTile(this.oil, v.oilTemp, 40, 150, 130, force)
+    this.paintTile(this.water, v.water, 40, 130, 112, force)
 
     const fLit = clamp(Math.round(v.fuel * FUEL_BARS), 0, FUEL_BARS)
     if (force || fLit !== this.fuelLit) {
       this.fuelLit = fLit
-      this.fuelBars.forEach((b, k) => { b.e.style.fill = k < fLit ? b.col : '' })
+      this.fuelBars.forEach((b, k) => b.e.setAttribute('fill', k < fLit ? b.col : C.fuelOff))
     }
 
-    setText(this.odoLab, 'ODO ' + Math.floor(v.odo))
-    setText(this.tripNum, (Math.floor(v.trip * 10) / 10 % 10000).toFixed(1))
-    setText(this.gearHalo, i.gear); setText(this.gearNum, i.gear)
-    setText(this.srcLab, i.source)
-    setText(this.carT, i.car || '')
-    const c = i.clock instanceof Date ? i.clock : new Date()
-    setText(this.clockT, String(c.getHours()).padStart(2, '0') + ':' + String(c.getMinutes()).padStart(2, '0'))
+    // Rolls over at 999.9 km, as the old trip meters did.
+    setText(this.tripNum, ((Math.floor(v.trip * 10) / 10) % 1000).toFixed(1))
+    // Average speed while moving, over the time this style has been shown.
+    if (!i.stale && v.kmh >= 2) { this.avg.km += (v.kmh * dt) / 3600; this.avg.s += dt }
+    setText(this.avgNum, this.avg.s > 0 ? Math.min(999.9, (this.avg.km * 3600) / this.avg.s).toFixed(1) : '0.0')
+
+    const car = String(i.car || '').toUpperCase().slice(0, 28)
+    if (car !== this.carLast) { this.carLast = car; setText(this.song, car) }
+    setText(this.time, hhmm(i.clock instanceof Date ? i.clock : new Date()))
+    const pw = Math.round(clamp(v.load, 0, 1) * 344)
+    if (force || pw !== this.progW) {
+      this.progW = pw
+      this.prog.setAttribute('width', pw)
+      this.progDot.setAttribute('cx', 793 + pw)
+    }
   }
 
   // A soft glow riding the lit run's tip (a gradient, no filter).
-  tip(e, ox, lit, n) {
+  tip(e, cx, lit) {
     if (lit < 1) { e.style.display = 'none'; return }
-    const sv = (lit - 0.5) / n, p = at(sv), w = bandW(sv) / 2
-    e.setAttribute('cx', (ox + p.x + p.nx * w).toFixed(1)); e.setAttribute('cy', (p.y + p.ny * w).toFixed(1))
+    const [x, y] = polar(cx, FAN.cy, (FAN.barIn + FAN.barOut) / 2, fanAngle((lit - 0.5) / FAN.n))
+    e.setAttribute('cx', f1(x)); e.setAttribute('cy', f1(y))
     e.style.display = ''
   }
 
-  paintTile(t, val, lo, hi, hot, sub, force) {
-    const n = String(Math.round(val))
+  paintTile(t, val, lo, hi, hot, force) {
+    const n = (Math.round(val * 10) / 10).toFixed(1)
     setText(t.halo, n); setText(t.num, n)
-    setText(t.val, sub)
-    const w = Math.round(clamp((val - lo) / (hi - lo), 0, 1) * 92)
+    const w = Math.round(clamp((val - lo) / (hi - lo), 0, 1) * 148)
     if (force || w !== t.w) {
       t.w = w
       t.fill.setAttribute('width', w)

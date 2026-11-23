@@ -33,7 +33,8 @@
   const running = q.get('running') !== '0'
   const profile = { name: 'V10', style: 'LFA-style', redline, idle }
   // A stand-in for RevSound: just enough for the dash.
-  const rs = { engine: { profile, sim: false }, running, start() {}, stop() {}, setRev() {}, blip() {}, setSim() {} }
+  // setRev is recorded, for checking that holding the rev meter revs.
+  const rs = { engine: { profile, sim: false }, running, revs: [], start() {}, stop() {}, setRev(x) { this.revs.push(x) }, blip() {}, setSim() {} }
   const keys = q.get('style') === 'all' || !q.get('style') ? Object.keys(STYLES) : [styleKey(q.get('style'))]
   const dashes = []
   for (const k of keys) {
@@ -64,6 +65,7 @@
   }
   requestAnimationFrame(loop)
   document.title = 'Gauge lab: ' + keys.join(', ')
+  window.lab = { rs, dashes }
   window.labReady = true
 </script>
 </body>

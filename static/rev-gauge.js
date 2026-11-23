@@ -6,8 +6,10 @@
 // is straight up. The tach is a shallow arc of a large circle whose centre
 // sits well below the picture.
 
-export const VIEW = { w: 1000, h: 400 }
-export const ARC = { cx: 500, cy: 700, rOut: 640, rIn: 590, a0: 232, a1: 308 }
+// Wide (3.1:1): the dash gives the gauge everything beside its one column
+// of buttons.
+export const VIEW = { w: 1240, h: 400 }
+export const ARC = { cx: 620, cy: 980, rOut: 920, rIn: 870, a0: 238.5, a1: 301.5 }
 export const SEG_PER_1000 = 6
 
 import { tachScale, polar, mix, follow, zone, ZoneLatch, RED_SLACK } from './gauges/kit.js'
@@ -30,7 +32,7 @@ export function valueAt(x, y, max) {
 // Where a finger can grab the arc: a band far wider than the segments,
 // from just above the speed pill to above the arc, and a little past each
 // end. Wide on purpose: it is for a finger on a car's screen, not a mouse.
-export const HIT = { rMin: 505, rMax: 720, slack: 6 }
+export const HIT = { rMin: 785, rMax: 1000, slack: 5 }
 export function onArc(x, y) {
   const r = Math.hypot(x - ARC.cx, y - ARC.cy)
   if (r < HIT.rMin || r > HIT.rMax) return false

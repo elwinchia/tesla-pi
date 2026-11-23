@@ -97,7 +97,7 @@
   .gcard { text-align: left; padding: 8px 8px 10px; border-radius: 14px; display: flex; flex-direction: column; gap: 4px; }
   .gcard .thumb { height: 86px; display: flex; align-items: center; justify-content: center; border-radius: 9px;
                   background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%); overflow: hidden; }
-  .gcard .thumb.dark { background: #07090d; }
+  .gcard .thumb.dark { background: radial-gradient(120% 90% at 50% 38%, #121a26 0%, #070a10 100%); }
   .gcard .thumb .cluster-svg { height: 100%; width: auto; max-width: 100%; pointer-events: none; }
   .gcard b { font-size: 15px; padding: 0 4px; }
   .gcard .era { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 4px; }
@@ -264,9 +264,9 @@
   // 50 Hz, the screen draws at its own rate, and everything eases toward the
   // latest value so neither rate shows as steps.
   const theme = () => (document.documentElement.classList.contains('night') ? 'night' : 'day')
-  // The same dash as under CarPlay: ENGINE START/STOP and settings on one
-  // side, the rev pedal on the driver's (CarPlay's drive side, as last told
-  // to the main page).
+  // The same dash as under CarPlay: ENGINE START/STOP and settings beside
+  // the gauge, on the passenger's side (CarPlay's drive side, as last told
+  // to the main page); hold the rev meter to rev.
   let hand = 1
   try { hand = localStorage.getItem('carplayHand') === '0' ? 0 : 1 } catch {}
   const embedded = document.documentElement.classList.contains('embed')
@@ -327,7 +327,11 @@
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
 
   // ── Gauge style picker: each style drawn small, at a fixed state ───
+  // Its rev meter is scaled for the chosen engine, as the dash's is.
   const gcards = {}
+  const thumbs = []
+  const thumbScale = () => { const p = PROFILES[rs.settings.profile]; return tachScale(p.redline, p.idle) }
+  let thumbsFor = rs.settings.profile
   for (const [k, st] of Object.entries(STYLES)) {
     const b = document.createElement('button')
     b.type = 'button'; b.className = 'gcard'; b.dataset.gauge = k
@@ -339,7 +343,8 @@
     loadStyle(k).then((Cls) => {
       const box = b.querySelector('.thumb')
       box.classList.toggle('dark', !!Cls.meta.dark)
-      const g = new Cls(box, { scale: tachScale(9000, 900), theme })
+      const g = new Cls(box, { scale: thumbScale(), theme })
+      thumbs.push(g)
       g.set({ running: true, rpm: 5200, kmh: 98, load: 0.6, gear: '3', source: 'GPS', fixRate: 1, water: 90, oilTemp: 98, oilPress: 3.6,
         volts: 14.1, fuel: 0.62, boost: 0.6, g: 0.25, trip: 641.9, odo: 73998, car: 'V10 \u00b7 LFA-style', clock: new Date() })
       for (let i = 0; i < 60; i++) g.frame(0.1)
@@ -399,6 +404,10 @@
     $('exhaust').value = Math.round(s.exhaust * 100)
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
     for (const [k, b] of Object.entries(gcards)) b.setAttribute('aria-pressed', String(k === s.gauge))
+    if (thumbsFor !== s.profile) {
+      thumbsFor = s.profile
+      for (const g of thumbs) { g.setScale(thumbScale()); g.frame(0) }
+    }
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
     for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))

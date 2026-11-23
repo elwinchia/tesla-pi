@@ -3,24 +3,29 @@
 // cluster. The speedometer carries a glowing sweep and a big italic
 // seven-segment speed ringed by small yellow dots; the tachometer reads
 // x100 with a red end and the gear in a glowing orange disc. Between them,
-// two small panels: oil pressure and water temperature as bars.
+// two small panels: the battery and water temperature as bars, marked by
+// their icons alone, as on the original.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, sevenRow } from './kit.js'
 
-const VIEW = { w: 1060, h: 400 }
+// Wide (3.1:1): the dash gives the gauge everything beside its one column
+// of buttons, and the centre panels take the extra width.
+const VIEW = { w: 1240, h: 400 }
 // Both dials: 0 at bottom left, clockwise over the top to bottom right.
 const A0 = 135, A1 = 405
-const SPEEDO = { cx: 200, cy: 200, max: 300 }
-const TACH = { cx: 860, cy: 200 }
+const SPEEDO = { cx: 200, cy: 200, max: 200 }
+const TACH = { cx: 1040, cy: 200 }
 // Radii shared by both dials.
 const R = { well: 184, ring: 175, tickOut: 167, tickIn: 151, tickMinor: 158, sweep: 159, num: 128 }
 // The lit sweep fades in toward its tip: a faint full run, a brighter
 // tail and a hot tip, stacked (a gradient cannot follow an arc in SVG).
 const TAIL = 70, TIP = 22
-// The centre bars: oil pressure in bar, water in °C.
-const BAR = { x: 438, w: 184, h: 14 }
+// The centre bars: the battery in volts, water in °C. The battery reads red
+// when it runs low, the water when it runs hot.
+const MID = 620
+const BAR = { x: MID - 150, w: 300, h: 14 }
 const BARS = {
-  oil:   { top: 4, lo: 0, hi: 6, labels: ['0', '3', '6'], unit: 'bar', key: 'oilPress' },
-  water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], unit: '°C', key: 'water', hot: 115 },
+  volts: { top: 4, lo: 8, hi: 16, labels: ['8', '12', '16'], key: 'volts', low: 11 },
+  water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
 }
 
 // Upright, narrowed text: the cluster's numerals are a condensed face, and
@@ -32,7 +37,7 @@ function ctext(parent, x, y, cls, s, sx = 0.8) {
 export default class BacklitStyle extends GaugeStyle {
   static meta = {
     key: 'backlit', name: 'Backlit pair', era: 'Testarossa-style', view: VIEW, dark: true,
-    blurb: 'Two orange-backlit dials with glowing sweeps, a seven-segment speed, the gear in a lit disc, oil and water bars.',
+    blurb: 'Two orange-backlit dials with glowing sweeps, a seven-segment speed, the gear in a lit disc, battery and water bars.',
   }
 
   build() {
@@ -69,7 +74,6 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit .bl-btick { stroke: #8a3c1a; stroke-width: 3; }
       .gs-backlit .bl-btick.minor { stroke-width: 2; }
       .gs-backlit .bl-blabel { fill: #b4501f; font: 500 24px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-      .gs-backlit .bl-unit { fill: #b4501f; font: 600 18px -apple-system, system-ui, sans-serif; dominant-baseline: central; }
       .gs-backlit .bl-icon { fill: none; stroke: #ff6a2a; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
       .gs-backlit .bl-icon .solid { fill: #ff6a2a; stroke: none; }
       .gs-backlit .bl-finger { fill: rgba(255, 140, 60, 0.18); stroke: #ffb07a; stroke-width: 3; pointer-events: none; }
@@ -91,9 +95,9 @@ export default class BacklitStyle extends GaugeStyle {
 
     // Three panels.
     el('rect', { x: 4, y: 4, width: 392, height: 392, rx: 22, class: 'bl-panel' }, s)
-    el('rect', { x: 406, y: 4, width: 248, height: 192, rx: 18, class: 'bl-panel' }, s)
-    el('rect', { x: 406, y: 204, width: 248, height: 192, rx: 18, class: 'bl-panel' }, s)
-    el('rect', { x: 664, y: 4, width: 392, height: 392, rx: 22, class: 'bl-panel' }, s)
+    el('rect', { x: 406, y: 4, width: 428, height: 192, rx: 18, class: 'bl-panel' }, s)
+    el('rect', { x: 406, y: 204, width: 428, height: 192, rx: 18, class: 'bl-panel' }, s)
+    el('rect', { x: 844, y: 4, width: 392, height: 392, rx: 22, class: 'bl-panel' }, s)
 
     // ── Speedometer ──
     const sp = this.speedoG = el('g', { class: 'bl-speedo' }, s)
@@ -133,8 +137,7 @@ export default class BacklitStyle extends GaugeStyle {
     for (const [k, b] of Object.entries(BARS)) {
       const g = el('g', { class: 'bl-bar' }, s)
       const y = b.top + 92
-      this.icon(g, k, 516, b.top + 46)
-      text(g, 548, b.top + 47, 'bl-unit', b.unit)
+      this.icon(g, k, MID, b.top + 46)
       el('rect', { x: BAR.x, y, width: BAR.w, height: BAR.h, rx: BAR.h / 2, class: 'bl-track' }, g)
       const halo = el('rect', { x: BAR.x - 4, y: y - 6, width: 0, height: BAR.h + 12, rx: (BAR.h + 12) / 2, class: 'bl-fill halo' }, g)
       const bar = el('rect', { x: BAR.x, y, width: 0, height: BAR.h, rx: BAR.h / 2, class: 'bl-fill', fill: this.url('fill') }, g)
@@ -168,11 +171,10 @@ export default class BacklitStyle extends GaugeStyle {
   }
   icon(g, kind, x, y) {
     const ic = el('g', { class: 'bl-icon', transform: `translate(${x} ${y}) scale(1.25)` }, g)
-    if (kind === 'oil') {
-      // An oil can with a drip.
-      el('path', { d: 'M-14 -3 H3 L13 -9 L18 -6 L5 7 H-14 Z' }, ic)
-      el('path', { d: 'M-9 -3 V-8 H-3 V-3 M-14 -1 L-20 -5 V1 L-14 4' }, ic)
-      el('path', { d: 'M18 0 q-3 5 0 6.5 q3 -1.5 0 -6.5 Z', class: 'solid' }, ic)
+    if (kind === 'volts') {
+      // A battery: a box with its two terminals, + and −.
+      el('path', { d: 'M-16 -8 H16 V12 H-16 Z M-11 -8 V-12 H-5 V-8 M5 -8 V-12 H11 V-8' }, ic)
+      el('path', { d: 'M-11 2 H-5 M5 2 H11 M8 -1 V5' }, ic)
     } else {
       // Coolant: a thermometer standing in waves.
       el('path', { d: 'M0 -14 V3' }, ic)
@@ -218,6 +220,8 @@ export default class BacklitStyle extends GaugeStyle {
     this.finger.style.display = ''
   }
   onFingerUp() { this.finger.style.display = 'none' }
+  // Pressing anywhere on the tach dial revs, its centre included.
+  tachHit(x, y) { return Math.hypot(x - TACH.cx, y - TACH.cy) <= R.well + 16 }
 
   paint(force) {
     if (!this.scale) return
@@ -257,7 +261,7 @@ export default class BacklitStyle extends GaugeStyle {
       b.bar.setAttribute('width', w)
       b.halo.setAttribute('width', w > 0 ? w + 8 : 0)
     }
-    const hot = b.hot != null && this.i.running && val >= b.hot
+    const hot = this.i.running && ((b.hot != null && val >= b.hot) || (b.low != null && val <= b.low))
     if (force || hot !== b.isHot) { b.isHot = hot; b.g.classList.toggle('hot', hot) }
   }
 }

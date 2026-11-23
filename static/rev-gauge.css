@@ -62,28 +62,27 @@
 .rv-finger { fill: rgba(255, 210, 120, 0.18); stroke: #ffd27a; stroke-width: 3; pointer-events: none; }
 .rv-finger.red { stroke: var(--rv-red); fill: rgba(255, 59, 48, 0.2); }
 
-/* ── The dash: buttons either side of the gauge ─────────────────────────
-   data-hand=1 (right-hand drive): ignition left, pedal right; 0 mirrors. */
+/* ── The dash: a column of buttons beside the gauge ─────────────────────
+   data-hand=1 (right-hand drive): the buttons on the left, away from the
+   driver; 0 mirrors. */
 .rvd { container-type: size; display: flex; flex-direction: row; align-items: stretch; width: 100%; height: 100%;
        gap: 1.5cqw; box-sizing: border-box; -webkit-user-select: none; user-select: none; }
 .rvd[data-hand="0"] { flex-direction: row-reverse; }
-.rvd[data-dark] { --rv-panel: #07090d; }
 .rvd-gauge { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
 .rvd-gauge .cluster-svg { width: auto; height: 100%; max-width: 100%; }
-.rvd[data-dark] .rvd-gauge { background: var(--rv-panel); border-radius: 3cqh; }
-.rvd-side { flex: 0 0 auto; width: min(13cqw, 62cqh); display: flex; flex-direction: column; align-items: center;
+.rvd-side { flex: 0 0 auto; width: min(13cqw, 46cqh); display: flex; flex-direction: column; align-items: center;
             justify-content: center; gap: 5cqh; }
 .rvd-btn { -webkit-appearance: none; appearance: none; border: 0; padding: 0; margin: 0; background: none; color: inherit;
            touch-action: none; -webkit-tap-highlight-color: transparent; cursor: pointer; font: inherit; }
 /* ENGINE START/STOP: a glossy red button in a dark bezel. Running, its ring glows. */
-.rvd-start { position: relative; width: min(100%, 48cqh); aspect-ratio: 1; border-radius: 50%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6cqh;
+.rvd-start { position: relative; width: min(100%, 40cqh); aspect-ratio: 1; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5cqh;
   color: #fff; font-family: -apple-system, system-ui, sans-serif; line-height: 1;
   background: radial-gradient(circle at 50% 30%, #ff6b5e 0%, #e0251b 38%, #a8120c 75%, #6e0806 100%);
   box-shadow: 0 0 0 0.9cqh #1c1d21, 0 0 0 1.5cqh #3b3d44, inset 0 -0.8cqh 1.6cqh rgba(0,0,0,0.45), inset 0 0.6cqh 1cqh rgba(255,255,255,0.35);
   transition: box-shadow 0.25s, transform 0.08s; }
-.rvd-start .w1 { font-weight: 800; font-size: 7.4cqh; letter-spacing: 0.02em; }
-.rvd-start .w2 { font-weight: 700; font-size: 5.6cqh; letter-spacing: 0.04em; }
+.rvd-start .w1 { font-weight: 800; font-size: 6.3cqh; letter-spacing: 0.02em; }
+.rvd-start .w2 { font-weight: 700; font-size: 4.8cqh; letter-spacing: 0.04em; }
 .rvd-start .rule { width: 44%; height: 0.45cqh; background: #fff; border-radius: 1px; margin: 0.2cqh 0; }
 .rvd-start:active { transform: scale(0.96); }
 .rvd-start[aria-pressed="true"] { box-shadow: 0 0 0 0.9cqh #1c1d21, 0 0 0 1.5cqh #ffb347, 0 0 3cqh 1cqh rgba(255, 150, 50, 0.55),
@@ -94,8 +93,5 @@
   color: var(--rv-num); background: var(--rv-chip-bg); box-shadow: 0 0 0 0.3cqh var(--rv-chip-line); }
 .rvd-set svg { width: 62%; height: 62%; }
 .rvd[data-dark] .rvd-set { color: #cfc7bc; background: #141820; box-shadow: 0 0 0 0.3cqh rgba(255,255,255,0.14); }
-/* The rev pedal: hold to rev. Moving, it greys out (parked only). */
-.rvd-pedal { height: min(80cqh, 100%); aspect-ratio: 100 / 160; max-width: 100%; transition: transform 0.08s, filter 0.15s; }
-.rvd-pedal svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0.8cqh 1cqh rgba(0,0,0,0.45)); }
-.rvd-pedal.held { transform: perspective(40cqh) rotateX(14deg) scale(0.95); filter: drop-shadow(0 0 2.4cqh rgba(255, 150, 50, 0.8)); }
-.rvd-pedal:disabled { opacity: 0.3; }
+/* The rev meter is the accelerator: press and hold it to rev (parked only). */
+.rvd-gauge { touch-action: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
