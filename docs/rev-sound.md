@@ -116,7 +116,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `scripts/rev-samples.mjs` | Rebuilds `static/sounds/` from the renders: cuts, loops, EQs, mixes the sub layer, levels and encodes (`--print-levels` gives the levels). It can also fetch credited Freesound recordings. Needs `ffmpeg` on the machine that builds; the car doesn't. |
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, an idle lope, saturation and a DC blocker follow. It allocates nothing on the audio thread. It plays the loop player when the car's loops are loaded, and the synthesiser only as the fallback. |
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
-| `static/rev.html` | The page for the dashboard, **Simulation mode**, the car card, settings and the Test drive: `https://<device>/rev.html`. Follows the car's day/night theme. |
+| `static/rev.html` | The page for the dashboard, the Test drive, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser. |
@@ -134,15 +134,19 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
   speed, and the page greys it out.
 - **No GPS, no engine.** A hidden tab stops the GPS watch and suspends the
   audio. If fixes stop, the engine settles rather than guessing.
-- **Simulation mode is for a parked car.** See [Simulation mode](#simulation-mode).
+- **Revving is for a parked car**: holding the rev meter, or **Rev**.
 - The volume control is squared, so the bottom half of its travel is quiet.
   The page says to keep it low enough to hear horns and sirens.
 
-### Simulation mode
+### Simulation mode (no longer on the page)
 
-A toggle above the dashboard, **Simulation mode**, turns the rev arc into a
-control (`rev.html` is the only page with the dashboard; the main page has
-just the on/off switch):
+`rev.html` had a **Simulation mode** toggle above the dashboard that turned
+the rev arc into a control. It was taken off the page on 2026-11-24: holding
+the rev meter on the dash ([The dash](#the-dash-buttons-and-gauge-styles))
+does the everyday job. The engine keeps the mode (`Engine.setSim`,
+`touch`/`untouch`, tested) and every gauge style still maps a finger to rpm
+(`GaugeStyle.setTouch`, `rpmAt`), for a page that wants it back. As it
+worked:
 
 - **Drag** along the arc and the engine follows the finger. It is within 5 %
   of the finger in about 0.1 s: a 40 ms glide in the model, so a jump across
@@ -300,8 +304,7 @@ buttons.
   so a finger need not be precise; the speedometer and the other gauges do
   nothing. Parked only: while the car moves a press does nothing, and the
   model ignores it anyway. With the engine off it nudges the start button
-  instead. (In simulation mode on `rev.html` the finger sets the rpm
-  instead.)
+  instead.
 - **ENGINE START/STOP**: starts the engine sound, with a
   cold-start flare past idle, or stops it, and the rev meter falls to 0 and
   every side gauge rests, as with the ignition off. On the CarPlay page that
@@ -376,11 +379,6 @@ They cool with the engine off, across page reloads too.
 These were taken in the Test drive at 1 GPS reading a second, V8 profile, in
 headless Chromium.
 
-| | Simulation mode, mid-drag | Simulation mode, on the limiter |
-|---|---|---|
-| Night | ![simulation mode, dragging, night](img/rev-sim-drag-night.png) | ![simulation mode, limiter, night](img/rev-sim-limiter-night.png) |
-| Day | ![simulation mode, dragging, day](img/rev-sim-drag-day.png) | ![simulation mode, limiter, day](img/rev-sim-limiter-day.png) |
-
 ## 5. Try it
 
 At a desk, with no car and no Pi:
@@ -393,11 +391,11 @@ node scripts/rev-samples.mjs --car v8            # rebuild static/sounds/ (needs
 python3 -m http.server 8000 -d static            # then open http://localhost:8000/rev.html
 ```
 
-On `rev.html`, turn on **Simulation mode** and drag along the rev arc, or
-tap the V8 card to hear a blip. For driving, pick **Test drive**, press
-**Start**, then hold **Accelerator** and **Brake**; "Speed readings" sets the
-simulated GPS rate, and pulling away ends simulation mode just as the car
-would. **Rev** blips the engine while stopped. `localhost` counts as a secure context, so the AudioWorklet loads
+On `rev.html`, press **ENGINE START** and hold the rev meter, or tap a car
+card to hear a blip. For driving, pick **Test drive** (in **Speed from**,
+under the dashboard), press **Start**, then hold **Accelerator** and
+**Brake**; "Speed readings" sets the simulated GPS rate. **Rev** revs the
+engine while stopped. `localhost` counts as a secure context, so the AudioWorklet loads
 just as it does on the car's HTTPS page.
 
 In the car (after deployment): open `https://<device>/rev.html`, choose **Car

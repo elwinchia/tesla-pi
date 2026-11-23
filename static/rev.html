@@ -13,8 +13,7 @@
   comes from how fast that speed changes. Everything runs in the browser —
   the Pi only serves the files. See docs/rev-sound.md.
 
-  "Simulation mode" (parked only) turns the rev meter into a control: drag
-  along it to set the revs, tap it for a blip. "Test drive" swaps the GPS
+  Hold the dashboard's rev meter to rev (parked only). "Test drive" swaps the GPS
   for an on-screen pedal, so driving can be tried at a desk; it reports
   speed at a GPS-like rate on purpose, so it sounds the way the car will.
 -->
@@ -107,12 +106,6 @@
   html.embed body { padding-top: 12px; }
   :root { --sel-bg: #fff4e6; }
   :root.night { --sel-bg: #2b1d10; }
-  .dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 2px 4px 6px; }
-  .simbtn { min-height: 56px; padding: 12px 20px; font-size: 17px; font-weight: 600; border-radius: 28px; }
-  .simbtn[aria-pressed=true] { background: #f08c00; border-color: #ffa94d; color: #1a0d00; }
-  .simbtn:disabled { opacity: 0.5; }
-  #sim-hint { color: var(--muted); font-size: 14px; }
-  #sim-hint.warn { color: var(--warn); }
 
   /* Car sound picker: big cards for a finger. */
   .cars { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
@@ -159,16 +152,45 @@
 
   <div class="grid">
     <div class="card span2 dash noembed">
-      <div class="dash-head">
-        <button id="simmode" type="button" class="simbtn" aria-pressed="false">Simulation mode: Off</button>
-        <span id="sim-hint">Parked only. Turn it on, then drag along the rev meter to rev the engine; tap it for a blip.</span>
-      </div>
       <div id="cluster"></div>
       <div class="dash-foot">
         <span id="cluster-cap">Engine</span>
         <span id="state-line">Off.</span>
         <span>GPS <b id="g-rate">&mdash;</b> readings per second</span>
       </div>
+    </div>
+
+    <div class="card span2 noembed">
+      <h2>Speed from</h2>
+      <div class="row">
+        <div class="seg" id="source">
+          <button type="button" data-src="gps">Car GPS</button>
+          <button type="button" data-src="sim">Test drive</button>
+        </div>
+        <button id="start" type="button" class="go">Start</button>
+      </div>
+      <div id="sim" hidden>
+        <div class="row">
+          <label for="fixms">Speed readings</label>
+          <select id="fixms">
+            <option value="1000">1 per second (like the car)</option>
+            <option value="500">2 per second</option>
+            <option value="100">10 per second</option>
+          </select>
+        </div>
+        <div class="pedals">
+          <button type="button" class="pedal" id="brake">Brake</button>
+          <button type="button" class="pedal" id="pedal">Accelerator</button>
+        </div>
+        <div class="row">
+          <label for="pedal-amt">Accelerator travel</label>
+          <input id="pedal-amt" type="range" min="10" max="100" step="5" value="70">
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" class="pedal" id="rev" style="height:72px">Rev (stopped only)</button>
+      </div>
+      <p class="hint">Rev, or holding the rev meter above, works only while the car is stopped.</p>
     </div>
 
     <div class="card span2">
@@ -181,10 +203,10 @@
     <div class="card span2">
       <h2>Gauge style</h2>
       <div class="gauges" id="gauges" role="group" aria-label="Gauge style"></div>
-      <p class="hint">The rev meter and speedometer, here and under CarPlay. Each is our own drawing in the style of a classic car's cluster, after Blackbox Infinite's "CarPlay Generations" concept. The water and oil temperatures, oil pressure, volts and fuel are made up; speed, trip and odometer are the car's GPS speed.</p>
+      <p class="hint">The rev meter and speedometer, here and under CarPlay. Each is our own drawing in the style of a classic car's cluster, after Blackbox Infinite's "CarPlay Generations" concept. Speed and trip are the car's GPS speed. With "Read telemetry from Bluetooth" on (Settings → Network → Experimental), the battery and fuel gauges, range and odometer are the car's own; the temperatures, oil pressure and volts are made up.</p>
     </div>
 
-    <div class="card">
+    <div class="card span2">
       <h2>Sound</h2>
       <div class="row">
         <label for="enabled">Play while driving</label>
@@ -216,38 +238,6 @@
       <p class="hint">Used to turn the car's acceleration into how hard the engine works.</p>
     </div>
 
-    <div class="card noembed">
-      <h2>Speed from</h2>
-      <div class="row">
-        <div class="seg" id="source">
-          <button type="button" data-src="gps">Car GPS</button>
-          <button type="button" data-src="sim">Test drive</button>
-        </div>
-        <button id="start" type="button" class="go">Start</button>
-      </div>
-      <div id="sim" hidden>
-        <div class="row">
-          <label for="fixms">Speed readings</label>
-          <select id="fixms">
-            <option value="1000">1 per second (like the car)</option>
-            <option value="500">2 per second</option>
-            <option value="100">10 per second</option>
-          </select>
-        </div>
-        <div class="pedals">
-          <button type="button" class="pedal" id="brake">Brake</button>
-          <button type="button" class="pedal" id="pedal">Accelerator</button>
-        </div>
-        <div class="row">
-          <label for="pedal-amt">Accelerator travel</label>
-          <input id="pedal-amt" type="range" min="10" max="100" step="5" value="70">
-        </div>
-      </div>
-      <div class="row">
-        <button type="button" class="pedal" id="rev" style="height:72px">Rev (stopped only)</button>
-      </div>
-      <p class="hint">Rev works only while the car is stopped.</p>
-    </div>
   </div>
 
 <script type="module">
@@ -278,7 +268,7 @@
     // whose page underneath already reads them.
     car: embedded ? null : new CarReader(),
     onSettings: () => $('cars').scrollIntoView({ behavior: 'smooth', block: 'start' }),
-    onEngine: () => { if (!rs.running) { rs.setSim(false); setSimUi(false) } syncSettings() } })
+    onEngine: () => syncSettings() })
   if (!embedded) cluster.setStyle(rs.settings.gauge)
   let tachFor = null
   function fitTach() {
@@ -325,7 +315,7 @@
     // Not in the sheet: the page under it is already playing the engine.
     if (embedded) return
     if (!rs.running) { await rs.start(); syncSettings() }
-    if (!cluster.touch) rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
+    rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
   }
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
 
@@ -375,28 +365,6 @@
     }
   }
 
-  // ── Simulation mode ─────────────────────────────────────────────────
-  // The rev meter becomes a control: the finger sets the rpm, lifting lets
-  // the engine fall back to idle, a tap is a blip. The engine refuses it
-  // while the car moves, and ends it the moment the car starts moving.
-  const touchHandlers = {
-    onHold: (rpm) => rs.touch(rpm),
-    onRelease: (tap) => rs.untouch(tap),
-  }
-  let simNote = ''
-  function setSimUi(on) {
-    cluster.setTouch(on ? touchHandlers : null)
-    $('simmode').setAttribute('aria-pressed', String(on))
-    $('simmode').textContent = 'Simulation mode: ' + (on ? 'On' : 'Off')
-  }
-  $('simmode').onclick = async () => {
-    if (cluster.touch) { rs.setSim(false); setSimUi(false); simNote = ''; return }
-    if (!rs.running) { await rs.start(); syncSettings() }
-    if (!rs.running) return // sound could not start; the banner says why
-    const on = rs.setSim(true)
-    simNote = on ? '' : 'The car is moving. Simulation mode is for when it is stopped.'
-    setSimUi(on)
-  }
 
   function syncSettings() {
     const s = rs.settings
@@ -435,7 +403,7 @@
   $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings(); rs.emit(performance.now()) } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
   $('start').onclick = async () => {
-    if (rs.running) { rs.setSim(false); setSimUi(false); rs.stop() } else await rs.start()
+    if (rs.running) rs.stop(); else await rs.start()
     syncSettings()
   }
 
@@ -458,24 +426,8 @@
 
   function render(s) {
     fitTach()
-    // The engine ended simulation mode because the car moved.
-    if (cluster.touch && !s.sim) {
-      setSimUi(false)
-      if (s.simEnded === 'moving') simNote = 'Simulation ended: the car is moving. The engine follows the car again.'
-    }
-    const moving = s.running && !s.stopped
-    $('simmode').disabled = moving && !cluster.touch
-    const hint = $('sim-hint')
-    const text = simNote || (cluster.touch
-      ? 'Drag along the rev meter to rev; lift to let it fall back. Tap for a blip. Into the red hits the limiter.'
-      : moving ? 'Simulation mode works only while the car is stopped.'
-      : 'Parked only. Turn it on, then drag along the rev meter to rev the engine; tap it for a blip.')
-    if (hint.textContent !== text) hint.textContent = text
-    hint.classList.toggle('warn', !!simNote || moving)
 
-    // Engine off reads 0, like a real cluster with the ignition off. In
-    // simulation mode the speed is still the car's real speed (0, since it
-    // only runs stopped) and the gear is N: a parked car being revved.
+    // Engine off reads 0, like a real cluster with the ignition off.
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped

@@ -42,7 +42,6 @@ is opened and handed back, and what it costs you in time-to-picture.
 - Driven by the car's own GPS speed, with engine load worked out from the car's mass, power and drag; a virtual gearbox with Comfort / Normal / Sport shift points, overrun pops on lift-off, and a Rev button that works only while stopped
 - Runs entirely in the browser — the Pi only serves the files, so CarPlay never sees it. It lags the pedal by up to about a second, because GPS speed is the only live signal the car gives a web page
 - `/rev.html` shows a dashboard: a wide segmented rev arc that glows from orange to yellow and lights its red zone at the limiter, a glowing km/h speed pill with the gear beside it, rpm digits, and engine-load and GPS bars, in the car's day or night theme
-- **Simulation mode** (parked only): drag a finger along the rev arc to set the revs, lift to let them fall back, tap for a blip, push into the red for the limiter. It refuses to start while the car moves and ends itself the moment it does
 - Off by default: Settings → CarPlay → Engine sound, or `/rev.html`, which also has a simulator for trying it with no car. `node scripts/rev-render.mjs --all --scene demo --recorded` renders a short demo of every car to WAV; while it is on, CarPlay goes wide with a dash below it: the rev meter and speedometer in one of seven gauge styles after classic cars' clusters, beside ENGINE START/STOP; hold the rev meter to rev — see [`docs/rev-sound.md`](docs/rev-sound.md)
 
 ### Also included
