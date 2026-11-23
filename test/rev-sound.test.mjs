@@ -93,3 +93,74 @@ test('changing engine and gearbox on the fly takes effect', () => {
   e.step(0, 0.02)
   assert.ok(e.state.rpm >= PROFILES.v10.idle * 0.7)
 })
+
+// ── Simulation mode is for a stopped car only ───────────────────────────
+test('simulation mode turns on with no speed reading yet, or when stopped', () => {
+  const e = new Engine(DEFAULTS)
+  assert.equal(e.setSim(true, 0), true)
+  assert.ok(e.touch(4000))
+  for (let t = 0; t <= 300; t += 20) e.step(t, 0.02)
+  assert.ok(Math.abs(e.state.rpm - 4000) < 200, `rpm ${e.state.rpm}`)
+  assert.ok(e.state.sim && e.state.touching && e.state.stopped)
+
+  const parked = new Engine(DEFAULTS)
+  parked.fix(0, 0); parked.fix(1000, null)
+  assert.equal(parked.setSim(true, 1100), true)
+})
+
+test('simulation mode is refused while the car moves, or when its last reading was moving', () => {
+  const e = new Engine(DEFAULTS)
+  e.fix(0, 12); e.fix(1000, 12)
+  assert.equal(e.setSim(true, 1100), false)
+  assert.equal(e.simEnded, 'moving')
+  assert.equal(e.touch(5000), false, 'the finger is ignored outside simulation mode')
+  // No readings for 10 s, but the last one was moving: still refused.
+  assert.equal(e.setSim(true, 11000), false)
+  assert.equal(e.blip(5000, 11000), false, 'no preview blip either')
+})
+
+test('simulation mode ends the moment the car moves, and the engine follows the car again', () => {
+  const e = new Engine(DEFAULTS)
+  e.fix(0, 0)
+  assert.ok(e.setSim(true, 0))
+  e.touch(6000)
+  let t = 0
+  for (; t <= 1000; t += 20) e.step(t, 0.02)
+  assert.ok(e.state.rpm > 5000)
+  // The car pulls away: fixes of 0.5 then 3 m/s.
+  e.fix(1000, 0.5)
+  let ended = null
+  for (let k = 1; k <= 3; k++) {
+    e.fix(1000 + k * 1000, k * 1.5)
+    for (let u = 0; u < 1000 && ended == null; u += 20) {
+      e.step(t, 0.02)
+      if (!e.state.sim) ended = t
+      t += 20
+    }
+  }
+  assert.ok(ended != null, 'simulation mode ended')
+  assert.equal(e.state.simEnded, 'moving')
+  assert.equal(e.state.touching, false)
+  for (let u = 0; u < 1000; u += 20, t += 20) e.step(t, 0.02)
+  assert.ok(e.state.gear >= 1 && !e.state.stopped, 'back to following the car')
+  assert.ok(e.state.rpm < 4000, `rpm ${e.state.rpm} follows the car, not the old finger`)
+  // And it cannot be turned back on while moving.
+  assert.equal(e.setSim(true, t), false)
+})
+
+test('turning simulation mode off lets go of the finger', () => {
+  const e = new Engine(DEFAULTS)
+  e.setSim(true, 0); e.touch(5000)
+  e.setSim(false, 0)
+  for (let t = 0; t <= 3000; t += 20) e.step(t, 0.02)
+  assert.equal(e.state.rpm, PROFILES.v8.idle)
+  assert.equal(e.state.sim, false)
+})
+
+test('every car sound can be chosen and is remembered', () => {
+  for (const k of Object.keys(PROFILES)) {
+    const st = memStorage()
+    saveSettings({ ...DEFAULTS, profile: k }, st)
+    assert.equal(loadSettings(st).profile, k)
+  }
+})

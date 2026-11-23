@@ -38,11 +38,12 @@ is opened and handed back, and what it costs you in time-to-picture.
 - Off by default: the server starts on demand from the launcher and stops itself once the singing does — see [`docs/karaoke-addon.md`](docs/karaoke-addon.md)
 
 ### Engine sound (experimental)
-- A synthesised engine (V8, inline-6, V10 or flat-4) that revs and shifts with your driving, played by the car's browser through the cabin speakers — modelled on [TesRev](https://tesrev.com/), with no code or recordings taken from it
+- A synthesised engine that revs and shifts with your driving, from eight car sounds named by style (American muscle V8, Italian GT V12, 911-style flat-6, Japanese twin-turbo inline-6, twin-rotor rotary, hot-hatch turbo 4, supercar V10, rally flat-4), played by the car's browser through the cabin speakers — modelled on [TesRev](https://tesrev.com/), with no code or recordings taken from it
 - Driven by the car's own GPS speed, with engine load worked out from the car's mass, power and drag; a virtual gearbox with Comfort / Normal / Sport shift points, overrun pops on lift-off, and a Rev button that works only while stopped
 - Runs entirely in the browser — the Pi only serves the files, so CarPlay never sees it. It lags the pedal by up to about a second, because GPS speed is the only live signal the car gives a web page
-- `/rev.html` shows a dashboard: a wide segmented rev arc that glows from orange to yellow and lights its red zone at the limiter, a glowing km/h speed pill with the gear beside it, and engine-load and GPS bars, in the car's day or night theme
-- Off by default: Settings → CarPlay → Engine sound, or `/rev.html`, which also has a simulator for trying it with no car. `node scripts/rev-render.mjs` renders a simulated drive to a WAV — see [`docs/rev-sound.md`](docs/rev-sound.md)
+- `/rev.html` shows a dashboard: a wide segmented rev arc that glows from orange to yellow and lights its red zone at the limiter, a glowing km/h speed pill with the gear beside it, rpm digits, and engine-load and GPS bars, in the car's day or night theme
+- **Simulation mode** (parked only): drag a finger along the rev arc to set the revs, lift to let them fall back, tap for a blip, push into the red for the limiter. It refuses to start while the car moves and ends itself the moment it does
+- Off by default: Settings → CarPlay → Engine sound, or `/rev.html`, which also has a simulator for trying it with no car. `node scripts/rev-render.mjs` renders a simulated drive (or, with `--all --scene demo`, a short demo of every car) to WAV — see [`docs/rev-sound.md`](docs/rev-sound.md)
 
 ### Also included
 - **Zero-config networking:** every device serves the fixed hostname `device.tesla-pi.humblebees.co`; `dnsmasq` resolves it locally to the Pi in the car, and certificates are issued centrally and pulled automatically — no domain, Cloudflare account, or DNS credential needed on the box. See [`docs/turnkey-shared-domain-plan.md`](docs/turnkey-shared-domain-plan.md).

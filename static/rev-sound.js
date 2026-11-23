@@ -60,7 +60,10 @@ export class Engine {
     this.free = new FreeRev(p)
     this.load = 0
     this.revThrottle = 0
-    this.state = { v: 0, a: 0, load: 0, rpm: p.idle, gear: 0, shifting: false, stale: true, stopped: true }
+    this.sim = false        // simulation mode: the rpm comes from a finger
+    this.simEnded = null    // why simulation mode last ended or was refused
+    this.state = { v: 0, a: 0, load: 0, rpm: p.idle, gear: 0, shifting: false, stale: true, stopped: true,
+      sim: false, touching: false, simEnded: null }
   }
 
   configure(settings) {
@@ -81,9 +84,35 @@ export class Engine {
 
   fix(t, speed) { this.tracker.push(t, speed) }
 
+  // Simulation mode: the owner sets the rpm by dragging along the rev meter.
+  // It is a toy for a parked car, so it is allowed only while the car is
+  // stopped: under ~4 km/h, or before the car has reported any speed. A
+  // car whose fixes stopped coming while it was moving counts as moving.
+  // The moment the car moves, step() ends it and the engine follows the
+  // car again. Returns whether simulation mode is on.
+  moving(t) { return this.tracker.at(t).v >= STOPPED_MS }
+  setSim(on, t) {
+    if (on && this.moving(t)) { this.sim = false; this.simEnded = 'moving'; return false }
+    this.sim = !!on
+    this.simEnded = null
+    if (!this.sim) this.free.release()
+    return this.sim
+  }
+  // A finger on the rev meter at `rpm`; release(blip) when it lifts. Ignored
+  // outside simulation mode.
+  touch(rpm) { if (!this.sim) return false; this.free.hold(rpm); return true }
+  untouch(blip = false) { this.free.release(blip) }
+  // One blip to `rpm`, to preview an engine. Stopped only, like Rev.
+  blip(rpm, t) {
+    if (this.moving(t)) return false
+    this.free.hold(rpm); this.free.release(true)
+    return true
+  }
+
   step(t, dt) {
     const est = this.tracker.at(t)
     const stopped = est.v < STOPPED_MS
+    if (this.sim && !stopped) { this.sim = false; this.simEnded = 'moving'; this.free.release() }
     const car = CARS[this.settings.car]
     // Load is smoothed over ~150 ms: the estimate moves once per fix, the
     // engine should lean into it rather than jump.
@@ -100,7 +129,9 @@ export class Engine {
       out = this.gearbox.step(t, est.v, this.load, dt)
     }
     this.state = { v: est.v, a: est.a, load: out.load, rpm: out.rpm, gear: out.gear,
-      shifting: out.shifting, stale: est.stale, stopped }
+      shifting: out.shifting, stale: est.stale, stopped,
+      sim: this.sim, touching: this.free.touching, simEnded: this.simEnded,
+      limiter: stopped && this.free.onLimiter }
     return this.state
   }
 }
@@ -156,6 +187,10 @@ export class RevSound {
   setBrake(x) { this.sim.brake = clamp(x, 0, 1) }
   setSimFixMs(ms) { this.sim.fixMs = clamp(ms, 50, 5000) }
   setRev(x) { this.engine.setRev(x) }
+  setSim(on) { const r = this.engine.setSim(on, performance.now()); this.emit(performance.now()); return r }
+  touch(rpm) { return this.engine.touch(rpm) }
+  untouch(blip) { this.engine.untouch(blip) }
+  blip(rpm) { return this.engine.blip(rpm, performance.now()) }
 
   get running() { return this.timer != null }
 

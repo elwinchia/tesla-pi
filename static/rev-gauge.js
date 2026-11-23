@@ -24,6 +24,37 @@ export function angleFor(v, max) {
   return ARC.a0 + f * (ARC.a1 - ARC.a0)
 }
 
+// The inverse, for a finger on the arc: the value under a point. Points
+// beyond either end clamp to that end.
+export function valueAt(x, y, max) {
+  let a = (Math.atan2(y - ARC.cy, x - ARC.cx) * 180) / Math.PI
+  if (a < 0) a += 360
+  const f = (a - ARC.a0) / (ARC.a1 - ARC.a0)
+  return Math.min(1, Math.max(0, f)) * max
+}
+
+// Where a finger can grab the arc: a band far wider than the segments,
+// from just above the speed pill to above the arc, and a little past each
+// end. Wide on purpose: it is for a finger on a car's screen, not a mouse.
+export const HIT = { rMin: 505, rMax: 720, slack: 6 }
+export function onArc(x, y) {
+  const r = Math.hypot(x - ARC.cx, y - ARC.cy)
+  if (r < HIT.rMin || r > HIT.rMax) return false
+  let a = (Math.atan2(y - ARC.cy, x - ARC.cx) * 180) / Math.PI
+  if (a < 0) a += 360
+  return a >= ARC.a0 - HIT.slack && a <= ARC.a1 + HIT.slack
+}
+
+// What a finger asks the engine for: the rpm under it, or the limiter when
+// it is in the red zone (LIMIT_OVER in rev-model.js takes it from there).
+export function fingerRpm(v, scale) {
+  return v >= scale.redFrom ? scale.max : Math.max(0, v)
+}
+
+// A press shorter than this that barely moved is a tap: a blip.
+export const TAP_MS = 250
+export const TAP_MOVE = 14 // picture units
+
 export function polar(cx, cy, r, deg) {
   const a = (deg * Math.PI) / 180
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
@@ -146,11 +177,15 @@ export class Cluster {
     this.gps = 0; this.gpsTarget = 0
     this.stale = false
     this.dt = 0
+    this.rpmTau = 0.08
+    this.touch = null // { onHold(rpm), onRelease(tap) } in simulation mode
+    this.drag = null
     this.latch = new ZoneLatch()
     this.svg = el('svg', { viewBox: `0 0 ${VIEW.w} ${VIEW.h}`, class: 'cluster-svg', role: 'img', 'aria-label': 'Engine speed and road speed' })
     host.appendChild(this.svg)
     this.build()
     this.setScale(scale)
+    this.listen()
   }
 
   build() {
@@ -176,8 +211,11 @@ export class Cluster {
     el('ellipse', { cx: 500, cy: 262, rx: 300, ry: 150, fill: 'url(#rv-bloom)', class: 'rv-bloom' }, s)
     this.glow = el('path', { class: 'rv-glow', filter: 'url(#rv-blur)' }, s)
     this.tipGlow = el('circle', { r: 70, fill: 'url(#rv-tip)', class: 'rv-tipglow' }, s)
+    // The band a finger can grab, shown faintly in simulation mode.
+    this.hitBand = el('path', { class: 'rv-hit' }, s)
     this.segG = el('g', { class: 'rv-segs' }, s)
     this.scaleG = el('g', { class: 'rv-scale' }, s)
+    this.finger = el('circle', { r: 34, class: 'rv-finger', style: 'display:none' }, s)
 
     // Speed pill.
     el('rect', { x: 372, y: 200, width: 256, height: 118, rx: 30, class: 'rv-pill', fill: 'url(#rv-pill)' }, s)
@@ -187,6 +225,11 @@ export class Cluster {
     const icon = el('g', { class: 'rv-icon', transform: 'translate(598 228)' }, s)
     el('path', { d: 'M-9 4 A10 10 0 1 1 9 4' }, icon)
     el('path', { d: 'M0 2 L5 -5' }, icon)
+    this.simTag = text(s, 404, 229, 'rv-sim-tag', 'SIM')
+    this.simTag.style.display = 'none'
+    // Engine speed in digits, under the pill.
+    this.rpmText = text(s, 500, 352, 'rv-rpm', '0')
+    text(s, 500, 382, 'rv-rpm-unit', 'r/min')
 
     // Where the reference has arrows: the gear on the left, the speed
     // source on the right.
@@ -238,8 +281,79 @@ export class Cluster {
       text(sc, lx.toFixed(2), ly.toFixed(2), v >= scale.redFrom ? 'rv-num red' : 'rv-num', String(v / 1000))
       if (v === 0) text(sc, (lx + 20).toFixed(2), (ly + 6).toFixed(2), 'rv-num-unit', '×1000r/min')
     }
+    const rh = (HIT.rMin + HIT.rMax) / 2
+    const [hx0, hy0] = polar(cx, cy, rh, ARC.a0 - HIT.slack)
+    const [hx1, hy1] = polar(cx, cy, rh, ARC.a1 + HIT.slack)
+    this.hitBand.setAttribute('d', `M${hx0.toFixed(1)} ${hy0.toFixed(1)}A${rh} ${rh} 0 0 1 ${hx1.toFixed(1)} ${hy1.toFixed(1)}`)
+    this.hitBand.setAttribute('stroke-width', HIT.rMax - HIT.rMin)
     this.lit = -1
     this.paint(true)
+  }
+
+  // Simulation mode: the arc becomes a control. onHold(rpm) is called as a
+  // finger lands and moves on it, onRelease(tap) when it lifts; null turns
+  // it back into a plain gauge.
+  setTouch(handlers) {
+    this.touch = handlers || null
+    if (!this.touch) this.endDrag(false)
+    this.rpmTau = this.touch ? 0.03 : 0.08
+    if (this.touch) this.svg.setAttribute('data-sim', '')
+    else this.svg.removeAttribute('data-sim')
+    this.simTag.style.display = this.touch ? '' : 'none'
+  }
+
+  // Client (screen) coordinates to picture units.
+  toPicture(e) {
+    const m = this.svg.getScreenCTM()
+    if (!m) return null
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse())
+    return [p.x, p.y]
+  }
+
+  listen() {
+    const svg = this.svg
+    svg.addEventListener('pointerdown', (e) => {
+      if (!this.touch || this.drag) return
+      const p = this.toPicture(e)
+      if (!p || !onArc(p[0], p[1])) return
+      e.preventDefault()
+      try { svg.setPointerCapture(e.pointerId) } catch {}
+      this.drag = { id: e.pointerId, t0: performance.now(), x0: p[0], y0: p[1], moved: 0 }
+      this.hold(p)
+    })
+    svg.addEventListener('pointermove', (e) => {
+      const d = this.drag
+      if (!d || e.pointerId !== d.id) return
+      e.preventDefault()
+      const p = this.toPicture(e)
+      if (!p) return
+      d.moved = Math.max(d.moved, Math.hypot(p[0] - d.x0, p[1] - d.y0))
+      this.hold(p)
+    })
+    const end = (e) => {
+      const d = this.drag
+      if (!d || e.pointerId !== d.id) return
+      this.endDrag(performance.now() - d.t0 < TAP_MS && d.moved < TAP_MOVE)
+    }
+    svg.addEventListener('pointerup', end)
+    svg.addEventListener('pointercancel', end)
+    svg.addEventListener('lostpointercapture', end)
+  }
+
+  hold([x, y]) {
+    const v = valueAt(x, y, this.scale.max)
+    const [fx, fy] = polar(ARC.cx, ARC.cy, (ARC.rOut + ARC.rIn) / 2, angleFor(v, this.scale.max))
+    this.finger.setAttribute('cx', fx.toFixed(1)); this.finger.setAttribute('cy', fy.toFixed(1))
+    this.finger.style.display = ''
+    this.finger.classList.toggle('red', v >= this.scale.redFrom)
+    if (this.touch) this.touch.onHold(fingerRpm(v, this.scale))
+  }
+
+  endDrag(tap) {
+    if (!this.drag) return
+    this.drag = null
+    this.finger.style.display = 'none'
+    if (this.touch) this.touch.onRelease(tap)
   }
 
   // State from the engine. rpm 0 means the engine is off.
@@ -257,7 +371,7 @@ export class Cluster {
 
   frame(dt) {
     this.dt += dt
-    this.rpm = follow(this.rpm, this.rpmTarget, dt)
+    this.rpm = follow(this.rpm, this.rpmTarget, dt, this.rpmTau)
     this.kmh = follow(this.kmh, this.kmhTarget, dt, 0.15)
     this.load = follow(this.load, this.loadTarget, dt, 0.12)
     this.gps = follow(this.gps, this.gpsTarget, dt, 0.3)
@@ -302,6 +416,9 @@ export class Cluster {
     }
     const sp = this.stale ? '––' : String(Math.round(this.kmh))
     if (this.speed.textContent !== sp) this.speed.textContent = sp
+    // Digits to the nearest 10, like a digital tach, so they don't blur.
+    const rt = String(Math.round(this.rpm / 10) * 10)
+    if (this.rpmText.textContent !== rt) this.rpmText.textContent = rt
 
     this.paintBar(this.bars.load, this.load, force)
     this.paintBar(this.bars.gps, this.gps, force)

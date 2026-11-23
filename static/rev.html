@@ -12,9 +12,10 @@
   comes from how fast that speed changes. Everything runs in the browser —
   the Pi only serves the files. See docs/rev-sound.md.
 
-  "Simulator" swaps the GPS for an on-screen pedal, so it can be tried at a
-  desk. The simulator reports speed at a GPS-like rate on purpose, so it
-  sounds the way the car will.
+  "Simulation mode" (parked only) turns the rev meter into a control: drag
+  along it to set the revs, tap it for a blip. "Test drive" swaps the GPS
+  for an on-screen pedal, so driving can be tried at a desk; it reports
+  speed at a GPS-like rate on purpose, so it sounds the way the car will.
 -->
 <script>
   // Same day/night decision as the main page: its last verdict (which already
@@ -92,12 +93,14 @@
     --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
     --rv-chip-bg: #ffffff; --rv-chip-line: rgba(0,0,0,0.12); --rv-chip-text: #d9480f;
     --rv-bar-off: #dcd6cf; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
+    --rv-hit: rgba(240, 140, 0, 0.045); --sel-bg: #fff4e6;
   }
   :root.night {
     --dash-a: #121a26; --dash-b: #070a10; --dash-line: rgba(255,255,255,0.06);
     --rv-num: #cfc7bc; --rv-dot: #7c7468; --rv-red: #ff3b30; --rv-glow-op: 0.38;
     --rv-chip-bg: #141c28; --rv-chip-line: rgba(255,170,80,0.28); --rv-chip-text: #ffb347;
     --rv-bar-off: #2a2f37; --rv-cap: #8a8f97; --rv-pill-line: #ffdb8f; --rv-bloom-op: 1;
+    --rv-hit: rgba(255, 170, 80, 0.035); --sel-bg: #2b1d10;
   }
   .dash {
     background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
@@ -131,6 +134,37 @@
   .rv-bar rect { fill: var(--rv-bar-off); }
   .rv-bar rect.red { fill: var(--rv-red); }
   .rv-bar-end { fill: var(--rv-num); font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+  .rv-rpm { fill: var(--rv-num); font: 800 30px -apple-system, system-ui, sans-serif; text-anchor: middle;
+            dominant-baseline: central; font-variant-numeric: tabular-nums; }
+  .rv-rpm-unit { fill: var(--rv-cap); font: 600 12px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.12em; }
+  .rv-sim-tag { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.1em; }
+  /* Simulation mode: the arc is a control. A faint band shows where a
+     finger can grab it, and a ring follows the finger. */
+  .rv-hit { fill: none; stroke: transparent; stroke-linecap: butt; pointer-events: none; }
+  .cluster-svg[data-sim] { touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+  .cluster-svg[data-sim] .rv-hit { stroke: var(--rv-hit); pointer-events: stroke; }
+  .cluster-svg[data-sim] .rv-rpm { fill: var(--rv-chip-text); }
+  .rv-finger { fill: rgba(255, 210, 120, 0.18); stroke: #ffd27a; stroke-width: 3; pointer-events: none; }
+  .rv-finger.red { stroke: var(--rv-red); fill: rgba(255, 59, 48, 0.2); }
+  .dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 2px 4px 6px; }
+  .simbtn { min-height: 56px; padding: 12px 20px; font-size: 17px; font-weight: 600; border-radius: 28px; }
+  .simbtn[aria-pressed=true] { background: #f08c00; border-color: #ffa94d; color: #1a0d00; }
+  .simbtn:disabled { opacity: 0.5; }
+  #sim-hint { color: var(--muted); font-size: 14px; }
+  #sim-hint.warn { color: var(--warn); }
+
+  /* Car sound picker: big cards for a finger. */
+  .cars { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .carcard {
+    text-align: left; min-height: 96px; padding: 12px 14px; border-radius: 14px;
+    display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  }
+  .carcard b { font-size: 17px; }
+  .carcard .style { font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .carcard .blurb { font-size: 13px; color: var(--muted); font-weight: 400; line-height: 1.3; }
+  .carcard .rng { font-size: 12px; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; margin-top: auto; }
+  .carcard[aria-pressed=true] { border: 2px solid #f08c00; background: var(--sel-bg); padding: 11px 13px; }
+  .carcard[aria-pressed=true] .style { color: #e8590c; }
   .dash-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 4px 6px 0; color: var(--muted); font-size: 13px; }
 
   .pedals { display: flex; gap: 12px; margin-top: 8px; }
@@ -154,12 +188,22 @@
 
   <div class="grid">
     <div class="card span2 dash">
+      <div class="dash-head">
+        <button id="simmode" type="button" class="simbtn" aria-pressed="false">Simulation mode: Off</button>
+        <span id="sim-hint">Parked only. Turn it on, then drag along the rev meter to rev the engine; tap it for a blip.</span>
+      </div>
       <div id="cluster"></div>
       <div class="dash-foot">
         <span id="cluster-cap">Engine</span>
         <span id="state-line">Off.</span>
         <span>GPS <b id="g-rate">&mdash;</b> readings per second</span>
       </div>
+    </div>
+
+    <div class="card span2">
+      <h2>Car sound</h2>
+      <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
+      <p class="hint">Every sound is synthesised on this screen from a few numbers; no recordings. Your choice is remembered.</p>
     </div>
 
     <div class="card">
@@ -174,10 +218,6 @@
         <input id="volume" type="range" min="0" max="100" step="1">
       </div>
       <p class="hint">Keep it low enough to hear horns, sirens and other road users.</p>
-      <div class="row">
-        <label for="profile">Engine</label>
-        <select id="profile"></select>
-      </div>
       <div class="row">
         <label>Gearbox</label>
         <div class="seg" id="mode">
@@ -198,7 +238,7 @@
       <div class="row">
         <div class="seg" id="source">
           <button type="button" data-src="gps">Car GPS</button>
-          <button type="button" data-src="sim">Simulator</button>
+          <button type="button" data-src="sim">Test drive</button>
         </div>
         <button id="start" type="button" class="go">Start</button>
       </div>
@@ -245,7 +285,7 @@
     if (tachFor === p) return
     tachFor = p
     cluster.setScale(tachScale(p.redline, p.idle))
-    $('cluster-cap').textContent = p.name + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    $('cluster-cap').textContent = p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
   }
   let lastFrame = performance.now()
   function frame(now) {
@@ -256,8 +296,53 @@
   }
   requestAnimationFrame(frame)
 
-  for (const [k, p] of Object.entries(PROFILES)) $('profile').add(new Option(p.name, k))
+  // ── Car sound picker ────────────────────────────────────────────────
+  const cards = {}
+  for (const [k, p] of Object.entries(PROFILES)) {
+    const b = document.createElement('button')
+    b.type = 'button'; b.className = 'carcard'; b.dataset.profile = k
+    b.innerHTML = '<span class="style"></span><b></b><span class="blurb"></span><span class="rng"></span>'
+    b.querySelector('.style').textContent = p.style
+    b.querySelector('b').textContent = p.name
+    b.querySelector('.blurb').textContent = p.blurb
+    b.querySelector('.rng').textContent = 'idle ' + p.idle + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    $('cars').appendChild(b)
+    cards[k] = b
+  }
+  $('cars').onclick = async (e) => {
+    const b = e.target.closest('[data-profile]')
+    if (!b) return
+    rs.update({ profile: b.dataset.profile })
+    fitTach(); syncSettings()
+    // A blip so you hear what you picked. The tap is the gesture the
+    // browser wants before it makes sound; blip() refuses if the car moves.
+    if (!rs.running) { await rs.start(); syncSettings() }
+    if (!cluster.touch) rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
+  }
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
+
+  // ── Simulation mode ─────────────────────────────────────────────────
+  // The rev meter becomes a control: the finger sets the rpm, lifting lets
+  // the engine fall back to idle, a tap is a blip. The engine refuses it
+  // while the car moves, and ends it the moment the car starts moving.
+  const touchHandlers = {
+    onHold: (rpm) => rs.touch(rpm),
+    onRelease: (tap) => rs.untouch(tap),
+  }
+  let simNote = ''
+  function setSimUi(on) {
+    cluster.setTouch(on ? touchHandlers : null)
+    $('simmode').setAttribute('aria-pressed', String(on))
+    $('simmode').textContent = 'Simulation mode: ' + (on ? 'On' : 'Off')
+  }
+  $('simmode').onclick = async () => {
+    if (cluster.touch) { rs.setSim(false); setSimUi(false); simNote = ''; return }
+    if (!rs.running) { await rs.start(); syncSettings() }
+    if (!rs.running) return // sound could not start; the banner says why
+    const on = rs.setSim(true)
+    simNote = on ? '' : 'The car is moving. Simulation mode is for when it is stopped.'
+    setSimUi(on)
+  }
 
   function syncSettings() {
     const s = rs.settings
@@ -265,7 +350,7 @@
     $('enabled').textContent = s.enabled ? 'On' : 'Off'
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
-    $('profile').value = s.profile
+    for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
     for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
@@ -284,12 +369,14 @@
     syncSettings()
   }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
-  $('profile').onchange = (e) => { rs.update({ profile: e.target.value }); fitTach() }
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
   $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings(); rs.emit(performance.now()) } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
-  $('start').onclick = async () => { if (rs.running) rs.stop(); else await rs.start(); syncSettings() }
+  $('start').onclick = async () => {
+    if (rs.running) { rs.setSim(false); setSimUi(false); rs.stop() } else await rs.start()
+    syncSettings()
+  }
 
   // Press-and-hold controls. Pointer capture keeps the hold when a finger
   // slides off the button; lostpointercapture catches every way it ends.
@@ -310,15 +397,32 @@
 
   function render(s) {
     fitTach()
-    // Engine off reads 0, like a real cluster with the ignition off.
+    // The engine ended simulation mode because the car moved.
+    if (cluster.touch && !s.sim) {
+      setSimUi(false)
+      if (s.simEnded === 'moving') simNote = 'Simulation ended: the car is moving. The engine follows the car again.'
+    }
+    const moving = s.running && !s.stopped
+    $('simmode').disabled = moving && !cluster.touch
+    const hint = $('sim-hint')
+    const text = simNote || (cluster.touch
+      ? 'Drag along the rev meter to rev; lift to let it fall back. Tap for a blip. Into the red hits the limiter.'
+      : moving ? 'Simulation mode works only while the car is stopped.'
+      : 'Parked only. Turn it on, then drag along the rev meter to rev the engine; tap it for a blip.')
+    if (hint.textContent !== text) hint.textContent = text
+    hint.classList.toggle('warn', !!simNote || moving)
+
+    // Engine off reads 0, like a real cluster with the ignition off. In
+    // simulation mode the speed is still the car's real speed (0, since it
+    // only runs stopped) and the gear is N: a parked car being revved.
     cluster.set({
       rpm: s.running ? s.rpm : 0,
       kmh: s.v * 3.6,
       gear: !s.running ? '\u2013' : s.stopped ? 'N' : String(s.gear),
-      source: s.source === 'sim' ? 'SIM' : 'GPS',
+      source: s.sim ? 'SIM' : s.source === 'sim' ? 'TEST' : 'GPS',
       load: s.running ? s.load : 0,
       fixRate: s.fixRate || 0,
-      stale: s.running && s.source === 'gps' && s.stale,
+      stale: s.running && s.source === 'gps' && s.stale && !s.sim,
     })
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped
@@ -326,7 +430,9 @@
     err.hidden = !s.error
     if (s.error) err.textContent = s.error
     $('state-line').textContent = !s.running ? 'Off.'
-      : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed…'
+      : s.sim ? (s.limiter ? 'Simulation: on the limiter.' : s.touching ? 'Simulation: following your finger.' : 'Simulation: idling.')
+      : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed\u2026'
+      : s.limiter ? 'On the limiter.'
       : s.stopped && s.rpm > s.idle * 1.2 ? 'Revving.'
       : s.shifting ? 'Shifting.'
       : s.load < -0.2 ? 'Lifting off.'
@@ -335,7 +441,7 @@
   }
 
   syncSettings()
-  render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, idle: 1, running: false, stale: true, source: rs.source })
+  render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, idle: 1, running: false, stale: true, source: rs.source, sim: false })
 </script>
 </body>
 </html>

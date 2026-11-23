@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   ARC, VIEW, SEG_PER_1000, BAR_N, tachScale, angleFor, polar, segmentsFor, litCount, shownLit,
-  mix, litColor, LIT, barLit, follow, zone, ZoneLatch,
+  mix, litColor, LIT, barLit, follow, zone, ZoneLatch, valueAt, onArc, fingerRpm, HIT,
 } from '../static/rev-gauge.js'
 import { FreeRev } from '../static/rev-model.js'
 import { PROFILES } from '../static/rev-profiles.js'
@@ -151,4 +151,43 @@ test('at the redline the run reaches into the red zone, even with the display ea
     assert.equal(shownLit(eased, segs, 'warn'), litCount(eased, segs))
     assert.equal(shownLit(s.max, segs, 'red'), segs.length)
   }
+})
+
+// ── The arc as a touch control ──────────────────────────────────────────
+test('a point on the arc reads back as the value drawn there', () => {
+  const max = 8000
+  for (let v = 0; v <= max; v += 250) {
+    for (const r of [ARC.rIn, ARC.rOut, HIT.rMin + 1, HIT.rMax - 1]) {
+      const [x, y] = polar(ARC.cx, ARC.cy, r, angleFor(v, max))
+      assert.ok(Math.abs(valueAt(x, y, max) - v) < 1e-6, `${v} at r ${r}`)
+    }
+  }
+  // Past either end clamps to that end.
+  const [lx, ly] = polar(ARC.cx, ARC.cy, 615, ARC.a0 - 4)
+  const [rx, ry] = polar(ARC.cx, ARC.cy, 615, ARC.a1 + 4)
+  assert.equal(valueAt(lx, ly, max), 0)
+  assert.equal(valueAt(rx, ry, max), max)
+})
+
+test('the arc is easy to grab, but the pill and the bars are not part of it', () => {
+  const s = segmentsFor(tachScale(6800))
+  for (const seg of s) {
+    for (const r of [ARC.rIn - 60, ARC.rIn, ARC.rOut, ARC.rOut + 60]) {
+      const [x, y] = polar(ARC.cx, ARC.cy, r, seg.angle)
+      assert.ok(onArc(x, y), `segment ${seg.i} at r ${r}`)
+    }
+  }
+  assert.ok(HIT.rMax - HIT.rMin >= 180, 'a band at least 180 units deep')
+  assert.ok(!onArc(500, 259), 'the speed pill')
+  assert.ok(!onArc(500, 352), 'the rpm digits')
+  assert.ok(!onArc(225, 330), 'the load bar')
+  assert.ok(!onArc(-200, 380), 'off the picture')
+})
+
+test('a finger in the red zone asks for the limiter', () => {
+  const sc = tachScale(6800, 650)
+  assert.equal(fingerRpm(3000, sc), 3000)
+  assert.equal(fingerRpm(-1, sc), 0)
+  assert.ok(fingerRpm(6800, sc) > 6800)
+  assert.ok(fingerRpm(7900, sc) > 6800)
 })

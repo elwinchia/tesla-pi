@@ -111,13 +111,12 @@ test('slowing down shifts back down', () => {
 test('FreeRev climbs to the limiter, bounces off it, and falls back to idle', () => {
   const p = PROFILES.v10
   const fr = new FreeRev(p)
-  let max = 0, cuts = 0, wasCut = false
+  let max = 0, cuts = 0, below = true
   for (let i = 0; i < 150; i++) {
     const s = fr.step(1, 0.02)
     max = Math.max(max, s.rpm)
-    const cut = fr.cut > 0
-    if (cut && !wasCut) cuts++
-    wasCut = cut
+    if (s.rpm >= p.redline && below) cuts++
+    below = s.rpm < p.redline
   }
   assert.equal(max, p.redline)
   assert.ok(cuts >= 2, `limiter hit ${cuts} times`)
@@ -154,4 +153,117 @@ test('the gearbox does not hunt under a steady part-throttle pull or a steady cr
       }
     }
   }
+})
+
+// ── Simulation mode: a finger on the rev meter drives FreeRev ────────────
+const run = (fr, seconds, each = () => {}) => {
+  const out = []
+  for (let i = 0; i < Math.round(seconds / 0.02); i++) { each(i); out.push(fr.step(0, 0.02)) }
+  return out
+}
+
+test('a held finger: the engine reaches it in about a tenth of a second and stays there', () => {
+  const p = PROFILES.v8
+  const fr = new FreeRev(p)
+  fr.hold(4000)
+  const rise = run(fr, 0.14)
+  assert.ok(Math.abs(fr.rpm - 4000) < 4000 * 0.05, `at ${fr.rpm} after 140 ms`)
+  assert.ok(rise[0].load >= 0.4, 'rising under the finger reads as load')
+  run(fr, 1)
+  assert.ok(Math.abs(fr.rpm - 4000) < 5, `drifted to ${fr.rpm}`)
+  assert.ok(fr.touching)
+})
+
+test('a dragging finger is followed closely, up and down', () => {
+  const fr = new FreeRev(PROFILES.i6)
+  let worst = 0, target = 0
+  // Sweep 1000 → 6000 → 1000 rpm over two seconds.
+  run(fr, 2, (i) => {
+    const t = i * 0.02
+    target = 1000 + 5000 * (t < 1 ? t : 2 - t)
+    fr.hold(target)
+    if (i > 5) worst = Math.max(worst, Math.abs(fr.rpm - target))
+  })
+  assert.ok(worst < 400, `fell ${worst.toFixed(0)} rpm behind the finger`)
+})
+
+test('lifting the finger lets the engine fall back to idle like a real one, on overrun', () => {
+  const p = PROFILES.v8
+  const fr = new FreeRev(p)
+  fr.hold(5000); run(fr, 0.5)
+  fr.release()
+  const fall = run(fr, 0.3)
+  assert.ok(fall.every((s) => s.load < 0), 'falling revs are overrun')
+  assert.ok(fall[fall.length - 1].rpm < 5000, 'falling, not dropping to idle at once')
+  assert.ok(fall[fall.length - 1].rpm > p.idle, 'not instantly at idle')
+  run(fr, 2)
+  assert.equal(fr.rpm, p.idle)
+  assert.ok(!fr.touching)
+})
+
+test('a tap is a blip: the engine reaches the tapped rpm, then falls back', () => {
+  for (const [name, p] of Object.entries(PROFILES)) {
+    const fr = new FreeRev(p)
+    fr.hold(5000); fr.release(true) // finger up before the engine moved
+    const out = run(fr, 3)
+    const max = Math.max(...out.map((s) => s.rpm))
+    assert.ok(max >= 5000 * 0.97 && max <= 5000 * 1.01, `${name}: blipped to ${max}`)
+    assert.equal(fr.rpm, p.idle, name)
+  }
+})
+
+test('a finger in the red holds the engine on the limiter; a tap there is one bang off it', () => {
+  const p = PROFILES.v8
+  const fr = new FreeRev(p)
+  fr.hold(p.redline * 2)
+  let hits = 0, below = true
+  const out = run(fr, 2, () => fr.hold(p.redline * 2))
+  for (const s of out) { if (s.rpm >= p.redline && below) hits++; below = s.rpm < p.redline }
+  assert.equal(Math.max(...out.map((s) => s.rpm)), p.redline)
+  assert.ok(hits >= 5, `limiter hit ${hits} times in 2 s`)
+  assert.ok(out.slice(25).some((s) => s.load < -0.3), 'the cut is overrun: it crackles')
+
+  const tap = new FreeRev(p)
+  tap.hold(p.redline * 2); tap.release(true)
+  const t = run(tap, 3)
+  hits = 0; below = true
+  for (const s of t) { if (s.rpm >= p.redline && below) hits++; below = s.rpm < p.redline }
+  assert.equal(hits, 1)
+  assert.equal(tap.rpm, p.idle)
+})
+
+test('each engine has its own limiter: a race engine bounces faster than a muscle car', () => {
+  const rate = (p) => {
+    const fr = new FreeRev(p)
+    let hits = 0, below = true
+    run(fr, 3, () => fr.hold(p.redline * 2)).slice(50).forEach((s) => {
+      if (s.rpm >= p.redline && below) hits++
+      below = s.rpm < p.redline
+    })
+    return hits
+  }
+  assert.ok(rate(PROFILES.flat6) > rate(PROFILES.v8) * 1.5, `flat6 ${rate(PROFILES.flat6)} v8 ${rate(PROFILES.v8)}`)
+})
+
+test('changing engine lets go of the finger, and the finger is kept inside the engine range', () => {
+  const fr = new FreeRev(PROFILES.v8)
+  fr.hold(-50)
+  assert.equal(fr.target, PROFILES.v8.idle)
+  fr.hold(NaN)
+  assert.equal(fr.target, PROFILES.v8.idle)
+  fr.setProfile(PROFILES.v12)
+  assert.ok(!fr.touching)
+})
+
+test('on the limiter reads as one steady state through the bounce', () => {
+  const p = PROFILES.v8
+  const fr = new FreeRev(p)
+  assert.equal(fr.onLimiter, false)
+  run(fr, 0.5, () => fr.hold(p.redline * 2))
+  const states = []
+  run(fr, 1, (i) => { fr.hold(p.redline * 2); if (i > 0) states.push(fr.onLimiter) })
+  assert.ok(states.every(Boolean), `dropped off ${states.filter((x) => !x).length} times`)
+  fr.release()
+  run(fr, 0.5)
+  assert.equal(fr.onLimiter, false)
 })

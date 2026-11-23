@@ -203,20 +203,56 @@ export class Gearbox {
 // ── Free rev (parked) ─────────────────────────────────────────────────────
 // Neutral: the throttle spins the engine up against its own inertia, the
 // limiter bounces it off redline, and it falls back to idle when released.
+//
+// Simulation mode drives it with a finger instead of a throttle: hold(rpm)
+// makes the engine chase that rpm (as fast as it can follow without a
+// click), release() lets it fall back to idle the way it would off the
+// throttle, and a tap is a blip: the engine still reaches the tapped rpm,
+// then falls. A target past the redline hits the limiter and stays on it.
+export const TOUCH_TAU = 0.04 // s: the engine is within 5 % of the finger in ~120 ms
+export const LIMIT_OVER = 1.06 // a finger in the red asks for this much past redline
 export class FreeRev {
-  constructor(profile) { this.p = profile; this.rpm = profile.idle; this.cut = 0 }
-  setProfile(p) { this.p = p }
+  constructor(profile) { this.p = profile; this.rpm = profile.idle; this.cut = 0; this.sinceCut = Infinity; this.target = null; this.blip = false }
+  setProfile(p) { this.p = p; this.release() }
+
+  hold(rpm) {
+    const p = this.p
+    this.target = clamp(Number.isFinite(rpm) ? rpm : p.idle, p.idle, p.redline * LIMIT_OVER)
+    this.blip = false
+  }
+  // blip: keep going until the engine gets there, then let go.
+  release(blip = false) {
+    if (blip && this.target != null && this.rpm < this.reach()) this.blip = true
+    else { this.target = null; this.blip = false }
+  }
+  get touching() { return this.target != null }
+  // Touched the limiter in the last 0.3 s: the bounce reads as one state.
+  get onLimiter() { return this.sinceCut < 0.3 }
+  // Where a blip counts as arrived: near the tapped rpm, or one bang off the
+  // limiter for a tap in the red.
+  reach() { return this.target >= this.p.redline ? this.p.redline : this.target * 0.97 }
+
   step(throttle, dt) {
     const p = this.p
-    throttle = clamp(throttle, 0, 1)
     if (this.cut > 0) this.cut -= dt
-    const on = this.cut <= 0 ? throttle : 0
-    const rise = on * p.revRise
-    const fall = (1 - on) * p.revFall
-    this.rpm += (rise - fall) * dt
-    if (this.rpm >= p.redline) { this.rpm = p.redline; this.cut = 0.07 }
+    this.sinceCut += dt
+    const before = this.rpm
+    let load
+    if (this.target != null && this.cut <= 0) {
+      this.rpm += (this.target - this.rpm) * (1 - Math.exp(-dt / TOUCH_TAU))
+      // What a throttle would be doing to move the revs like that: rising
+      // is load, holding needs a little, chasing a finger down is overrun.
+      const rate = (this.rpm - before) / dt
+      load = rate > 200 ? clamp(0.4 + rate / p.revRise, 0.4, 1) : rate < -1500 ? -0.5 : 0.25
+    } else {
+      throttle = this.target != null ? 0 : clamp(throttle, 0, 1)
+      const on = this.cut <= 0 ? throttle : 0
+      this.rpm += (on * p.revRise - (1 - on) * p.revFall) * dt
+      load = on > 0 ? on : (this.rpm > p.idle * 1.3 ? -0.6 : 0)
+    }
+    if (this.rpm >= p.redline) { this.rpm = p.redline; this.cut = (p.limiter || 70) / 1000; this.sinceCut = 0 }
     if (this.rpm < p.idle) this.rpm = p.idle
-    const load = on > 0 ? on : (this.rpm > p.idle * 1.3 ? -0.6 : 0)
+    if (this.blip && this.rpm >= this.reach()) this.release()
     return { rpm: this.rpm, gear: 0, load, shifting: false }
   }
 }

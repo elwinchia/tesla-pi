@@ -91,3 +91,74 @@ test('a voice with no engine chosen yet is silent', () => {
   v.render([L], 128)
   assert.ok(L.every((x) => x === 0))
 })
+
+// ── Car sounds ──────────────────────────────────────────────────────────
+test('every car sound is complete and has its own name', () => {
+  const names = new Set()
+  for (const [k, p] of Object.entries(PROFILES)) {
+    for (const f of ['name', 'style', 'blurb']) assert.ok(typeof p[f] === 'string' && p[f].length > 1, `${k}.${f}`)
+    names.add(p.name + ' ' + p.style)
+    assert.ok(p.idle > 400 && p.idle < p.launch && p.launch < p.redline && p.redline <= 10000, k)
+    assert.ok(p.limiter >= 30 && p.limiter <= 200, `${k} limiter`)
+    for (let g = 1; g < p.gears.length; g++) assert.ok(p.gears[g] > p.gears[g - 1], `${k} gear ${g + 1}`)
+    const ats = p.cylinders.map((c) => c.at)
+    assert.equal(new Set(ats).size, ats.length, `${k}: two firings at one point`)
+    for (const c of p.cylinders) {
+      assert.ok(c.at >= 0 && c.at < 1, k)
+      assert.ok(Number.isInteger(c.bank) && c.bank >= 0 && c.bank < p.banks.length && c.bank < 2, `${k} bank`)
+    }
+    if (p.turbo) {
+      const t = p.turbo
+      assert.ok(t.whistle[0] < t.whistle[1] && t.whistle[1] < 20000 && t.level > 0 && t.spool > 0 && t.bov >= 0, `${k} turbo`)
+    }
+  }
+  assert.equal(names.size, Object.keys(PROFILES).length)
+  assert.ok(Object.keys(PROFILES).length >= 8)
+})
+
+test('a turbo spools up under load and blows off when you lift', () => {
+  const v = new EngineVoice(SR, 2)
+  v.setProfile(PROFILES.i4t)
+  v.rpm = 5000; v.load = 1
+  v.set({ rpm: 5000, load: 1, gain: 1 })
+  const L = new Float32Array(128), R = new Float32Array(128)
+  const blocks = (s) => { for (let i = 0; i < Math.round(s * SR / 128); i++) v.render([L, R], 128) }
+  blocks(0.15)
+  const early = v.boost
+  blocks(2)
+  assert.ok(v.boost > 0.7 && v.boost > early * 2, `boost ${early} → ${v.boost}`)
+  v.set({ load: -0.6 })
+  blocks(0.05)
+  assert.ok(v.bov > 0.02, `blow-off ${v.bov}`)
+  assert.ok(v.boost < 0.4)
+  blocks(2)
+  assert.ok(v.bov < 1e-3, 'the blow-off dies away')
+
+  const n = new EngineVoice(SR, 2)
+  n.setProfile(PROFILES.v12)
+  n.set({ rpm: 6000, load: 1, gain: 1 })
+  for (let i = 0; i < 400; i++) n.render([L, R], 128)
+  assert.equal(n.boost, 0, 'no turbo, no boost')
+})
+
+test('a lumpy cam lopes at idle and smooths out with revs', () => {
+  // Record the strength of every firing.
+  const amps = (p, rpm) => {
+    const v = new EngineVoice(SR, 5)
+    v.setProfile(p)
+    v.rpm = rpm; v.load = 0
+    v.set({ rpm, load: 0, gain: 1 })
+    const got = []
+    const add = v.pulses.add.bind(v.pulses)
+    v.pulses.add = (x, y, z) => { got.push(z); add(x, y, z) }
+    const L = new Float32Array(128), R = new Float32Array(128)
+    for (let i = 0; i < Math.round(3 * SR / 128); i++) v.render([L, R], 128)
+    const m = got.reduce((a, b) => a + b, 0) / got.length
+    return Math.sqrt(got.reduce((a, b) => a + (b - m) ** 2, 0) / got.length) / m
+  }
+  const v8Idle = amps(PROFILES.v8, PROFILES.v8.idle)
+  const v12Idle = amps(PROFILES.v12, PROFILES.v12.idle)
+  const v8High = amps(PROFILES.v8, PROFILES.v8.idle * 4)
+  assert.ok(v8Idle > 2 * v12Idle, `V8 ${v8Idle.toFixed(3)} vs V12 ${v12Idle.toFixed(3)} at idle`)
+  assert.ok(v8High < v8Idle / 2, `V8 at 4× idle ${v8High.toFixed(3)}`)
+})
