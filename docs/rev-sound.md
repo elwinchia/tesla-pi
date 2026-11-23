@@ -102,9 +102,9 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 |---|---|
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
 | `static/rev-profiles.js` | The V8: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
-| `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, and crossfades the on-load and overrun layers by load. |
+| `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
-| `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 17 files, 243 kB together) and `CREDITS.md`. |
+| `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 34 files, 455 kB together, engine and exhaust) and `CREDITS.md`. |
 | `scripts/engine-sim/` | A headless build of engine-sim (MIT) for macOS and the scripts that render the V8's loops; see its README. Nothing in it ships to the Pi. |
 | `scripts/rev-samples.mjs` | Rebuilds `static/sounds/` from the renders: cuts, loops, EQs, mixes the sub layer, levels and encodes (`--print-levels` gives the levels). It can also fetch credited Freesound recordings. Needs `ffmpeg` on the machine that builds; the car doesn't. |
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, an idle lope, saturation and a DC blocker follow. It allocates nothing on the audio thread. It plays the loop player when the car's loops are loaded, and the synthesiser only as the fallback. |
@@ -184,7 +184,15 @@ physically modelled combustion engine, from its bundled GM LS V8:
 - 8 rev points from 1,200 to 6,300 rpm, each held on engine-sim's dynamometer
   twice: at **full throttle (on-load)** and at **closed throttle (overrun)**.
 
-That makes 17 loops at 64 kbit/s, 243 kB (`static/sounds/v8-es-*`).
+Each run is heard from two places, which the **Exhaust** setting crossfades
+(equal power, default half and half):
+
+- **Engine** (`static/sounds/v8-es-*`): through engine-sim's "real engine"
+  impulse response.
+- **Exhaust** (`v8-ex-*`): through its "minimal muffling" response, a near
+  straight pipe, raspier, with its weight at 160–320 Hz.
+
+That makes 34 loops at 64 kbit/s, 455 kB.
 
 **How it plays:**
 
@@ -224,8 +232,9 @@ Measured on the 22 s demo, as each band's share of the total:
 | pulling, after | **−10 dB** | **−4 dB** |
 
 That's within a few dB of real V8 recordings, and nothing clips.
-`static/rev-samples.js` records the impulse response, EQ, sub layer and
-levels; `scripts/rev-samples.mjs` applies them.
+`static/rev-samples.js` records the impulse responses, EQ, sub layer and
+levels; `scripts/rev-samples.mjs` applies them. The exhaust group has the
+same EQ and sub layer, so turning the Exhaust setting up keeps the bass.
 
 **How it was built.** engine-sim officially builds only on Windows. Its
 simulation core builds headless on macOS after six small portability

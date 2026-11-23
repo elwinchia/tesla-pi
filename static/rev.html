@@ -228,6 +228,11 @@
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
       </div>
+      <div class="row">
+        <label for="exhaust">Exhaust</label>
+        <input id="exhaust" type="range" min="0" max="100" step="5">
+      </div>
+      <p class="hint">Left: the engine. Right: the exhaust, a near straight pipe, raspier. In between mixes both.</p>
       <p class="hint">Keep it low enough to hear horns, sirens and other road users.</p>
       <div class="row">
         <label>Gearbox</label>
@@ -382,6 +387,7 @@
     $('enabled').textContent = s.enabled ? 'On' : 'Off'
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
+    $('exhaust').value = Math.round(s.exhaust * 100)
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
@@ -401,6 +407,7 @@
     syncSettings()
   }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
+  $('exhaust').oninput = (e) => rs.update({ exhaust: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
   $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings(); rs.emit(performance.now()) } }

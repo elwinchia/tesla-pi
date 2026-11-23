@@ -19,7 +19,10 @@ scripts/engine-sim/build.sh                         # clone (pinned), patch a co
 # The V8: through engine-sim's "real engine" exhaust impulse response...
 ES_IR=es/sound-library/archive/test_engine_14_eq_adjusted_16.wav \
   scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8 1200 1800 2500 3200 4000 4800 5600 6300
-# ...and dry (no impulse response), for its low sub layer
+# ...through its "minimal muffling" response, for the exhaust group...
+ES_IR=es/sound-library/new/minimal_muffling_01.wav \
+  scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-exhaust 1200 1800 2500 3200 4000 4800 5600 6300
+# ...and dry (no impulse response), for the low sub layer under both
 ES_CONV=0 scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-dry 1200 1800 2500 3200 4000 4800 5600 6300
 node scripts/rev-samples.mjs --print-levels v8       # the levels static/rev-samples.js holds
 node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the sub, level, encode into static/sounds/

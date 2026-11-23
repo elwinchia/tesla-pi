@@ -39,7 +39,7 @@ const opt = (name, def) => {
 if (args.includes('--help') || args.includes('-h')) {
   console.log('usage: rev-render.mjs [--profile ' + Object.keys(PROFILES).join('|') + ' | --all] [--mode comfort|normal|sport]\n' +
     '                     [--car ' + Object.keys(CARS).join('|') + '] [--scene drive|rev|demo]\n' +
-    '                     [--recorded] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
+    '                     [--recorded [--exhaust 0..1]] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
   process.exit(0)
 }
 const fixMs = Number(opt('fix-ms', 1000))
@@ -111,13 +111,13 @@ if (recorded) {
   voice.setSet({ loops: SAMPLE_SETS[settings.profile].loops.map((l) => {
     const b = execFileSync('ffmpeg', ['-v', 'error', '-i', path.join(dir, l.file), '-ac', '1', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 26 })
     const data = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length))
-    return { rpm: l.rpm, layer: l.layer, gain: l.gain, data: loopSlice(data, SR, l), sr: SR }
+    return { rpm: l.rpm, layer: l.layer, group: l.group, gain: l.gain, data: loopSlice(data, SR, l), sr: SR }
   }) })
 } else {
   voice = new EngineVoice(SR, 0x5eed)
   voice.setProfile(PROFILES[settings.profile])
 }
-voice.set({ gain: 0.5 })
+voice.set({ gain: 0.5, exhaust: Number(opt('exhaust', DEFAULTS.exhaust)) })
 
 const frames = Math.round(seconds / TICK) * BLOCK
 const pcm = Buffer.alloc(frames * 4)

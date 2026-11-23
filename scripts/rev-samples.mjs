@@ -160,7 +160,8 @@ function wav(file, x) {
 
 // An engine-sim set's rendered WAV for one loop.
 function renderFile(set, loop) {
-  const f = path.join(ROOT, '.cache', 'engine-sim', 'out', set.renders, loop.render + '.wav')
+  const dir = typeof set.renders === 'string' ? set.renders : set.renders[loop.group || 'engine']
+  const f = path.join(ROOT, '.cache', 'engine-sim', 'out', dir, loop.render + '.wav')
   if (!fs.existsSync(f)) throw new Error(`${f} is missing: render it with scripts/engine-sim/render-set.sh (see scripts/engine-sim/README.md)`)
   return f
 }
@@ -211,13 +212,18 @@ function credits() {
 function printLevels(car) {
   const set = SAMPLE_SETS[car]
   const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length)
-  const r = {}
-  for (const l of set.loops) r[l.render] ??= rms(stretchFor(set, l, l.seconds))
-  const on = set.loops.filter((l) => l.layer === 'on' && l.render !== 'idle').sort((a, b) => a.rpm - b.rpm)
-  const ref = Math.max(...on.map((l) => r[l.render]))
-  const lv = (k) => Math.round(Math.sqrt(r[k] / ref) * 1000) / 1000
-  console.log('idle', Math.round(0.6 * lv(on[0].render) * 1000) / 1000)
-  for (const l of on) console.log(l.rpm, 'on', lv(l.render), 'off', lv(`off-${l.rpm}`))
+  // Each group is levelled on its own: at either end of the Exhaust
+  // setting the engine is equally loud.
+  for (const group of [...new Set(set.loops.map((l) => l.group || 'engine'))]) {
+    const loops = set.loops.filter((l) => (l.group || 'engine') === group)
+    const r = {}
+    for (const l of loops) r[l.render] ??= rms(stretchFor(set, l, l.seconds))
+    const on = loops.filter((l) => l.layer === 'on' && l.render !== 'idle').sort((a, b) => a.rpm - b.rpm)
+    const ref = Math.max(...on.map((l) => r[l.render]))
+    const lv = (k) => Math.round(Math.sqrt(r[k] / ref) * 1000) / 1000
+    console.log(`${group}: idle`, Math.round(0.6 * lv(on[0].render) * 1000) / 1000)
+    console.log('  [' + on.map((l) => `[${l.rpm}, ${lv(l.render)}, ${lv(`off-${l.rpm}`)}]`).join(', ') + ']')
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

@@ -20,6 +20,7 @@ export const DEFAULTS = Object.freeze({
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
+  exhaust: 0.5,        // 0 = heard from the engine, 1 = from the exhaust
 })
 // Below this the car counts as stopped: the gearbox hands over to the free
 // revving engine, and the Rev control is allowed. ~4 km/h.
@@ -47,6 +48,7 @@ export function sanitise(raw) {
   if (Object.hasOwn(PROFILES, raw.profile)) s.profile = raw.profile
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
+  if (Number.isFinite(raw.exhaust)) s.exhaust = clamp(raw.exhaust, 0, 1)
   return s
 }
 
@@ -308,7 +310,7 @@ export class RevSound {
       }
       this.sampleCache.set(car, Promise.all(SAMPLE_SETS[car].loops.map(async (l) => {
         const buf = await decoded(l.file)
-        return { rpm: l.rpm, layer: l.layer || 'any', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
+        return { rpm: l.rpm, layer: l.layer || 'any', group: l.group || 'engine', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
       })).then((loops) => ({ loops })))
     }
     return this.sampleCache.get(car)
@@ -357,7 +359,7 @@ export class RevSound {
     const s = this.engine.step(t, dt)
     if (this.node) {
       const v = this.settings.volume
-      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v } })
+      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v, exhaust: this.settings.exhaust } })
     }
     this.emit(t)
   }

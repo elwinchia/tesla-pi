@@ -50,44 +50,68 @@ export class SampleVoice {
   }
 
   // set: { loops: [{ rpm, layer: 'on' | 'off' | 'any', gain?, data: Float32Array, sr }] }
+  // set: { loops: [{ rpm, layer: 'on' | 'off' | 'any', group?: 'engine' |
+  // 'exhaust', gain?, data: Float32Array, sr }] }
   setSet(set) {
     const loops = (set && set.loops ? set.loops : [])
       .filter((l) => l && l.data && l.data.length > 1 && l.rpm > 0 && l.sr > 0)
-      .map((l) => ({ rpm: l.rpm, layer: l.layer || 'any', gain: l.gain || 1, data: l.data, sr: l.sr, pos: 0, w: 0, wTarget: 0 }))
+      .map((l) => ({ rpm: l.rpm, layer: l.layer || 'any', group: l.group || 'engine', gain: l.gain || 1, data: l.data, sr: l.sr, pos: 0, w: 0, wTarget: 0 }))
       .sort((a, b) => a.rpm - b.rpm)
     // Start each loop at a different point, so two loops of one recording
     // never line up into a comb.
     loops.forEach((l, i) => { l.pos = (l.data.length * 0.37 * i) % l.data.length })
     this.loops = loops
-    this.layers = {}
-    for (const l of loops) (this.layers[l.layer] ||= []).push(l)
-    this.weights = {}
-    for (const [k, ls] of Object.entries(this.layers)) this.weights[k] = new Float64Array(ls.length)
-    this.split = !!(this.layers.on && this.layers.off)
-    this.allW = new Float64Array(loops.length)
+    // Each group (the same engine heard from the engine or the exhaust) is
+    // weighted on its own, by rpm and load, then scaled by the mix.
+    this.groups = {}
+    for (const l of loops) {
+      const g = (this.groups[l.group] ||= { loops: [], layers: {} })
+      g.loops.push(l)
+      ;(g.layers[l.layer] ||= []).push(l)
+    }
+    for (const g of Object.values(this.groups)) {
+      g.split = !!(g.layers.on && g.layers.off)
+      g.weights = {}
+      for (const [k, ls] of Object.entries(g.layers)) g.weights[k] = new Float64Array(ls.length)
+      g.allW = new Float64Array(g.loops.length)
+    }
+    this.split = loops.length > 0 && Object.values(this.groups).every((g) => g.split)
   }
   get ready() { return this.loops.length > 0 }
 
-  set({ rpm, load, gain }) {
+  // exhaust: 0 = all engine, 1 = all exhaust (only with both groups).
+  set({ rpm, load, gain, exhaust }) {
     if (Number.isFinite(rpm)) this.rpmTarget = Math.max(100, rpm)
     if (Number.isFinite(load)) this.loadTarget = clamp(load, -1, 1)
     if (Number.isFinite(gain)) this.gainTarget = clamp(gain, 0, 1)
+    if (Number.isFinite(exhaust)) this.exhaust = clamp(exhaust, 0, 1)
+  }
+
+  // How loud each group plays. The groups' loops start at different points,
+  // so they add up incoherently: an equal-power crossfade keeps the level
+  // steady across the setting.
+  groupGain(name) {
+    if (!(this.groups.engine && this.groups.exhaust)) return 1
+    const m = this.exhaust ?? 0.5
+    return name === 'exhaust' ? Math.sqrt(m) : name === 'engine' ? Math.sqrt(1 - m) : 0
   }
 
   // The weight every loop should have now.
   targets() {
     const rpm = this.rpm
-    if (this.split) {
-      const on = onLoadMix(this.load)
-      for (const [k, ls] of Object.entries(this.layers)) {
-        const w = pairWeights(ls, rpm, this.weights[k])
-        const m = k === 'on' ? on : k === 'off' ? 1 - on : 0
-        ls.forEach((l, i) => { l.wTarget = w[i] * Math.sqrt(m) })
+    const on = onLoadMix(this.load)
+    for (const [name, g] of Object.entries(this.groups)) {
+      const gg = this.groupGain(name)
+      if (g.split) {
+        for (const [k, ls] of Object.entries(g.layers)) {
+          const w = pairWeights(ls, rpm, g.weights[k])
+          const m = k === 'on' ? on : k === 'off' ? 1 - on : 0
+          ls.forEach((l, i) => { l.wTarget = w[i] * Math.sqrt(m) * gg })
+        }
+      } else {
+        const w = pairWeights(g.loops, rpm, g.allW)
+        g.loops.forEach((l, i) => { l.wTarget = w[i] * gg })
       }
-    } else {
-      const ls = this.loops
-      const w = pairWeights(ls, rpm, this.allW)
-      ls.forEach((l, i) => { l.wTarget = w[i] })
     }
   }
 

@@ -130,3 +130,26 @@ test('nothing loaded, bad loops or zero gain: silence', () => {
   v.setSet(null)
   assert.equal(v.ready, false)
 })
+
+test('the exhaust setting crossfades the engine and exhaust groups', () => {
+  const loops = [
+    { rpm: 3000, layer: 'on', group: 'engine', data: sineLoop(150), sr: SR },
+    { rpm: 3000, layer: 'off', group: 'engine', data: sineLoop(150), sr: SR },
+    { rpm: 3000, layer: 'on', group: 'exhaust', data: sineLoop(90), sr: SR },
+    { rpm: 3000, layer: 'off', group: 'exhaust', data: sineLoop(90), sr: SR },
+  ]
+  const mix = (exhaust) => {
+    const v = voice(loops, { rpm: 3000, load: 1 })
+    v.set({ exhaust }); v.exhaust = exhaust
+    return render(v, 0.5)
+  }
+  const engine = mix(0), exhaust = mix(1), both = mix(0.5)
+  assert.ok(power(engine, 150) > 100 * power(engine, 90), 'all engine')
+  assert.ok(power(exhaust, 90) > 100 * power(exhaust, 150), 'all exhaust')
+  const r = power(both, 150) / power(both, 90)
+  assert.ok(r > 0.5 && r < 2, `half and half: ${r}`)
+  // A car with only one group plays it whatever the setting.
+  const solo = voice([{ rpm: 3000, data: sineLoop(150), sr: SR }], { rpm: 3000 })
+  solo.set({ exhaust: 1 })
+  assert.ok(power(render(solo, 0.3), 150) > 0.01)
+})

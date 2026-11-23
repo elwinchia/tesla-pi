@@ -101,23 +101,33 @@ test('a cut is made into a seamless loop, even when it is not a whole number of 
   assert.throws(() => makeLoop(seg, len + 1, fade))
 })
 
-test('an engine-sim car has an on-load and an overrun loop at every rev point, and idles in both', () => {
+test('an engine-sim car has an on-load and an overrun loop at every rev point, and idles in both, for engine and exhaust', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
     if (set.kind !== 'engine-sim') continue
-    const on = set.loops.filter((l) => l.layer === 'on').map((l) => l.rpm).sort((a, b) => a - b)
-    const off = set.loops.filter((l) => l.layer === 'off').map((l) => l.rpm).sort((a, b) => a - b)
-    assert.deepEqual(on, off, `${car}: layers cover different rpm`)
-    assert.ok(on.length >= 6, `${car}: ${on.length} rev points`)
-    assert.ok(set.loops.every((l) => l.src === 'enginesim' && l.level > 0 && l.level <= 1 && typeof l.render === 'string'), car)
-    // Each step is small enough that no loop is stretched far (about ±15 %).
-    for (let i = 1; i < on.length; i++) assert.ok(on[i] / on[i - 1] <= 1.75, `${car}: gap ${on[i - 1]}-${on[i]}`)
-    const p = PROFILES[car]
-    assert.ok(p.redline / on[on.length - 1] < 1.1, `${car}: the top loop is far below redline`)
-    // Overrun is quieter than pulling at the same rpm.
-    for (const r of on.slice(1)) {
-      const a = set.loops.find((l) => l.layer === 'on' && l.rpm === r), b = set.loops.find((l) => l.layer === 'off' && l.rpm === r)
-      assert.ok(b.level < a.level, `${car} ${r}: overrun louder than on-load`)
+    const groups = [...new Set(set.loops.map((l) => l.group || 'engine'))]
+    const points = {}
+    for (const g of groups) {
+      const loops = set.loops.filter((l) => (l.group || 'engine') === g)
+      const on = loops.filter((l) => l.layer === 'on').map((l) => l.rpm).sort((a, b) => a - b)
+      const off = loops.filter((l) => l.layer === 'off').map((l) => l.rpm).sort((a, b) => a - b)
+      assert.deepEqual(on, off, `${car} ${g}: layers cover different rpm`)
+      assert.ok(on.length >= 6, `${car} ${g}: ${on.length} rev points`)
+      assert.ok(loops.every((l) => l.src === 'enginesim' && l.level > 0 && l.level <= 1 && typeof l.render === 'string'), `${car} ${g}`)
+      // Each step is small enough that no loop is stretched far.
+      for (let i = 1; i < on.length; i++) assert.ok(on[i] / on[i - 1] <= 1.75, `${car} ${g}: gap ${on[i - 1]}-${on[i]}`)
+      assert.ok(PROFILES[car].redline / on[on.length - 1] < 1.1, `${car} ${g}: the top loop is far below redline`)
+      // Overrun is quieter than pulling at the same rpm.
+      for (const r of on.slice(1)) {
+        const a = loops.find((l) => l.layer === 'on' && l.rpm === r), b = loops.find((l) => l.layer === 'off' && l.rpm === r)
+        assert.ok(b.level < a.level, `${car} ${g} ${r}: overrun louder than on-load`)
+      }
+      points[g] = on
+      // Every group renders from its own folder through its own impulse response.
+      assert.ok(typeof set.renders === 'string' || set.renders[g], `${car} ${g}: no renders`)
+      assert.ok(typeof set.ir === 'string' || set.ir[g], `${car} ${g}: no impulse response`)
     }
+    if (points.exhaust) assert.deepEqual(points.exhaust, points.engine, `${car}: engine and exhaust at different rpm`)
   }
   assert.equal(SAMPLE_SETS.v8.kind, 'engine-sim')
+  assert.ok(SAMPLE_SETS.v8.loops.some((l) => l.group === 'exhaust'), 'the V8 has an exhaust')
 })
