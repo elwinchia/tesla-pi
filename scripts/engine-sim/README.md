@@ -24,6 +24,7 @@ ES_IR=es/sound-library/new/minimal_muffling_01.wav \
   scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-exhaust 1200 1800 2500 3200 4000 4800 5600 6300
 # ...and dry (no impulse response), for the low sub layer under both
 ES_CONV=0 scripts/engine-sim/render-set.sh scripts/engine-sim/ls_v8.mr ls-v8-dry 1200 1800 2500 3200 4000 4800 5600 6300
+node scripts/rev-samples.mjs --fit-idle v8           # the idle's real rpm and loop lengths (its `idle`)
 node scripts/rev-samples.mjs --print-levels v8       # the levels static/rev-samples.js holds
 node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the sub, level, encode into static/sounds/
 
@@ -31,7 +32,7 @@ node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the su
 #   lfa_v10.mr -> lfa-v10, f136_v8.mr -> f136-v8   P="1300 2000 2800 3700 4600 5600 6700 7800 8800"
 #   flat6_gt3.mr -> flat6-gt3                      P="1400 2100 2900 3800 4800 5800 6800 7800 8800"
 # The F136 stalls at a closed throttle: re-render its three idle.wav files with
-# ES_IDLE_THROTTLE=0.02 (es-render ... idle 4 4).
+# ES_IDLE_THROTTLE=0.02 (es-render ... idle 10 4).
 ```
 
 Everything lands in the git-ignored `.cache/engine-sim/`:
@@ -55,7 +56,8 @@ build and render.
 - **`hold <rpm> <throttle> <s> [warmup]`**: the dynamometer holds the engine
   at `rpm`. Throttle 1 is full load (the on-load loop). Throttle 0 means the
   dyno drives a closed-throttle engine (the overrun loop).
-- **`idle <s> [warmup]`**: free-running, closed throttle, no dyno.
+- **`idle <s> [warmup]`**: free-running, closed throttle, no dyno. Rendered
+  10 s long: the idle loop is cut from it by `--fit-idle` (below).
 - **`rev <s>`**: idle, two blips and a sweep into the limiter, for listening.
 
 It drives engine-sim's synthesizer thread the way the app does: one block
@@ -81,6 +83,25 @@ audio. Nothing is dropped and nothing is padded.
 - **Pinning the gain:** the leveller's min and max are read only at start-up,
   but its target is read every sample. An unreachable target therefore holds
   it at its maximum gain, and `ES_VOLUME` / `ES_GAIN` scale that.
+
+## The idle loop
+
+A free-running idle is not a steady tone. It never runs at exactly the rpm
+asked for (the LS V8 idles at ~690, not 700), it wanders a few percent, and
+the LS lopes. The rev points are cut to whole cycles at their rpm, which
+works because the dyno holds them there. Cut the same way, a 1.5 s idle
+loop wrapped 25-50 % of a firing out of step at every lap, and the seam's
+crossfade blended two out-of-step firings: a stumble every 1.5 s.
+
+`node scripts/rev-samples.mjs --fit-idle <car>` fixes that. It measures the
+idle's real rpm (the 720° cycle, by autocorrelation of the dry render) and,
+for each group, finds the loop length (around 5.5 s) where both that group's
+render and the dry sub layer repeat best over the crossfade. The set's
+`idle: { rpm, start, seconds: { engine, exhaust } }` holds the result, the
+loop is played at exactly that length (`exact`), and the car's profile idles
+at the same rpm, so the idle plays at its own pitch. Seam match (correlation
+over the crossfade, 1 = perfect) went from -0.44 to +0.25 for the old loops
+to 0.63-0.97 for the fitted ones.
 
 ## The six patches (`make-tree.sh`)
 

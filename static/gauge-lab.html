@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gauge lab</title>
+<link rel="stylesheet" href="rev-gauge.css">
+<!-- A development page: every gauge style (static/gauges/) in the dash, at a
+     fixed state from the query string, for screenshots and for checking a
+     style without a car. Nothing links here.
+       ?style=<key>|all  &rpm=4500 &kmh=92 &gear=3 &water=90 &running=1
+       &theme=night|day  &w=1280 &h=357 (the dock's size)  &redline=9000 &idle=900
+       &hand=1|0  &anim=1 (sweep the revs) -->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 12px; font: 14px -apple-system, system-ui, sans-serif; background: #eee; }
+  :root.night body { background: #000; color: #ccc; }
+  .box { margin: 0 0 14px; }
+  .box h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+  .dock { background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%); padding: 6px 16px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<script type="module">
+  import { STYLES, styleKey } from './gauges/index.js'
+  import { tachScale } from './gauges/kit.js'
+  import { Dash } from './rev-dash.js'
+  const q = new URLSearchParams(location.search)
+  const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d)
+  if ((q.get('theme') || 'night') === 'night') document.documentElement.classList.add('night')
+  const W = num('w', 1280), H = num('h', 357)
+  const redline = num('redline', 9000), idle = num('idle', 900)
+  const running = q.get('running') !== '0'
+  const profile = { name: 'V10', style: 'LFA-style', redline, idle }
+  // A stand-in for RevSound: just enough for the dash.
+  const rs = { engine: { profile, sim: false }, running, start() {}, stop() {}, setRev() {}, blip() {}, setSim() {} }
+  const keys = q.get('style') === 'all' || !q.get('style') ? Object.keys(STYLES) : [styleKey(q.get('style'))]
+  const dashes = []
+  for (const k of keys) {
+    const box = document.createElement('div'); box.className = 'box'
+    box.innerHTML = `<h3>${k}: ${STYLES[k].name} (${STYLES[k].era})</h3>`
+    const dock = document.createElement('div'); dock.className = 'dock'
+    dock.style.width = W + 'px'; dock.style.height = H + 'px'
+    box.appendChild(dock); document.body.appendChild(box)
+    const d = new Dash(dock, { rs, hand: () => num('hand', 1), onSettings: () => {}, storage: { getItem: () => null, setItem() {} },
+      theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') })
+    d.inst.water = num('water', 90); d.inst.oil = num('oil', 98); d.inst.trip = num('trip', 641.9); d.inst.odo = num('odo', 73998)
+    dashes.push(d)
+    await d.setStyle(k)
+  }
+  const st = (t) => {
+    const rpm = q.get('anim') ? idle + (redline - idle) * (0.5 - 0.5 * Math.cos(t / 900)) : num('rpm', 4500)
+    return { running, rpm, v: num('kmh', 92) / 3.6, a: num('a', 2), gear: q.get('gear') === 'N' ? 0 : num('gear', 3), stopped: q.get('gear') === 'N', load: num('load', 0.8),
+      source: 'gps', fixRate: num('fix', 0.8), stale: false, sim: false }
+  }
+  for (const d of dashes) d.state(st(0))
+  // Settle every eased value, then keep animating if asked.
+  for (let i = 0; i < 200; i++) for (const d of dashes) { d.state(st(0)); d.frame(0.05) }
+  let last = performance.now()
+  const loop = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now
+    for (const d of dashes) { d.state(st(now)); d.frame(dt) }
+    requestAnimationFrame(loop)
+  }
+  requestAnimationFrame(loop)
+  document.title = 'Gauge lab: ' + keys.join(', ')
+  window.labReady = true
+</script>
+</body>
+</html>

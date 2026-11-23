@@ -6,6 +6,7 @@
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
 import { SAMPLE_SETS, hasRecording, loopSlice } from './rev-samples.js'
+import { DEFAULT_STYLE, styleKey } from './gauges/index.js'
 import {
   CARS, DEFAULT_CAR, MODES, DEFAULT_MODE,
   SpeedTracker, Gearbox, FreeRev, SimCar, loadFromMotion, clamp,
@@ -21,6 +22,7 @@ export const DEFAULTS = Object.freeze({
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
   exhaust: 0.5,        // 0 = heard from the engine, 1 = from the exhaust
+  gauge: DEFAULT_STYLE, // the dash's gauge style (static/gauges/index.js)
 })
 // Below this the car counts as stopped: the gearbox hands over to the free
 // revving engine, and the Rev control is allowed. ~4 km/h.
@@ -49,6 +51,7 @@ export function sanitise(raw) {
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
   if (Number.isFinite(raw.exhaust)) s.exhaust = clamp(raw.exhaust, 0, 1)
+  if (typeof raw.gauge === 'string') s.gauge = styleKey(raw.gauge)
   return s
 }
 
@@ -173,12 +176,21 @@ export class RevSound {
   }
 
   update(partial) {
-    this.settings = saveSettings({ ...this.settings, ...partial }, this.storage)
-    this.engine.configure(this.settings)
-    this.sim.car.setCar(CARS[this.settings.car])
-    if (partial.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
-    if ('profile' in partial) this.syncSound()
-    return this.settings
+    return this.apply(saveSettings({ ...this.settings, ...partial }, this.storage))
+  }
+  // Settings another page saved (the settings sheet over CarPlay, a
+  // storage event): take them without writing them back.
+  reload() { return this.apply(loadSettings(this.storage)) }
+  apply(next) {
+    const prev = this.settings
+    this.settings = next
+    this.engine.configure(next)
+    this.sim.car.setCar(CARS[next.car])
+    if (next.profile !== prev.profile) {
+      if (this.node) this.node.port.postMessage({ profile: this.engine.profile })
+      this.syncSound()
+    }
+    return next
   }
 
   // 'gps' (the car) or 'sim' (the on-screen pedal).

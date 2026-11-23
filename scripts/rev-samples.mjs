@@ -206,6 +206,56 @@ function credits() {
   return lines.join('\n')
 }
 
+// --fit-idle <car>: where to cut an engine-sim set's idle loops. A free-
+// running idle never sits exactly at the rpm asked for, and wanders a
+// little, so a loop rounded to whole cycles at the nominal rpm wraps part
+// of a firing out of step: the crossfade then blends two out-of-step
+// firings, a dip and a stumble every lap. This measures the idle's real rpm
+// (its 720° cycle, by autocorrelation of the dry render), then for each
+// group finds the loop length where both what is heard (its own render)
+// and the dry sub layer mixed under it repeat best over the crossfade.
+// Paste the result into the set's `idle` in static/rev-samples.js.
+function fitIdle(car, { start = 1.0, seconds = 5.5, range = 1.0 } = {}) {
+  const set = SAMPLE_SETS[car]
+  const prep = (file) => {
+    const x = decode(file, start, seconds + range + 0.5)
+    for (let i = x.length - 1; i > 0; i--) x[i] -= 0.995 * x[i - 1] // drop DC
+    // Match the firing pulses, not the combustion noise riding on them.
+    lowpass(x, SR, 300); lowpass(x, SR, 300)
+    return x
+  }
+  const corr = (x, a, b, n) => {
+    let ab = 0, aa = 0, bb = 0
+    for (let i = 0; i < n; i++) { ab += x[a + i] * x[b + i]; aa += x[a + i] ** 2; bb += x[b + i] ** 2 }
+    return ab / Math.sqrt(aa * bb || 1)
+  }
+  const idle = set.loops.find((l) => l.render === 'idle')
+  const dry = prep(renderFile({ renders: set.sub.renders }, idle))
+  // The engine's cycle: the best self-match within ±12 % of the nominal one
+  // (wider finds a flat-6's five-firing lag instead).
+  const nominal = 120 / PROFILES[car].idle, W = Math.round(1.5 * SR)
+  let cyc = 0, best = -2
+  for (let L = Math.round(nominal * 0.88 * SR); L <= Math.round(nominal * 1.12 * SR); L++) {
+    const c = corr(dry, 0, L, W)
+    if (c > best) { best = c; cyc = L }
+  }
+  const out = { rpm: Math.round((120 * SR) / cyc), start, seconds: {} }
+  const F = Math.round(0.12 * SR), lo = Math.round((seconds - range) * SR), hi = Math.round((seconds + range) * SR)
+  const notes = []
+  for (const group of Object.keys(set.renders)) {
+    const main = prep(renderFile(set, { ...idle, group }))
+    let len = lo, score = -2
+    for (let L = lo; L <= hi; L++) {
+      const c = Math.min(corr(main, 0, L, F), corr(dry, 0, L, F))
+      if (c > score) { score = c; len = L }
+    }
+    out.seconds[group] = Math.round((len / SR) * 1e5) / 1e5
+    notes.push(`${group} seam ${score.toFixed(2)}`)
+  }
+  console.log(`${car}: idle: ${JSON.stringify(out).replace(/"/g, '')},  (cycle match ${best.toFixed(2)}; ${notes.join(', ')})`)
+  return out
+}
+
 // --print-levels <car>: an engine-sim set's `level` for every loop, from its
 // renders with its EQ: each loop's RMS over the loudest on-load loop's,
 // square-rooted so overrun and idle stay audible; idle at 0.6 x the lowest
@@ -235,6 +285,7 @@ function printLevels(car) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  if (args.includes('--fit-idle')) { fitIdle(args[args.indexOf('--fit-idle') + 1], args.includes('--around') ? { seconds: Number(args[args.indexOf('--around') + 1]), range: 1.5 } : {}); process.exit(0) }
   if (args.includes('--print-levels')) { printLevels(args[args.indexOf('--print-levels') + 1]); process.exit(0) }
   fs.mkdirSync(OUT, { recursive: true })
   fs.writeFileSync(path.join(OUT, 'CREDITS.md'), credits())

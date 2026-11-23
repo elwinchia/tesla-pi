@@ -33,7 +33,7 @@ const kmh = (...xs) => xs.map((x) => x / 3.6)
 const v8 = {
   name: 'V8', style: 'American muscle',
   blurb: 'Cross-plane LS-style V8 from engine-sim: burble, pull and overrun.',
-  idle: 650, redline: 6500, launch: 2400, revRise: 8000, revFall: 3800, limiter: 110,
+  idle: 690, redline: 6500, launch: 2400, revRise: 8000, revFall: 3800, limiter: 110,
   gears: kmh(58, 92, 130, 165, 200, 235, 270, 300),
   cylinders: [1, 8, 4, 3, 6, 5, 7, 2].map((c, i) => ({ at: i / 8, bank: c % 2 ? 0 : 1 })),
   banks: [
@@ -48,7 +48,7 @@ const v8 = {
 const lfa = {
   name: 'V10', style: 'LFA-style',
   blurb: 'engine-sim\'s LFA V10: a high, clean howl to 9,000 rpm.',
-  idle: 890, redline: 9000, launch: 3200, revRise: 16000, revFall: 7500, limiter: 50,
+  idle: 901, redline: 9000, launch: 3200, revRise: 16000, revFall: 7500, limiter: 50,
   gears: kmh(80, 120, 160, 200, 245, 300),
   cylinders: [1, 6, 5, 10, 2, 7, 3, 8, 4, 9].map((c, i) => ({ at: i / 10, bank: c <= 5 ? 0 : 1 })),
   banks: [
@@ -64,7 +64,7 @@ const lfa = {
 const f136 = {
   name: 'V8', style: 'Ferrari-style flat-plane',
   blurb: 'engine-sim\'s F136 flat-plane V8: a hard-edged scream to 9,000 rpm.',
-  idle: 1060, redline: 9000, launch: 3000, revRise: 14000, revFall: 6500, limiter: 50,
+  idle: 1058, redline: 9000, launch: 3000, revRise: 14000, revFall: 6500, limiter: 50,
   gears: kmh(70, 105, 140, 175, 210, 250, 325),
   cylinders: [1, 5, 3, 7, 4, 8, 2, 6].map((c, i) => ({ at: i / 8, bank: c <= 4 ? 0 : 1 })),
   banks: [
@@ -80,7 +80,7 @@ const f136 = {
 const gt3 = {
   name: 'Flat-6', style: 'GT3-style',
   blurb: 'A GT3-style flat-6 we wrote for engine-sim: rasp and howl to 9,000 rpm.',
-  idle: 930, redline: 9000, launch: 3200, revRise: 14000, revFall: 6500, limiter: 60,
+  idle: 923, redline: 9000, launch: 3200, revRise: 14000, revFall: 6500, limiter: 60,
   gears: kmh(62, 95, 130, 165, 200, 240, 318),
   cylinders: [1, 6, 2, 4, 3, 5].map((c, i) => ({ at: i / 6, bank: c <= 3 ? 0 : 1, delayMs: c <= 3 ? 0 : 0.35 })),
   banks: [
@@ -89,6 +89,9 @@ const gt3 = {
   ],
   pulseMs: 1.1, bright: [1500, 4200], intake: [2900, 0.2], pops: 0.04, drive: 1.6, lope: 0.05,
 }
+
+// Each idle is the rpm its engine-sim idle actually runs at (--fit-idle in
+// scripts/rev-samples.mjs), so the idle loop plays at its own pitch.
 
 // The cars, in the picker's order. Each one's sound is engine-sim loops
 // (static/rev-samples.js); these numbers drive its gearbox and rev range,

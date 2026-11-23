@@ -106,13 +106,17 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
-| `static/rev-gauge.css` | The cluster's styles, shared by `rev.html` and the dock under CarPlay on `index.html`. |
+| `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
+| `static/rev-dash.js` | The dash: the chosen gauge style between **ENGINE START/STOP** (with a settings button) and a **rev pedal**, the pedal on the driver's side ([The dash](#the-dash-buttons-and-gauge-styles)). Feeds the style the engine's state and the made-up side instruments. |
+| `static/gauges/kit.js` | What every gauge style shares: `GaugeStyle` (the base class, which eases every value and handles a finger on the tach), SVG and seven-segment helpers, and `Instruments`, the made-up water and oil temperatures, oil pressure, volts and fuel, with the real trip and odometer. |
+| `static/gauges/index.js`, `static/gauges/<style>.js` | The seven gauge styles, each loaded only when chosen: `segment`, `fivedial`, `backlit`, `twin`, `digital`, `tiles`, `crosshair`. |
+| `static/gauge-lab.html` | A development page: any style, or all of them, at a state set in the query string (`?style=all&rpm=6200&kmh=104`). Nothing links to it. |
 | `scripts/engine-sim/` | A headless build of engine-sim (MIT) for macOS and the scripts that render the V8's loops; see its README. Nothing in it ships to the Pi. |
 | `scripts/rev-samples.mjs` | Rebuilds `static/sounds/` from the renders: cuts, loops, EQs, mixes the sub layer, levels and encodes (`--print-levels` gives the levels). It can also fetch credited Freesound recordings. Needs `ffmpeg` on the machine that builds; the car doesn't. |
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, an idle lope, saturation and a DC blocker follow. It allocates nothing on the audio thread. It plays the loop player when the car's loops are loaded, and the synthesiser only as the fallback. |
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for the dashboard, **Simulation mode**, the car card, settings and the Test drive: `https://<device>/rev.html`. Follows the car's day/night theme. |
-| `static/rev-gauge.js` | The cluster on `rev.html`, plain SVG with no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** a glowing orange pill in km/h, showing the speed the engine follows. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** engine load (L–H), and GPS readings per second (full at one per second, the car's expected rate). **Digits:** engine speed under the pill. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
+| `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H, made up), and GPS readings per second (full at one per second, the car's expected rate). In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
@@ -184,10 +188,10 @@ modelled combustion engine:
 
 | Card | Engine script | Idle / redline |
 |---|---|---|
-| V8, American muscle | GM LS V8, bundled with engine-sim | 700 / 6,500 |
-| V10, LFA-style | LFA V10, bundled | 890 / 9,000 |
-| V8, Ferrari-style flat-plane | F136 V8, bundled (idles only with the throttle cracked: `ES_IDLE_THROTTLE=0.02`) | 1,060 / 9,000 |
-| Flat-6, GT3-style | our own `scripts/engine-sim/flat6_gt3.mr`, written on the pattern of engine-sim's Subaru boxer (engine-sim has no flat-6) | 930 / 9,000 |
+| V8, American muscle | GM LS V8, bundled with engine-sim | 690 / 6,500 |
+| V10, LFA-style | LFA V10, bundled | 901 / 9,000 |
+| V8, Ferrari-style flat-plane | F136 V8, bundled (idles only with the throttle cracked: `ES_IDLE_THROTTLE=0.02`) | 1,058 / 9,000 |
+| Flat-6, GT3-style | our own `scripts/engine-sim/flat6_gt3.mr`, written on the pattern of engine-sim's Subaru boxer (engine-sim has no flat-6) | 923 / 9,000 |
 
 Each car is a free-running idle plus 8–9 rev points up to just under its
 redline, each held on engine-sim's dynamometer twice: at **full throttle
@@ -200,8 +204,16 @@ and half):
 - **Exhaust** (`<car>-ex-*`): through its "minimal muffling" response, a
   near straight pipe, raspier, with its weight at 160–320 Hz.
 
-That makes 148 loops at 64 kbit/s, about 2 MB, and the car downloads only
-the chosen car's (about 0.5 MB).
+That makes 148 loops at 64 kbit/s, about 2.2 MB, and the car downloads only
+the chosen car's (about 0.55 MB).
+
+**The idle.** Each idle is the rpm its engine really idles at in
+engine-sim, measured, and its loop is 4.8–6.6 s long, cut where the idle's
+own waveform repeats (`--fit-idle`, see `scripts/engine-sim/README.md`).
+Until 2026-11-24 the idle was a 1.5 s loop cut to whole cycles at the rpm
+asked for, which the idle never quite runs at: every seam put two
+out-of-step firings into the crossfade, a stumble every 1.5 s, and the V8's
+lope repeated audibly. The owner heard it as "weird".
 
 **How it plays:**
 
@@ -275,6 +287,59 @@ change, as it already did.
   phases in 10 minutes without reaching "plugged"), the page goes back to
   full and stops asking, until the engine sound is next switched on.
 
+### The dash: buttons and gauge styles
+
+The band under CarPlay (and the dashboard on `rev.html`) is a dash: the
+chosen gauge style between two columns of buttons.
+
+- **Rev pedal**, on the driver's side: hold it to rev the engine, as **Rev**
+  does. Parked only: while the car moves it greys out, and the model ignores
+  it anyway. With the engine off it nudges the start button instead.
+- **ENGINE START/STOP**, on the other side: starts the engine sound, with a
+  cold-start flare past idle, or stops it, and the rev meter falls to 0 and
+  every side gauge rests, as with the ignition off. On the CarPlay page that
+  holds for the session (`sessionStorage`), through the reloads a format
+  change makes, so a later tap on CarPlay does not start it again. The
+  engine sound setting itself stays on, so the dash stays.
+- **Settings** (the gear above START/STOP): the engine sound's settings in a
+  sheet over CarPlay (`rev.html?embed=1`, settings only), so changing car or
+  gauge style never leaves the page and drops CarPlay. The sheet saves to
+  `localStorage`; the page under it takes the change from the `storage`
+  event at once.
+
+The driver's side follows CarPlay's own **Drive side** setting (Settings →
+CarPlay): the pedal on the right for a right-hand-drive car, START/STOP on
+the left, mirrored for left-hand drive. The CarPlay page remembers the last
+answer (`carplayHand`) so the first paint is right, and `rev.html` reads it
+from there.
+
+**Gauge styles.** Seven, chosen under **Gauge style** in the settings, each
+our own drawing in the style of one of the seven classic clusters in
+Blackbox Infinite's "CarPlay Generations" concept, with no makers' logos:
+
+| Style | After | What it shows |
+|---|---|---|
+| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with trip and odometer; water temperature and GPS-reading bars. The one style with a day palette. |
+| Five dials | 911 | Five round dials: tank/oil level, water/oil pressure, the tach with a big gear and a boost bar, the speedometer with a digital speed, a clock. |
+| Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear in a glowing disc, oil pressure and water bars between. |
+| Twin dials | NSX | Big tach with a gear strip and big speedometer with a digital speed, small water/oil and G/volts dials at the edges. |
+| Digital bars | Corvette C4 | Green-to-yellow bar columns for speed and revs with big digital readouts, oil and coolant tiles, a fuel stack, trip and gear. |
+| Tile grid | DeLorean | Brushed tiles: speedometer, tach with a fuel arc, volts, oil and water dials, a seven-segment clock and date, the engine and trip. |
+| Crosshair | Integrale | Two gunsight dials with glowing sweeps, boost, water, volts and fuel bars between. |
+
+**What is real.** Revs, speed, gear, trip and odometer: the engine model and
+the car's GPS speed (trip and odometer integrate it, and persist in this
+browser). **What is made up** (`Instruments` in `gauges/kit.js`): water
+temperature warms from cold to ~90 °C over a few minutes of running and
+creeps toward ~104 °C when worked hard; oil temperature follows more slowly;
+oil pressure follows the revs; volts read ~14; fuel drains with the
+odometer, a tank every 500 km. They cool with the engine off, across page
+reloads too. Nothing reads the car.
+
+`static/gauge-lab.html` shows any style at any state, for screenshots:
+
+![The seven gauge styles](img/rev-gauge-styles.jpg)
+
 ### The cluster
 
 | | Idle | Mid-rev | At the limiter |
@@ -295,7 +360,7 @@ headless Chromium.
 At a desk, with no car and no Pi:
 
 ```bash
-npm test                                         # 72 tests
+npm test                                         # all the tests
 node scripts/rev-render.mjs --scene demo --recorded --out-dir rev-demos   # the V8, 22 s
 node scripts/rev-render.mjs --mode sport --fix-ms 100   # the fallback synthesiser, driving
 node scripts/rev-samples.mjs --car v8            # rebuild static/sounds/ (needs ffmpeg and the renders)

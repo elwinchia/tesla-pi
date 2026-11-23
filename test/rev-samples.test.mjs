@@ -21,9 +21,25 @@ test('every recorded car is a real car sound with loops at two or more rpm point
       assert.match(l.file, /^[a-z0-9-]+\.ogg$/, l.file)
       assert.ok(['on', 'off', 'any', undefined].includes(l.layer), `${l.file} layer`)
       assert.ok(l.rpm >= p.idle * 0.6 && l.rpm <= p.redline * 1.05, `${l.file}: ${l.rpm} rpm is outside ${car}'s range`)
-      assert.ok(l.start >= 0 && l.seconds >= 0.3 && l.seconds <= 6, `${l.file} cut`)
-      assert.ok(Math.abs(loopSeconds(l) - l.seconds) <= 120 / l.rpm, `${l.file}: whole cycles`)
+      assert.ok(l.start >= 0 && l.seconds >= 0.3 && l.seconds <= (l.exact ? 8 : 6), `${l.file} cut`)
+      // Rev points are cut to whole cycles; an idle is cut where its own
+      // waveform repeats (exact), since it never runs at one steady rpm.
+      if (l.exact) assert.equal(loopSeconds(l), l.seconds, `${l.file}: exact`)
+      else assert.ok(Math.abs(loopSeconds(l) - l.seconds) <= 120 / l.rpm, `${l.file}: whole cycles`)
       assert.ok(Object.hasOwn(CREDITS, l.src), `${l.file}: no credit for ${l.src}`)
+    }
+  }
+})
+
+test('each idle is fitted: long enough not to repeat audibly, played at its own pitch', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const idles = set.loops.filter((l) => l.render === 'idle')
+    assert.ok(idles.length >= 2, car)
+    for (const l of idles) {
+      assert.ok(l.exact, `${l.file}: cut to its fitted length`)
+      assert.ok(l.seconds >= 4, `${l.file}: ${l.seconds} s repeats too often`)
+      // The model idles at the loop's rpm, so the idle is not pitch-shifted.
+      assert.equal(l.rpm, PROFILES[car].idle, `${l.file}: ${l.rpm} rpm vs the profile's ${PROFILES[car].idle}`)
     }
   }
 })

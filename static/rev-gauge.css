@@ -1,6 +1,7 @@
-/* The engine sound cluster (static/rev-gauge.js): colours for day and
-   html.night, and the segmented tach arc, speed pill, chips and bars.
-   Shared by rev.html and the dock under CarPlay on index.html. */
+/* The engine sound's dash (static/rev-dash.js) and its segment-arc style
+   (static/gauges/segment.js): colours for day and html.night. Shared by
+   rev.html and the dock under CarPlay on index.html. The other styles
+   carry their own CSS inside their SVG (GaugeStyle.css). */
 :root {
   --dash-a: #fbf8f4; --dash-b: #ede7df; --dash-line: rgba(0,0,0,0.06);
   --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
@@ -33,28 +34,68 @@
 .rv-num { fill: var(--rv-num); font: 600 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
 .rv-num.red { fill: var(--rv-red); }
 .rv-num-unit { fill: var(--rv-num); font: 500 17px -apple-system, system-ui, sans-serif; dominant-baseline: central; opacity: 0.85; }
-.rv-pill { stroke: var(--rv-pill-line); stroke-width: 3; }
-.rv-speed { fill: #4a1d04; font: 800 94px -apple-system, system-ui, sans-serif; text-anchor: middle;
-            dominant-baseline: central; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-.rv-speed-unit { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.08em; }
-.rv-icon path { fill: none; stroke: #5c2806; stroke-width: 2.6; stroke-linecap: round; }
+/* Speed: an old-school seven-segment LCD, unlit segments faintly showing. */
+.rv-lcd { stroke: #ff7a3a; stroke-opacity: 0.55; stroke-width: 2.5; }
+.rv-lcd.small { stroke-width: 1.5; stroke-opacity: 0.4; }
+.seg7 .off { fill: #ff8c42; opacity: 0.09; }
+.seg7 .on { fill: #ffd98a; filter: drop-shadow(0 0 4px rgba(255, 170, 60, 0.75)); }
+.rv-odo7 .on { fill: #ffb45a; filter: none; }
+.rv-lcd-unit { fill: #ff9a5a; font: 700 15px -apple-system, system-ui, sans-serif; text-anchor: end; letter-spacing: 0.04em; }
+.rv-lcd-label { fill: #ff9a5a; font: 700 9px -apple-system, system-ui, sans-serif; letter-spacing: 0.12em; opacity: 0.85; }
+.rv-lcd-dot { fill: #ffb45a; }
+.rv-icon-line path, .rv-icon-line circle { fill: none; stroke: var(--rv-num); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.85; }
 .rv-chip circle { fill: var(--rv-chip-bg); stroke: var(--rv-chip-line); stroke-width: 2; }
 .rv-chip-text { fill: var(--rv-chip-text); font: 800 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
 .rv-chip-text.small { font-size: 13px; letter-spacing: 0.06em; }
 .cluster-svg[data-zone=red] .rv-chip:first-of-type circle { stroke: var(--rv-red); }
 .rv-chip-cap, .rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
 .rv-bar rect { fill: var(--rv-bar-off); }
-.rv-bar rect.red { fill: var(--rv-red); }
+.rv-bar rect.hot { fill: var(--rv-red); opacity: 0.35; }
+.rv-bar rect.red { fill: var(--rv-red); opacity: 1; }
 .rv-bar-end { fill: var(--rv-num); font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-.rv-rpm { fill: var(--rv-num); font: 800 30px -apple-system, system-ui, sans-serif; text-anchor: middle;
-          dominant-baseline: central; font-variant-numeric: tabular-nums; }
-.rv-rpm-unit { fill: var(--rv-cap); font: 600 12px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.12em; }
-.rv-sim-tag { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.1em; }
+.rv-sim-tag { fill: #ffb45a; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.1em; }
 /* Simulation mode: the arc is a control. A faint band shows where a
    finger can grab it, and a ring follows the finger. */
 .rv-hit { fill: none; stroke: transparent; stroke-linecap: butt; pointer-events: none; }
 .cluster-svg[data-sim] { touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
 .cluster-svg[data-sim] .rv-hit { stroke: var(--rv-hit); pointer-events: stroke; }
-.cluster-svg[data-sim] .rv-rpm { fill: var(--rv-chip-text); }
 .rv-finger { fill: rgba(255, 210, 120, 0.18); stroke: #ffd27a; stroke-width: 3; pointer-events: none; }
 .rv-finger.red { stroke: var(--rv-red); fill: rgba(255, 59, 48, 0.2); }
+
+/* ── The dash: buttons either side of the gauge ─────────────────────────
+   data-hand=1 (right-hand drive): ignition left, pedal right; 0 mirrors. */
+.rvd { container-type: size; display: flex; flex-direction: row; align-items: stretch; width: 100%; height: 100%;
+       gap: 1.5cqw; box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+.rvd[data-hand="0"] { flex-direction: row-reverse; }
+.rvd[data-dark] { --rv-panel: #07090d; }
+.rvd-gauge { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.rvd-gauge .cluster-svg { width: auto; height: 100%; max-width: 100%; }
+.rvd[data-dark] .rvd-gauge { background: var(--rv-panel); border-radius: 3cqh; }
+.rvd-side { flex: 0 0 auto; width: min(13cqw, 62cqh); display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: 5cqh; }
+.rvd-btn { -webkit-appearance: none; appearance: none; border: 0; padding: 0; margin: 0; background: none; color: inherit;
+           touch-action: none; -webkit-tap-highlight-color: transparent; cursor: pointer; font: inherit; }
+/* ENGINE START/STOP: a glossy red button in a dark bezel. Running, its ring glows. */
+.rvd-start { position: relative; width: min(100%, 48cqh); aspect-ratio: 1; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6cqh;
+  color: #fff; font-family: -apple-system, system-ui, sans-serif; line-height: 1;
+  background: radial-gradient(circle at 50% 30%, #ff6b5e 0%, #e0251b 38%, #a8120c 75%, #6e0806 100%);
+  box-shadow: 0 0 0 0.9cqh #1c1d21, 0 0 0 1.5cqh #3b3d44, inset 0 -0.8cqh 1.6cqh rgba(0,0,0,0.45), inset 0 0.6cqh 1cqh rgba(255,255,255,0.35);
+  transition: box-shadow 0.25s, transform 0.08s; }
+.rvd-start .w1 { font-weight: 800; font-size: 7.4cqh; letter-spacing: 0.02em; }
+.rvd-start .w2 { font-weight: 700; font-size: 5.6cqh; letter-spacing: 0.04em; }
+.rvd-start .rule { width: 44%; height: 0.45cqh; background: #fff; border-radius: 1px; margin: 0.2cqh 0; }
+.rvd-start:active { transform: scale(0.96); }
+.rvd-start[aria-pressed="true"] { box-shadow: 0 0 0 0.9cqh #1c1d21, 0 0 0 1.5cqh #ffb347, 0 0 3cqh 1cqh rgba(255, 150, 50, 0.55),
+  inset 0 -0.8cqh 1.6cqh rgba(0,0,0,0.45), inset 0 0.6cqh 1cqh rgba(255,255,255,0.35); }
+.rvd-start.nudge { animation: rvd-nudge 0.7s ease-out 2; }
+@keyframes rvd-nudge { 0% { transform: scale(1); } 30% { transform: scale(1.08); filter: brightness(1.35); } 100% { transform: scale(1); } }
+.rvd-set { width: min(55%, 17cqh); aspect-ratio: 1; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: var(--rv-num); background: var(--rv-chip-bg); box-shadow: 0 0 0 0.3cqh var(--rv-chip-line); }
+.rvd-set svg { width: 62%; height: 62%; }
+.rvd[data-dark] .rvd-set { color: #cfc7bc; background: #141820; box-shadow: 0 0 0 0.3cqh rgba(255,255,255,0.14); }
+/* The rev pedal: hold to rev. Moving, it greys out (parked only). */
+.rvd-pedal { height: min(80cqh, 100%); aspect-ratio: 100 / 160; max-width: 100%; transition: transform 0.08s, filter 0.15s; }
+.rvd-pedal svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0.8cqh 1cqh rgba(0,0,0,0.45)); }
+.rvd-pedal.held { transform: perspective(40cqh) rotateX(14deg) scale(0.95); filter: drop-shadow(0 0 2.4cqh rgba(255, 150, 50, 0.8)); }
+.rvd-pedal:disabled { opacity: 0.3; }

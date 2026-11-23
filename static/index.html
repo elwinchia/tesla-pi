@@ -141,13 +141,27 @@
     display: flex;
     background: #000;
   }
-  /* With the engine sound on, the band under CarPlay is its rev meter and
-     speedometer (static/rev-gauge.js + rev-gauge.css), scaled to fit. */
+  /* With the engine sound on, the band under CarPlay is its dash: the gauge
+     style chosen in its settings between ENGINE START/STOP and a rev pedal
+     (static/rev-dash.js, static/gauges/, rev-gauge.css), scaled to fit. */
   #carplay-dock.rv-dock {
     align-items: center; justify-content: center; padding: 6px 16px; border: 0;
     background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
   }
-  #carplay-dock.rv-dock .cluster-svg { width: auto; height: 100%; max-width: 100%; }
+  #carplay-dock.rv-dock.rv-dark { background: #000; }
+  /* The engine sound's settings (rev.html?embed=1) in a sheet over CarPlay,
+     so changing car or gauge style does not leave the page and drop CarPlay. */
+  #rev-sheet {
+    position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column;
+    background: rgba(0, 0, 0, 0.55); padding: 24px 6vw;
+  }
+  #rev-sheet[hidden] { display: none; }
+  #rev-sheet .rev-sheet-bar { display: flex; justify-content: flex-end; padding: 0 0 10px; }
+  #rev-sheet .rev-sheet-done {
+    min-height: 56px; min-width: 140px; padding: 0 28px; border-radius: 28px; border: 0;
+    font: 600 20px -apple-system, system-ui, sans-serif; background: #f08c00; color: #1a0d00;
+  }
+  #rev-sheet iframe { flex: 1 1 auto; width: 100%; border: 0; border-radius: 18px; background: #fff; }
 
   /* ─────────────────────────  NOW PLAYING  ───────────────────────── */
   /* One component, two homes: the black band under CarPlay in wide mode, and
@@ -2223,7 +2237,7 @@
                   car only and does not reflect the car's real state. Keep it quiet enough
                   to hear horns and sirens. It starts at your first tap on this page.
                 </p>
-                <p class="set-row-sub"><a href="/rev.html" style="color:inherit">Car sounds, volume and simulation modeEngine, volume and simulator&hellip;</a>hellip;</a></p>
+                <p class="set-row-sub"><a href="/rev.html" id="rev-settings-link" style="color:inherit">Car, volume, exhaust and gauge style&hellip;</a></p>
               </div>
               <div class="set-row-control">
                 <button type="button" class="set-switch" id="rev-switch" role="switch"
@@ -4397,20 +4411,32 @@
     if (!revLoading) {
       revLoading = import('./rev-sound.js')
         .then((m) => {
-          revSound = new m.RevSound({ onState: (st) => { if (dockCluster) dockCluster.set(dockCluster.toInput(st)); } });
+          revSound = new m.RevSound({ onState: (st) => { if (revDash) revDash.state(st); } });
           return revSound;
         })
         .catch((e) => { console.warn('engine sound unavailable', e); revLoading = null; return null; });
     }
     return revLoading;
   }
+  // The dash's START/STOP turned the engine off: it stays off for this
+  // session, through the reloads a CarPlay format change makes.
+  const REV_OFF_KEY = 'revEngineOff';
+  function revOff() { try { return sessionStorage.getItem(REV_OFF_KEY) === '1'; } catch { return false; } }
+  let revArm = null;
+  function disarmRevStart() {
+    if (revArm) document.removeEventListener('pointerdown', revArm, true);
+    revArm = null;
+  }
   function armRevStart() {
-    const go = () => {
-      document.removeEventListener('pointerdown', go, true);
-      if (!revEnabled()) return;
+    disarmRevStart();
+    revArm = (e) => {
+      // The dash's buttons and the settings sheet start and stop it themselves.
+      if (e.target && e.target.closest && e.target.closest('.rvd, #rev-sheet')) return;
+      disarmRevStart();
+      if (!revEnabled() || revOff()) return;
       loadRevSound().then((rs) => { if (rs && revEnabled()) rs.start(); });
     };
-    document.addEventListener('pointerdown', go, true);
+    document.addEventListener('pointerdown', revArm, true);
   }
   function applyRev(on) {
     revSwitchEl.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -4429,7 +4455,42 @@
     // Turning it on is the owner asking for wide again, even after a fallback.
     if (next) lsSet(WIDE_BLOCK_KEY, '0');
     // The tap on the switch is the gesture that lets the sound start.
+    try { sessionStorage.removeItem(REV_OFF_KEY); } catch {}
     if (next) rs.start(); else rs.stop();
+    reconcileAspect();
+  });
+  // The engine sound's settings in a sheet over CarPlay (rev.html?embed=1):
+  // leaving this page would drop CarPlay and cost a cold start.
+  function openRevSheet() {
+    let sh = document.getElementById('rev-sheet');
+    if (!sh) {
+      sh = document.createElement('div');
+      sh.id = 'rev-sheet';
+      sh.hidden = true;
+      sh.innerHTML = '<div class="rev-sheet-bar"><button type="button" class="rev-sheet-done">Done</button></div>' +
+        '<iframe title="Engine sound settings"></iframe>';
+      document.body.appendChild(sh);
+      sh.querySelector('.rev-sheet-done').addEventListener('click', () => {
+        sh.hidden = true;
+        sh.querySelector('iframe').src = 'about:blank';
+      });
+    }
+    sh.querySelector('iframe').src = 'rev.html?embed=1';
+    sh.hidden = false;
+  }
+  document.getElementById('rev-settings-link').addEventListener('click', (e) => { e.preventDefault(); openRevSheet(); });
+  // Settings saved by the sheet (another document on this origin) arrive as
+  // a storage event: take them, and follow an engine sound switched on/off.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'revSound') return;
+    const on = revEnabled();
+    applyRev(on);
+    if (revSound) {
+      const st = revSound.reload();
+      if (revDash) revDash.setStyle(st.gauge).then(syncDockDark);
+      if (!on && revSound.running) revSound.stop();
+    }
+    if (on) { loadRevSound(); armRevStart(); }
     reconcileAspect();
   });
 
@@ -4439,7 +4500,11 @@
   // the sound comes from. The server owns the format (applyAspect in
   // index.js restarts CarPlay at the new height); this page asks for it.
   let serverAspect = null;
-  let dockCluster = null;
+  let revDash = null;
+  // CarPlay's drive side (0 left-hand drive, 1 right-hand drive), which puts
+  // the dash's rev pedal on the driver's side. The server says on connect;
+  // the last answer is kept for the first paint.
+  let serverHand = lsGet('carplayHand') === '0' ? 0 : 1;
   const WIDE_BLOCK_KEY = 'carplayWideBlocked';
   function wantAspect() {
     return revEnabled() && lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
@@ -4470,25 +4535,35 @@
       reconcileAspect();
     }
   }
+  function syncDockDark() {
+    const dock = document.getElementById('carplay-dock');
+    if (revDash) dock.classList.toggle('rv-dark', revDash.root.hasAttribute('data-dark'));
+  }
   function startDock() {
-    if (renderedAspect !== 'wide' || dockCluster) return;
+    if (renderedAspect !== 'wide' || revDash) return;
     const dock = document.getElementById('carplay-dock');
     if (!document.querySelector('link[href="rev-gauge.css"]')) {
       const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'rev-gauge.css';
       document.head.appendChild(l);
     }
-    Promise.all([import('./rev-gauge.js'), loadRevSound()]).then(([g, rs]) => {
-      if (!rs || dockCluster) return;
-      const p = rs.engine.profile;
+    Promise.all([import('./rev-dash.js'), loadRevSound()]).then(([m, rs]) => {
+      if (!rs || revDash) return;
       dock.classList.add('rv-dock', 'dash');
-      dockCluster = new g.Cluster(dock, { scale: g.tachScale(p.redline, p.idle),
-        theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') });
-      dockCluster.toInput = g.clusterInput;
+      revDash = new m.Dash(dock, {
+        rs, hand: () => serverHand, onSettings: openRevSheet,
+        theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day'),
+        // START/STOP on the dash is the owner's word for this session.
+        onEngine: (on) => {
+          disarmRevStart();
+          try { sessionStorage.setItem(REV_OFF_KEY, on ? '0' : '1'); } catch {}
+        },
+      });
+      revDash.setStyle(rs.settings.gauge).then(syncDockDark);
       rs.emit(performance.now());
       let last = performance.now();
       const frame = (now) => {
-        if (!dockCluster) return;
-        if (!document.hidden) dockCluster.frame(Math.min(0.1, (now - last) / 1000));
+        if (!revDash) return;
+        if (!document.hidden) revDash.frame(Math.min(0.1, (now - last) / 1000));
         last = now;
         requestAnimationFrame(frame);
       };
@@ -4515,6 +4590,9 @@
     const v = Number(value);
     if (!ALLOWED_HAND_CLIENT.has(v)) return;
     setSegActive(handSegEl, 'hand', v);
+    serverHand = v;
+    lsSet('carplayHand', String(v));
+    if (revDash) revDash.setHand(v);
   }
 
   // ---- CarPlay audio through the browser (Settings → CarPlay → Audio output) --

@@ -19,6 +19,8 @@
   speed at a GPS-like rate on purpose, so it sounds the way the car will.
 -->
 <script>
+  // In the sheet over CarPlay (index.html opens rev.html?embed=1).
+  if (/[?&]embed=1/.test(location.search)) document.documentElement.classList.add('embed');
   // Same day/night decision as the main page: its last verdict (which already
   // includes the car's theme and any manual Day/Night choice), else the car's
   // own colour scheme. Runs before paint so the page never flashes white.
@@ -89,7 +91,20 @@
   .seg button[aria-pressed=true] { background: #3b5bdb; color: #fff; }
 
   /* ── Cluster: static/rev-gauge.css ─────────────────────────────── */
-  #cluster { max-width: 1100px; margin: 0 auto; }
+  #cluster { max-width: 1100px; margin: 0 auto; aspect-ratio: 3.3; }
+  /* Gauge style picker: a live thumbnail of each style. */
+  .gauges { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .gcard { text-align: left; padding: 8px 8px 10px; border-radius: 14px; display: flex; flex-direction: column; gap: 4px; }
+  .gcard .thumb { height: 86px; display: flex; align-items: center; justify-content: center; border-radius: 9px;
+                  background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%); overflow: hidden; }
+  .gcard .thumb.dark { background: #07090d; }
+  .gcard .thumb .cluster-svg { height: 100%; width: auto; max-width: 100%; pointer-events: none; }
+  .gcard b { font-size: 15px; padding: 0 4px; }
+  .gcard .era { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 4px; }
+  .gcard[aria-pressed=true] { border: 2px solid #f08c00; background: var(--sel-bg); padding: 7px 7px 9px; }
+  /* In the sheet over CarPlay (?embed=1): settings only. */
+  html.embed .noembed { display: none !important; }
+  html.embed body { padding-top: 12px; }
   :root { --sel-bg: #fff4e6; }
   :root.night { --sel-bg: #2b1d10; }
   .dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 2px 4px 6px; }
@@ -138,12 +153,12 @@
 </head>
 <body>
   <h1>Engine sound</h1>
-  <div class="sub">A synthesised engine that follows the car, through the car's speakers. <a href="/">Back</a></div>
+  <div class="sub noembed">An engine that follows the car, through the car's speakers. <a href="/">Back</a></div>
 
   <div class="banner" id="err" hidden></div>
 
   <div class="grid">
-    <div class="card span2 dash">
+    <div class="card span2 dash noembed">
       <div class="dash-head">
         <button id="simmode" type="button" class="simbtn" aria-pressed="false">Simulation mode: Off</button>
         <span id="sim-hint">Parked only. Turn it on, then drag along the rev meter to rev the engine; tap it for a blip.</span>
@@ -159,8 +174,14 @@
     <div class="card span2">
       <h2>Car sound</h2>
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
-      <p class="hint">The V8 plays loops rendered with engine-sim, a physically modelled engine, at idle and eight rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
+      <p class="hint">Each car plays loops rendered with engine-sim, a physically modelled engine, at idle and nine rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
       <div class="credits" id="credits"></div>
+    </div>
+
+    <div class="card span2">
+      <h2>Gauge style</h2>
+      <div class="gauges" id="gauges" role="group" aria-label="Gauge style"></div>
+      <p class="hint">The rev meter and speedometer, here and under CarPlay. Each is our own drawing in the style of a classic car's cluster, after Blackbox Infinite's "CarPlay Generations" concept. The water and oil temperatures, oil pressure, volts and fuel are made up; speed, trip and odometer are the car's GPS speed.</p>
     </div>
 
     <div class="card">
@@ -195,7 +216,7 @@
       <p class="hint">Used to turn the car's acceleration into how hard the engine works.</p>
     </div>
 
-    <div class="card">
+    <div class="card noembed">
       <h2>Speed from</h2>
       <div class="row">
         <div class="seg" id="source">
@@ -231,7 +252,9 @@
 
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
-  import { Cluster, tachScale, clusterInput } from './rev-gauge.js'
+  import { Dash } from './rev-dash.js'
+  import { STYLES, loadStyle } from './gauges/index.js'
+  import { tachScale } from './gauges/kit.js'
   import { CREDITS, soundKind, creditsFor, creditLine } from './rev-samples.js'
 
   const $ = (id) => document.getElementById(id)
@@ -240,14 +263,25 @@
   // The cluster animates on its own frame loop: engine state arrives at
   // 50 Hz, the screen draws at its own rate, and everything eases toward the
   // latest value so neither rate shows as steps.
-  const cluster = new Cluster($('cluster'), { scale: tachScale(6800, 700),
-    theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') })
+  const theme = () => (document.documentElement.classList.contains('night') ? 'night' : 'day')
+  // The same dash as under CarPlay: ENGINE START/STOP and settings on one
+  // side, the rev pedal on the driver's (CarPlay's drive side, as last told
+  // to the main page).
+  let hand = 1
+  try { hand = localStorage.getItem('carplayHand') === '0' ? 0 : 1 } catch {}
+  const embedded = document.documentElement.classList.contains('embed')
+  // In the sheet the dash is never shown, and must not overwrite the
+  // instruments the page under it keeps.
+  const cluster = new Dash($('cluster'), { rs, theme, hand: () => hand,
+    storage: embedded ? { getItem: () => null, setItem() {} } : localStorage,
+    onSettings: () => $('cars').scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    onEngine: () => { if (!rs.running) { rs.setSim(false); setSimUi(false) } syncSettings() } })
+  if (!embedded) cluster.setStyle(rs.settings.gauge)
   let tachFor = null
   function fitTach() {
     const p = PROFILES[rs.settings.profile]
     if (tachFor === p) return
     tachFor = p
-    cluster.setScale(tachScale(p.redline, p.idle))
     capText = p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
   }
   let capText = ''
@@ -255,7 +289,7 @@
   function frame(now) {
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
     lastFrame = now
-    cluster.frame(dt)
+    if (!embedded) cluster.frame(dt)
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
@@ -285,10 +319,39 @@
     fitTach(); syncSettings()
     // A blip so you hear what you picked. The tap is the gesture the
     // browser wants before it makes sound; blip() refuses if the car moves.
+    // Not in the sheet: the page under it is already playing the engine.
+    if (embedded) return
     if (!rs.running) { await rs.start(); syncSettings() }
     if (!cluster.touch) rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
   }
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
+
+  // ── Gauge style picker: each style drawn small, at a fixed state ───
+  const gcards = {}
+  for (const [k, st] of Object.entries(STYLES)) {
+    const b = document.createElement('button')
+    b.type = 'button'; b.className = 'gcard'; b.dataset.gauge = k
+    b.innerHTML = '<span class="thumb"></span><b></b><span class="era"></span>'
+    b.querySelector('b').textContent = st.name
+    b.querySelector('.era').textContent = st.era
+    $('gauges').appendChild(b)
+    gcards[k] = b
+    loadStyle(k).then((Cls) => {
+      const box = b.querySelector('.thumb')
+      box.classList.toggle('dark', !!Cls.meta.dark)
+      const g = new Cls(box, { scale: tachScale(9000, 900), theme })
+      g.set({ running: true, rpm: 5200, kmh: 98, load: 0.6, gear: '3', source: 'GPS', fixRate: 1, water: 90, oilTemp: 98, oilPress: 3.6,
+        volts: 14.1, fuel: 0.62, boost: 0.6, g: 0.25, trip: 641.9, odo: 73998, car: 'V10 \u00b7 LFA-style', clock: new Date() })
+      for (let i = 0; i < 60; i++) g.frame(0.1)
+    }).catch((e) => console.warn('gauge style', k, e))
+  }
+  $('gauges').onclick = (e) => {
+    const b = e.target.closest('[data-gauge]')
+    if (!b) return
+    rs.update({ gauge: b.dataset.gauge })
+    if (!embedded) cluster.setStyle(b.dataset.gauge)
+    syncSettings()
+  }
 
   // Every recording, credited with a link to its page and its licence.
   {
@@ -335,6 +398,7 @@
     $('volume').value = Math.round(s.volume * 100)
     $('exhaust').value = Math.round(s.exhaust * 100)
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
+    for (const [k, b] of Object.entries(gcards)) b.setAttribute('aria-pressed', String(k === s.gauge))
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
     for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
@@ -348,7 +412,7 @@
     rs.update({ enabled: on })
     // Turning it on is a tap, which is the gesture the browser wants before
     // it lets a page make sound — so start right away.
-    if (on && !rs.running) rs.start().then(syncSettings)
+    if (on && !rs.running && !embedded) rs.start().then(syncSettings)
     if (!on && rs.running && rs.source === 'gps') rs.stop()
     syncSettings()
   }
@@ -400,7 +464,7 @@
     // Engine off reads 0, like a real cluster with the ignition off. In
     // simulation mode the speed is still the car's real speed (0, since it
     // only runs stopped) and the gear is N: a parked car being revved.
-    cluster.set(clusterInput(s))
+    cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     $('rev').disabled = !s.stopped
     const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
