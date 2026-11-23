@@ -41,7 +41,7 @@ is opened and handed back, and what it costs you in time-to-picture.
 - A synthesised engine (V8, inline-6, V10 or flat-4) that revs and shifts with your driving, played by the car's browser through the cabin speakers — modelled on [TesRev](https://tesrev.com/), with no code or recordings taken from it
 - Driven by the car's own GPS speed, with engine load worked out from the car's mass, power and drag; a virtual gearbox with Comfort / Normal / Sport shift points, overrun pops on lift-off, and a Rev button that works only while stopped
 - Runs entirely in the browser — the Pi only serves the files, so CarPlay never sees it. It lags the pedal by up to about a second, because GPS speed is the only live signal the car gives a web page
-- `/rev.html` shows a tachometer (scaled to the engine, with its red zone and the current gear) and a speedometer, in the car's day or night theme
+- `/rev.html` shows a dashboard: a wide segmented rev arc that glows from orange to yellow and lights its red zone at the limiter, a glowing km/h speed pill with the gear beside it, and engine-load and GPS bars, in the car's day or night theme
 - Off by default: Settings → CarPlay → Engine sound, or `/rev.html`, which also has a simulator for trying it with no car. `node scripts/rev-render.mjs` renders a simulated drive to a WAV — see [`docs/rev-sound.md`](docs/rev-sound.md)
 
 ### Also included

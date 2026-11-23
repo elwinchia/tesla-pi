@@ -86,44 +86,52 @@
   .seg button { border: 0; border-radius: 0; background: var(--seg); }
   .seg button[aria-pressed=true] { background: #3b5bdb; color: #fff; }
 
-  /* ── Cluster: tachometer + speedometer ─────────────────────────────── */
-  .cluster { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: center; }
-  @media (max-width: 560px) { .cluster { grid-template-columns: 1fr; } }
-  .dial-wrap { position: relative; max-width: 420px; width: 100%; margin: 0 auto; }
-  .dial { display: block; width: 100%; height: auto; overflow: visible; }
-  .dial .g-track   { fill: none; stroke: var(--g-track); stroke-width: 12; stroke-linecap: round; }
-  .dial .g-redzone { fill: none; stroke: var(--red); stroke-width: 12; opacity: 0.28; }
-  .dial .g-arc     { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; }
-  .dial .g-glow    { fill: none; stroke: var(--accent); stroke-width: 22; stroke-linecap: round; opacity: var(--g-glow-op); }
-  .dial[data-zone=warn] .g-arc, .dial[data-zone=warn] .g-glow { stroke: var(--warn); }
-  .dial[data-zone=red]  .g-arc, .dial[data-zone=red]  .g-glow { stroke: var(--red); }
-  .dial .g-tick    { stroke: var(--g-tick); stroke-width: 1.5; stroke-linecap: round; }
-  .dial .g-tick.major { stroke: var(--g-tick-major); stroke-width: 2.5; }
-  .dial .g-tick.red { stroke: var(--red); }
-  .dial .g-label   { fill: var(--g-muted); font: 600 12px -apple-system, system-ui, sans-serif;
-                     text-anchor: middle; dominant-baseline: central; }
-  .dial .g-label.red { fill: var(--red); }
-  .dial .g-needle  { stroke: var(--g-needle); stroke-width: 4; stroke-linecap: round; }
-  .dial .g-value   { fill: var(--g-text); font: 700 31px -apple-system, system-ui, sans-serif;
-                     text-anchor: middle; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-  .dial[data-zone=red] .g-value { fill: var(--red); }
-  .dial .g-unit    { fill: var(--g-muted); font: 500 10px -apple-system, system-ui, sans-serif;
-                     text-anchor: middle; letter-spacing: 0.08em; text-transform: uppercase; }
-  .dial .g-badge rect { fill: var(--well); stroke: var(--ctl-line); }
-  .dial .g-badge text { fill: var(--g-text); font: 700 15px -apple-system, system-ui, sans-serif;
-                        text-anchor: middle; dominant-baseline: central; letter-spacing: 0.04em; }
-  .dial[data-zone=red] .g-badge rect { fill: var(--red); stroke: var(--red); }
-  .dial[data-zone=red] .g-badge text { fill: #fff; }
-  .dial-cap { text-align: center; color: var(--muted); font-size: 13px; margin-top: -6px; }
-
-  .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 14px; }
-  .meta .k { color: var(--muted); font-size: 13px; }
-  .meta .v { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .load { flex: 1; min-width: 180px; display: flex; align-items: center; gap: 10px; }
-  .bar { flex: 1; height: 10px; background: var(--well); border-radius: 5px; overflow: hidden; position: relative; }
-  .bar > i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: var(--warn); }
-  .bar.neg > i { background: var(--accent); }
-  .bar::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--ctl-line); }
+  /* ── Cluster: segmented tach arc + speed pill ──────────────────────── */
+  :root {
+    --dash-a: #fbf8f4; --dash-b: #ede7df; --dash-line: rgba(0,0,0,0.06);
+    --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
+    --rv-chip-bg: #ffffff; --rv-chip-line: rgba(0,0,0,0.12); --rv-chip-text: #d9480f;
+    --rv-bar-off: #dcd6cf; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
+  }
+  :root.night {
+    --dash-a: #121a26; --dash-b: #070a10; --dash-line: rgba(255,255,255,0.06);
+    --rv-num: #cfc7bc; --rv-dot: #7c7468; --rv-red: #ff3b30; --rv-glow-op: 0.38;
+    --rv-chip-bg: #141c28; --rv-chip-line: rgba(255,170,80,0.28); --rv-chip-text: #ffb347;
+    --rv-bar-off: #2a2f37; --rv-cap: #8a8f97; --rv-pill-line: #ffdb8f; --rv-bloom-op: 1;
+  }
+  .dash {
+    background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
+    border-color: var(--dash-line); padding: 10px 12px 12px;
+  }
+  #cluster { max-width: 1100px; margin: 0 auto; }
+  .cluster-svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .rv-bloom { opacity: var(--rv-bloom-op); }
+  .rv-glow { fill: none; stroke: #ff8a1a; stroke-width: 58; stroke-linecap: butt; opacity: var(--rv-glow-op); }
+  .rv-seg { stroke-width: 10; stroke-linecap: round; }
+  .rv-seg.red { stroke: var(--rv-red); opacity: 0.72; }
+  .rv-seg.red.on { opacity: 1; }
+  /* At the redline the red zone is the shift light: full strength, glowing. */
+  .cluster-svg[data-zone=red] .rv-seg.red { opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
+  .cluster-svg[data-zone=red] .rv-dot.red, .cluster-svg[data-zone=red] .rv-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 48, 0.8)); }
+  .rv-dot { fill: var(--rv-dot); }
+  .rv-dot.red { fill: var(--rv-red); }
+  .rv-num { fill: var(--rv-num); font: 600 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+  .rv-num.red { fill: var(--rv-red); }
+  .rv-num-unit { fill: var(--rv-num); font: 500 17px -apple-system, system-ui, sans-serif; dominant-baseline: central; opacity: 0.85; }
+  .rv-pill { stroke: var(--rv-pill-line); stroke-width: 3; }
+  .rv-speed { fill: #4a1d04; font: 800 94px -apple-system, system-ui, sans-serif; text-anchor: middle;
+              dominant-baseline: central; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .rv-speed-unit { fill: #5c2806; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.08em; }
+  .rv-icon path { fill: none; stroke: #5c2806; stroke-width: 2.6; stroke-linecap: round; }
+  .rv-chip circle { fill: var(--rv-chip-bg); stroke: var(--rv-chip-line); stroke-width: 2; }
+  .rv-chip-text { fill: var(--rv-chip-text); font: 800 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+  .rv-chip-text.small { font-size: 13px; letter-spacing: 0.06em; }
+  .cluster-svg[data-zone=red] .rv-chip:first-of-type circle { stroke: var(--rv-red); }
+  .rv-chip-cap, .rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
+  .rv-bar rect { fill: var(--rv-bar-off); }
+  .rv-bar rect.red { fill: var(--rv-red); }
+  .rv-bar-end { fill: var(--rv-num); font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+  .dash-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 4px 6px 0; color: var(--muted); font-size: 13px; }
 
   .pedals { display: flex; gap: 12px; margin-top: 8px; }
   .pedal {
@@ -136,7 +144,6 @@
     background: rgba(232,161,58,0.12); border: 1px solid rgba(232,161,58,0.3); color: var(--warn);
   }
   a { color: var(--accent); }
-  @media (prefers-reduced-motion: reduce) { .dial * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -146,17 +153,13 @@
   <div class="banner" id="err" hidden></div>
 
   <div class="grid">
-    <div class="card span2">
-      <h2>Engine</h2>
-      <div class="cluster">
-        <div><div class="dial-wrap" id="tach"></div><div class="dial-cap" id="tach-cap">Engine</div></div>
-        <div><div class="dial-wrap" id="speedo"></div><div class="dial-cap" id="speedo-cap">GPS speed</div></div>
+    <div class="card span2 dash">
+      <div id="cluster"></div>
+      <div class="dash-foot">
+        <span id="cluster-cap">Engine</span>
+        <span id="state-line">Off.</span>
+        <span>GPS <b id="g-rate">&mdash;</b> readings per second</span>
       </div>
-      <div class="meta">
-        <div class="load"><span class="k">Load</span><div class="bar" id="b-load-wrap"><i id="b-load"></i></div></div>
-        <div><span class="k">Speed readings</span> <span class="v" id="g-rate">&mdash;</span> <span class="k">per second</span></div>
-      </div>
-      <p class="hint" id="state-line">Off.</p>
     </div>
 
     <div class="card">
@@ -226,30 +229,29 @@
 
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
-  import { Dial, tachScale, speedScale } from './rev-gauge.js'
+  import { Cluster, tachScale } from './rev-gauge.js'
 
   const $ = (id) => document.getElementById(id)
   const rs = new RevSound({ onState: render })
 
-  // The dials animate on their own frame loop: engine state arrives at 50 Hz,
-  // the screen draws at its own rate, and each dial eases toward the latest
-  // value so neither rate shows as steps.
-  const tach = new Dial($('tach'), { scale: tachScale(1, 0), label: 'Engine speed',
-    format: (v) => String(Math.round(v / 50) * 50) })
-  const speedo = new Dial($('speedo'), { scale: speedScale(240), label: 'Speed' })
+  // The cluster animates on its own frame loop: engine state arrives at
+  // 50 Hz, the screen draws at its own rate, and everything eases toward the
+  // latest value so neither rate shows as steps.
+  const cluster = new Cluster($('cluster'), { scale: tachScale(6800, 700),
+    theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') })
   let tachFor = null
   function fitTach() {
     const p = PROFILES[rs.settings.profile]
     if (tachFor === p) return
     tachFor = p
-    tach.setScale(tachScale(p.redline, p.idle))
-    $('tach-cap').textContent = p.name + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    cluster.setScale(tachScale(p.redline, p.idle))
+    $('cluster-cap').textContent = p.name + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
   }
   let lastFrame = performance.now()
   function frame(now) {
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
     lastFrame = now
-    tach.frame(dt); speedo.frame(dt)
+    cluster.frame(dt)
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
@@ -309,15 +311,16 @@
   function render(s) {
     fitTach()
     // Engine off reads 0, like a real cluster with the ignition off.
-    tach.set(s.running ? s.rpm : 0)
-    tach.setBadge(!s.running ? null : s.stopped ? 'N' : String(s.gear))
-    speedo.set(s.v * 3.6)
-    speedo.setBadge(s.source === 'sim' ? 'SIM' : s.running && s.stale ? '\u2014' : null)
+    cluster.set({
+      rpm: s.running ? s.rpm : 0,
+      kmh: s.v * 3.6,
+      gear: !s.running ? '\u2013' : s.stopped ? 'N' : String(s.gear),
+      source: s.source === 'sim' ? 'SIM' : 'GPS',
+      load: s.running ? s.load : 0,
+      fixRate: s.fixRate || 0,
+      stale: s.running && s.source === 'gps' && s.stale,
+    })
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
-    const pct = Math.round(Math.min(1, Math.abs(s.load)) * 50)
-    $('b-load').style.width = pct + '%'
-    $('b-load').style.left = s.load < 0 ? (50 - pct) + '%' : '50%'
-    $('b-load-wrap').classList.toggle('neg', s.load < 0)
     $('rev').disabled = !s.stopped
     const err = $('err')
     err.hidden = !s.error

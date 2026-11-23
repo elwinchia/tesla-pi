@@ -101,10 +101,10 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, saturation and a DC blocker follow. It allocates nothing on the audio thread. |
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for settings, dials and the simulator: `https://<device>/rev.html`. Follows the car's day/night theme. |
-| `static/rev-gauge.js` | The tachometer and speedometer: plain SVG, no library. The tach is scaled to the chosen engine (whole thousands, with at least 500 rpm of red zone past the redline). It shows the gear and goes amber near the redline and red at it. The red latches for 0.3 s like a shift light, so the limiter reads steady instead of flickering. The speedo shows the speed the engine is driven by (GPS, or SIM in the simulator), 0–240 km/h. Both ease toward each new reading on their own animation frame, so 1 Hz GPS and 50 Hz engine updates never show as steps. |
+| `static/rev-gauge.js` | The cluster on `rev.html`, plain SVG with no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** a glowing orange pill in km/h, showing the speed the engine follows. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** engine load (L–H), and GPS readings per second (full at one per second, the car's expected rate). Everything eases toward each new reading on its own animation frame. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay. |
 | `scripts/rev-render.mjs` | Renders a simulated 45 s drive to a WAV through the same code. |
-| `test/rev-*.test.mjs` | 51 tests: dial scales, angles, arcs, easing and the steady red at the limiter for every engine; tracker, load, gearbox (including no gear hunting), free rev, sim car, firing rate per engine, loudness under load, periodicity, pops only on overrun, determinism, settings. |
+| `test/rev-*.test.mjs` | 54 tests: cluster segments and red zone per engine, arc geometry, lit counts and colours, bars, easing, and the red at the limiter for every engine; tracker, load, gearbox (including no gear hunting), free rev, sim car, firing rate per engine, loudness under load, periodicity, pops only on overrun, determinism, settings. |
 
 ### Safety rails
 
@@ -121,7 +121,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 - The volume control is squared, so the bottom half of its travel is quiet.
   The page says to keep it low enough to hear horns and sirens.
 
-### The dials
+### The cluster
 
 | | Idle | Mid-rev | At the limiter |
 |---|---|---|---|
@@ -136,7 +136,7 @@ headless Chromium.
 At a desk, with no car and no Pi:
 
 ```bash
-npm test                                         # 51 tests
+npm test                                         # 54 tests
 node scripts/rev-render.mjs --profile v8         # writes rev-v8.wav, then: open rev-v8.wav
 node scripts/rev-render.mjs --profile flat4 --mode sport --fix-ms 100
 python3 -m http.server 8000 -d static            # then open http://localhost:8000/rev.html
