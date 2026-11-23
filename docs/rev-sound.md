@@ -100,10 +100,11 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-profiles.js` | Four engines: cross-plane V8 (uneven bank firing, so it burbles), inline-6, V10 and flat-4 (unequal-length headers, so it rumbles). Each one sets its firing pattern, pipe resonances, gearing, redline and pop rate. |
 | `static/rev-worklet.js` | The synthesiser, an AudioWorklet. Every cylinder fires once per 720° and sends an exhaust pulse into its bank's resonators. A load-dependent tone filter, induction noise, overrun pops, saturation and a DC blocker follow. It allocates nothing on the audio thread. |
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
-| `static/rev.html` | The page for settings, gauges and the simulator: `https://<device>/rev.html`. |
+| `static/rev.html` | The page for settings, dials and the simulator: `https://<device>/rev.html`. Follows the car's day/night theme. |
+| `static/rev-gauge.js` | The tachometer and speedometer: plain SVG, no library. The tach is scaled to the chosen engine (whole thousands, with at least 500 rpm of red zone past the redline). It shows the gear and goes amber near the redline and red at it. The red latches for 0.3 s like a shift light, so the limiter reads steady instead of flickering. The speedo shows the speed the engine is driven by (GPS, or SIM in the simulator), 0–240 km/h. Both ease toward each new reading on their own animation frame, so 1 Hz GPS and 50 Hz engine updates never show as steps. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay. |
 | `scripts/rev-render.mjs` | Renders a simulated 45 s drive to a WAV through the same code. |
-| `test/rev-*.test.mjs` | 41 tests: tracker, load, gearbox (including no gear hunting), free rev, sim car, firing rate per engine, loudness under load, periodicity, pops only on overrun, determinism, settings. |
+| `test/rev-*.test.mjs` | 51 tests: dial scales, angles, arcs, easing and the steady red at the limiter for every engine; tracker, load, gearbox (including no gear hunting), free rev, sim car, firing rate per engine, loudness under load, periodicity, pops only on overrun, determinism, settings. |
 
 ### Safety rails
 
@@ -120,12 +121,22 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 - The volume control is squared, so the bottom half of its travel is quiet.
   The page says to keep it low enough to hear horns and sirens.
 
+### The dials
+
+| | Idle | Mid-rev | At the limiter |
+|---|---|---|---|
+| Night | ![idle, night](img/rev-gauges-1-idle-night.png) | ![mid-rev, night](img/rev-gauges-2-mid-night.png) | ![redline, night](img/rev-gauges-3-redline-night.png) |
+| Day | ![idle, day](img/rev-gauges-4-idle-day.png) | ![mid-rev, day](img/rev-gauges-5-mid-day.png) | ![redline, day](img/rev-gauges-6-redline-day.png) |
+
+These were taken in the simulator at 1 GPS reading a second, V8 profile, in
+headless Chromium.
+
 ## 5. Try it
 
 At a desk, with no car and no Pi:
 
 ```bash
-npm test                                         # 41 tests
+npm test                                         # 51 tests
 node scripts/rev-render.mjs --profile v8         # writes rev-v8.wav, then: open rev-v8.wav
 node scripts/rev-render.mjs --profile flat4 --mode sport --fix-ms 100
 python3 -m http.server 8000 -d static            # then open http://localhost:8000/rev.html

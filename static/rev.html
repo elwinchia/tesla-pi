@@ -16,61 +16,127 @@
   desk. The simulator reports speed at a GPS-like rate on purpose, so it
   sounds the way the car will.
 -->
+<script>
+  // Same day/night decision as the main page: its last verdict (which already
+  // includes the car's theme and any manual Day/Night choice), else the car's
+  // own colour scheme. Runs before paint so the page never flashes white.
+  (function () {
+    var root = document.documentElement
+    function apply() {
+      var last = null
+      try { last = localStorage.getItem('night-mode-last') } catch (e) {}
+      var dark = last === 'night' || (last !== 'day' && window.matchMedia
+        && matchMedia('(prefers-color-scheme: dark)').matches)
+      root.classList.toggle('night', !!dark)
+    }
+    apply()
+    try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', apply) } catch (e) {}
+    window.addEventListener('storage', apply)
+  })()
+</script>
 <style>
-  :root { color-scheme: dark; }
+  /* Day is the default; html.night is the car's night theme. */
+  :root {
+    color-scheme: light;
+    --bg: #f3f3f0; --card: #ffffff; --line: rgba(0,0,0,0.08); --text: #121316; --muted: #5f646c;
+    --ctl: #eceef1; --ctl-line: rgba(0,0,0,0.12); --seg: #e6e8eb; --well: #eceef1;
+    --accent: #3b5bdb; --accent-2: #12b886; --warn: #e8590c; --red: #e03131;
+    /* gauges */
+    --g-face: #fafaf8; --g-track: #e4e6ea; --g-tick: #a3a9b2; --g-tick-major: #4b5058;
+    --g-text: #121316; --g-muted: #6b7079; --g-needle: #121316; --g-glow-op: 0.18;
+  }
+  :root.night {
+    color-scheme: dark;
+    --bg: #0b0c0e; --card: #16181c; --line: rgba(255,255,255,0.08); --text: #f2f3f5; --muted: #8a8f97;
+    --ctl: #2a2f37; --ctl-line: rgba(255,255,255,0.14); --seg: #1e2228; --well: #0e1013;
+    --accent: #5c7cfa; --accent-2: #38d9a9; --warn: #ffa94d; --red: #ff5c5c;
+    --g-face: #101215; --g-track: #23272e; --g-tick: #4a5059; --g-tick-major: #9aa1ab;
+    --g-text: #f7f8fa; --g-muted: #8a8f97; --g-needle: #ffffff; --g-glow-op: 0.35;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0; padding: 16px 18px 40px;
-    background: #0b0c0e; color: #f2f3f5;
+    background: var(--bg); color: var(--text);
     font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
   }
   h1 { font-size: 20px; margin: 0 0 2px; }
-  .sub { color: #8a8f97; font-size: 13px; margin-bottom: 16px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
   .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
   @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .span2 { grid-column: 1 / -1; } }
-  .card { background: #16181c; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   .card h2 {
-    font-size: 13px; margin: 0 0 12px; color: #8a8f97; font-weight: 500;
+    font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 500;
     text-transform: uppercase; letter-spacing: 0.07em;
   }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; }
-  .row label { color: #c9ccd1; font-size: 15px; }
-  .hint { color: #8a8f97; font-size: 13px; margin: 4px 0 0; }
+  .row label { font-size: 15px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
   button, select {
     -webkit-appearance: none; appearance: none;
-    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    background: var(--ctl); color: var(--text); border: 1px solid var(--ctl-line);
     border-radius: 10px; padding: 11px 14px; font: inherit; font-size: 15px; font-weight: 500;
     touch-action: manipulation;
   }
   select { min-width: 220px; }
-  button.go { background: #3b5bdb; border-color: #4c6ef5; }
-  button.on { background: #2b8a3e; border-color: #40c057; }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; color: #fff; }
+  button.on { background: #2b8a3e; border-color: #40c057; color: #fff; }
   button:disabled { opacity: 0.45; }
-  input[type=range] { width: 260px; accent-color: #4c6ef5; }
-  .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); }
-  .seg button { border: 0; border-radius: 0; background: #1e2228; }
-  .seg button[aria-pressed=true] { background: #3b5bdb; }
-  .gauges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  .g .n { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.05; }
-  .g .u { color: #8a8f97; font-size: 13px; }
-  .bar { height: 14px; background: #0e1013; border-radius: 7px; overflow: hidden; margin: 6px 0 2px; position: relative; }
-  .bar > i { display: block; height: 100%; width: 0; background: #4c6ef5; transition: width 60ms linear; }
-  .bar.load > i { background: #e8a13a; }
-  .bar.load.neg > i { background: #5c7cfa; }
-  .bar .red { position: absolute; top: 0; bottom: 0; right: 0; width: 8%; background: rgba(229,72,77,0.35); }
+  input[type=range] { width: 260px; accent-color: var(--accent); }
+  .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid var(--ctl-line); }
+  .seg button { border: 0; border-radius: 0; background: var(--seg); }
+  .seg button[aria-pressed=true] { background: #3b5bdb; color: #fff; }
+
+  /* ── Cluster: tachometer + speedometer ─────────────────────────────── */
+  .cluster { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: center; }
+  @media (max-width: 560px) { .cluster { grid-template-columns: 1fr; } }
+  .dial-wrap { position: relative; max-width: 420px; width: 100%; margin: 0 auto; }
+  .dial { display: block; width: 100%; height: auto; overflow: visible; }
+  .dial .g-track   { fill: none; stroke: var(--g-track); stroke-width: 12; stroke-linecap: round; }
+  .dial .g-redzone { fill: none; stroke: var(--red); stroke-width: 12; opacity: 0.28; }
+  .dial .g-arc     { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; }
+  .dial .g-glow    { fill: none; stroke: var(--accent); stroke-width: 22; stroke-linecap: round; opacity: var(--g-glow-op); }
+  .dial[data-zone=warn] .g-arc, .dial[data-zone=warn] .g-glow { stroke: var(--warn); }
+  .dial[data-zone=red]  .g-arc, .dial[data-zone=red]  .g-glow { stroke: var(--red); }
+  .dial .g-tick    { stroke: var(--g-tick); stroke-width: 1.5; stroke-linecap: round; }
+  .dial .g-tick.major { stroke: var(--g-tick-major); stroke-width: 2.5; }
+  .dial .g-tick.red { stroke: var(--red); }
+  .dial .g-label   { fill: var(--g-muted); font: 600 12px -apple-system, system-ui, sans-serif;
+                     text-anchor: middle; dominant-baseline: central; }
+  .dial .g-label.red { fill: var(--red); }
+  .dial .g-needle  { stroke: var(--g-needle); stroke-width: 4; stroke-linecap: round; }
+  .dial .g-value   { fill: var(--g-text); font: 700 31px -apple-system, system-ui, sans-serif;
+                     text-anchor: middle; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .dial[data-zone=red] .g-value { fill: var(--red); }
+  .dial .g-unit    { fill: var(--g-muted); font: 500 10px -apple-system, system-ui, sans-serif;
+                     text-anchor: middle; letter-spacing: 0.08em; text-transform: uppercase; }
+  .dial .g-badge rect { fill: var(--well); stroke: var(--ctl-line); }
+  .dial .g-badge text { fill: var(--g-text); font: 700 15px -apple-system, system-ui, sans-serif;
+                        text-anchor: middle; dominant-baseline: central; letter-spacing: 0.04em; }
+  .dial[data-zone=red] .g-badge rect { fill: var(--red); stroke: var(--red); }
+  .dial[data-zone=red] .g-badge text { fill: #fff; }
+  .dial-cap { text-align: center; color: var(--muted); font-size: 13px; margin-top: -6px; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 14px; }
+  .meta .k { color: var(--muted); font-size: 13px; }
+  .meta .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .load { flex: 1; min-width: 180px; display: flex; align-items: center; gap: 10px; }
+  .bar { flex: 1; height: 10px; background: var(--well); border-radius: 5px; overflow: hidden; position: relative; }
+  .bar > i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; background: var(--warn); }
+  .bar.neg > i { background: var(--accent); }
+  .bar::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--ctl-line); }
+
   .pedals { display: flex; gap: 12px; margin-top: 8px; }
   .pedal {
     flex: 1; height: 120px; font-size: 18px; user-select: none; -webkit-user-select: none;
     touch-action: none;
   }
-  .pedal.held { background: #3b5bdb; }
+  .pedal.held { background: #3b5bdb; color: #fff; }
   .banner {
     border-radius: 10px; padding: 12px; font-size: 13px; margin-bottom: 12px;
-    background: rgba(232,161,58,0.12); border: 1px solid rgba(232,161,58,0.3); color: #e8c48a;
+    background: rgba(232,161,58,0.12); border: 1px solid rgba(232,161,58,0.3); color: var(--warn);
   }
-  .banner.bad { background: rgba(229,72,77,0.12); border-color: rgba(229,72,77,0.3); color: #f0a0a2; }
-  .dim { color: #8a8f97; }
-  a { color: #8ea6ff; }
+  a { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .dial * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -82,14 +148,14 @@
   <div class="grid">
     <div class="card span2">
       <h2>Engine</h2>
-      <div class="gauges">
-        <div class="g"><div class="n" id="g-speed">0</div><div class="u">km/h</div></div>
-        <div class="g"><div class="n" id="g-rpm">0</div><div class="u">rpm</div></div>
-        <div class="g"><div class="n" id="g-gear">N</div><div class="u">gear</div></div>
-        <div class="g"><div class="n" id="g-rate">&mdash;</div><div class="u">speed readings per second</div></div>
+      <div class="cluster">
+        <div><div class="dial-wrap" id="tach"></div><div class="dial-cap" id="tach-cap">Engine</div></div>
+        <div><div class="dial-wrap" id="speedo"></div><div class="dial-cap" id="speedo-cap">GPS speed</div></div>
       </div>
-      <div class="bar" title="rpm"><i id="b-rpm"></i><span class="red"></span></div>
-      <div class="bar load" id="b-load-wrap" title="load"><i id="b-load"></i></div>
+      <div class="meta">
+        <div class="load"><span class="k">Load</span><div class="bar" id="b-load-wrap"><i id="b-load"></i></div></div>
+        <div><span class="k">Speed readings</span> <span class="v" id="g-rate">&mdash;</span> <span class="k">per second</span></div>
+      </div>
       <p class="hint" id="state-line">Off.</p>
     </div>
 
@@ -160,9 +226,33 @@
 
 <script type="module">
   import { RevSound, PROFILES, CARS } from './rev-sound.js'
+  import { Dial, tachScale, speedScale } from './rev-gauge.js'
 
   const $ = (id) => document.getElementById(id)
   const rs = new RevSound({ onState: render })
+
+  // The dials animate on their own frame loop: engine state arrives at 50 Hz,
+  // the screen draws at its own rate, and each dial eases toward the latest
+  // value so neither rate shows as steps.
+  const tach = new Dial($('tach'), { scale: tachScale(1, 0), label: 'Engine speed',
+    format: (v) => String(Math.round(v / 50) * 50) })
+  const speedo = new Dial($('speedo'), { scale: speedScale(240), label: 'Speed' })
+  let tachFor = null
+  function fitTach() {
+    const p = PROFILES[rs.settings.profile]
+    if (tachFor === p) return
+    tachFor = p
+    tach.setScale(tachScale(p.redline, p.idle))
+    $('tach-cap').textContent = p.name + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+  }
+  let lastFrame = performance.now()
+  function frame(now) {
+    const dt = Math.min(0.1, (now - lastFrame) / 1000)
+    lastFrame = now
+    tach.frame(dt); speedo.frame(dt)
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
 
   for (const [k, p] of Object.entries(PROFILES)) $('profile').add(new Option(p.name, k))
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
@@ -192,10 +282,10 @@
     syncSettings()
   }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
-  $('profile').onchange = (e) => rs.update({ profile: e.target.value })
+  $('profile').onchange = (e) => { rs.update({ profile: e.target.value }); fitTach() }
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
-  $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings() } }
+  $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings(); rs.emit(performance.now()) } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
   $('start').onclick = async () => { if (rs.running) rs.stop(); else await rs.start(); syncSettings() }
 
@@ -217,12 +307,16 @@
   hold($('rev'), async () => { if (!rs.running) { await rs.start(); syncSettings() } rs.setRev(1) }, () => rs.setRev(0))
 
   function render(s) {
-    $('g-speed').textContent = Math.round(s.v * 3.6)
-    $('g-rpm').textContent = Math.round(s.rpm / 50) * 50
-    $('g-gear').textContent = s.stopped ? 'N' : String(s.gear)
-    $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '—'
-    $('b-rpm').style.width = Math.min(100, (s.rpm / s.redline) * 100) + '%'
-    $('b-load').style.width = Math.round(Math.abs(s.load) * 100) + '%'
+    fitTach()
+    // Engine off reads 0, like a real cluster with the ignition off.
+    tach.set(s.running ? s.rpm : 0)
+    tach.setBadge(!s.running ? null : s.stopped ? 'N' : String(s.gear))
+    speedo.set(s.v * 3.6)
+    speedo.setBadge(s.source === 'sim' ? 'SIM' : s.running && s.stale ? '\u2014' : null)
+    $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
+    const pct = Math.round(Math.min(1, Math.abs(s.load)) * 50)
+    $('b-load').style.width = pct + '%'
+    $('b-load').style.left = s.load < 0 ? (50 - pct) + '%' : '50%'
     $('b-load-wrap').classList.toggle('neg', s.load < 0)
     $('rev').disabled = !s.stopped
     const err = $('err')
@@ -230,6 +324,7 @@
     if (s.error) err.textContent = s.error
     $('state-line').textContent = !s.running ? 'Off.'
       : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed…'
+      : s.stopped && s.rpm > s.idle * 1.2 ? 'Revving.'
       : s.shifting ? 'Shifting.'
       : s.load < -0.2 ? 'Lifting off.'
       : s.load > 0.6 ? 'Pulling hard.'
@@ -237,7 +332,7 @@
   }
 
   syncSettings()
-  render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, running: false, stale: true, source: 'gps' })
+  render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, idle: 1, running: false, stale: true, source: rs.source })
 </script>
 </body>
 </html>
