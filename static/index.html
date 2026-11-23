@@ -2198,6 +2198,33 @@
               </div>
               <p class="set-row-sub" id="audio-source-note" hidden></p>
             </div>
+            <!-- Engine sound (static/rev.html, docs/rev-sound.md). Client-only: the
+                 sound is made and played by this browser, the Pi just serves
+                 the files. Off unless the owner turns it on. -->
+            <div class="set-row is-inline" data-search="engine sound rev v8 exhaust noise fake engine tesrev">
+              <div class="set-row-main">
+                <div class="set-row-label">
+                  Engine sound <span class="set-badge">Experimental</span>
+                  <button type="button" class="set-info" data-set-info
+                          aria-haspopup="dialog" aria-label="About engine sound">
+                    <svg width="17" height="17" aria-hidden="true"><use href="#i-info"/></svg>
+                  </button>
+                </div>
+                <p class="set-row-sub set-info-body" hidden>
+                  Plays a made-up engine through the car's speakers that revs and shifts
+                  with your driving, read from the car's GPS speed. It is heard inside the
+                  car only and does not reflect the car's real state. Keep it quiet enough
+                  to hear horns and sirens. It starts at your first tap on this page.
+                </p>
+                <p class="set-row-sub"><a href="/rev.html" style="color:inherit">Engine, volume and simulator&hellip;</a></p>
+              </div>
+              <div class="set-row-control">
+                <button type="button" class="set-switch" id="rev-switch" role="switch"
+                        aria-checked="false" aria-label="Engine sound">
+                  <span class="knob"></span>
+                </button>
+              </div>
+            </div>
             <div class="set-row" data-search="fps frames per second bandwidth video smooth frame rate">
               <div class="set-row-label">Frame rate</div>
               <div class="set-row-control">
@@ -4347,6 +4374,51 @@
     applyShowFps();
   }
 
+  // ---- Engine sound (client-only; static/rev-sound.js) -------------------
+  // Off by default. When on, the module is loaded and the engine starts at
+  // the first tap (browsers refuse sound before one), then follows the car's
+  // GPS speed. It never talks to the Pi. Settings are shared with rev.html
+  // through localStorage, which is also where rev.html turns it on.
+  const revSwitchEl = document.getElementById('rev-switch');
+  let revSound = null;
+  let revLoading = null;
+  function revEnabled() {
+    try { return !!(JSON.parse(lsGet('revSound') || 'null') || {}).enabled; } catch { return false; }
+  }
+  function loadRevSound() {
+    if (!revLoading) {
+      revLoading = import('./rev-sound.js')
+        .then((m) => { revSound = new m.RevSound(); return revSound; })
+        .catch((e) => { console.warn('engine sound unavailable', e); revLoading = null; return null; });
+    }
+    return revLoading;
+  }
+  function armRevStart() {
+    const go = () => {
+      document.removeEventListener('pointerdown', go, true);
+      if (!revEnabled()) return;
+      loadRevSound().then((rs) => { if (rs && revEnabled()) rs.start(); });
+    };
+    document.addEventListener('pointerdown', go, true);
+  }
+  function applyRev(on) {
+    revSwitchEl.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+  function initRev() {
+    const on = revEnabled();
+    applyRev(on);
+    if (on) { loadRevSound(); armRevStart(); }
+  }
+  revSwitchEl.addEventListener('click', async () => {
+    const next = !revEnabled();
+    applyRev(next);
+    const rs = await loadRevSound();
+    if (!rs) { applyRev(false); return; }
+    rs.update({ enabled: next });
+    // The tap on the switch is the gesture that lets the sound start.
+    if (next) rs.start(); else rs.stop();
+  });
+
   // ---- Frame-rate (server-side; broadcast on /control connect drives UI) --
   const ALLOWED_FPS_CLIENT = new Set([30, 60]);
   const frameRateSegEl = document.getElementById('frame-rate-seg');
@@ -6495,6 +6567,7 @@
 
   initNightMode();
   initShowFps();
+  initRev();
 
   const video = connect('/video', {
     binary: true,

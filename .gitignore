@@ -59,3 +59,6 @@ infra/cert-service/.wrangler/
 # Python bytecode (scripts/*.py are run in place on the Pi)
 __pycache__/
 *.pyc
+
+# Engine sound renders (scripts/rev-render.mjs)
+rev-*.wav

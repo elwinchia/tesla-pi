@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Engine sound</title>
+<!--
+  Engine sound: https://<device>/rev.html
+
+  A synthesised engine that follows the car, played by this browser through
+  the car's own speakers. The car's GPS gives the speed; the engine's load
+  comes from how fast that speed changes. Everything runs in the browser —
+  the Pi only serves the files. See docs/rev-sound.md.
+
+  "Simulator" swaps the GPS for an on-screen pedal, so it can be tried at a
+  desk. The simulator reports speed at a GPS-like rate on purpose, so it
+  sounds the way the car will.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 18px 40px;
+    background: #0b0c0e; color: #f2f3f5;
+    font: 400 16px/1.45 -apple-system, system-ui, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #8a8f97; font-size: 13px; margin-bottom: 16px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .span2 { grid-column: 1 / -1; } }
+  .card { background: #16181c; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px; }
+  .card h2 {
+    font-size: 13px; margin: 0 0 12px; color: #8a8f97; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.07em;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 0; }
+  .row label { color: #c9ccd1; font-size: 15px; }
+  .hint { color: #8a8f97; font-size: 13px; margin: 4px 0 0; }
+  button, select {
+    -webkit-appearance: none; appearance: none;
+    background: #2a2f37; color: #fff; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 10px; padding: 11px 14px; font: inherit; font-size: 15px; font-weight: 500;
+    touch-action: manipulation;
+  }
+  select { min-width: 220px; }
+  button.go { background: #3b5bdb; border-color: #4c6ef5; }
+  button.on { background: #2b8a3e; border-color: #40c057; }
+  button:disabled { opacity: 0.45; }
+  input[type=range] { width: 260px; accent-color: #4c6ef5; }
+  .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); }
+  .seg button { border: 0; border-radius: 0; background: #1e2228; }
+  .seg button[aria-pressed=true] { background: #3b5bdb; }
+  .gauges { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .g .n { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .g .u { color: #8a8f97; font-size: 13px; }
+  .bar { height: 14px; background: #0e1013; border-radius: 7px; overflow: hidden; margin: 6px 0 2px; position: relative; }
+  .bar > i { display: block; height: 100%; width: 0; background: #4c6ef5; transition: width 60ms linear; }
+  .bar.load > i { background: #e8a13a; }
+  .bar.load.neg > i { background: #5c7cfa; }
+  .bar .red { position: absolute; top: 0; bottom: 0; right: 0; width: 8%; background: rgba(229,72,77,0.35); }
+  .pedals { display: flex; gap: 12px; margin-top: 8px; }
+  .pedal {
+    flex: 1; height: 120px; font-size: 18px; user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  .pedal.held { background: #3b5bdb; }
+  .banner {
+    border-radius: 10px; padding: 12px; font-size: 13px; margin-bottom: 12px;
+    background: rgba(232,161,58,0.12); border: 1px solid rgba(232,161,58,0.3); color: #e8c48a;
+  }
+  .banner.bad { background: rgba(229,72,77,0.12); border-color: rgba(229,72,77,0.3); color: #f0a0a2; }
+  .dim { color: #8a8f97; }
+  a { color: #8ea6ff; }
+</style>
+</head>
+<body>
+  <h1>Engine sound</h1>
+  <div class="sub">A synthesised engine that follows the car, through the car's speakers. <a href="/">Back</a></div>
+
+  <div class="banner" id="err" hidden></div>
+
+  <div class="grid">
+    <div class="card span2">
+      <h2>Engine</h2>
+      <div class="gauges">
+        <div class="g"><div class="n" id="g-speed">0</div><div class="u">km/h</div></div>
+        <div class="g"><div class="n" id="g-rpm">0</div><div class="u">rpm</div></div>
+        <div class="g"><div class="n" id="g-gear">N</div><div class="u">gear</div></div>
+        <div class="g"><div class="n" id="g-rate">&mdash;</div><div class="u">speed readings per second</div></div>
+      </div>
+      <div class="bar" title="rpm"><i id="b-rpm"></i><span class="red"></span></div>
+      <div class="bar load" id="b-load-wrap" title="load"><i id="b-load"></i></div>
+      <p class="hint" id="state-line">Off.</p>
+    </div>
+
+    <div class="card">
+      <h2>Sound</h2>
+      <div class="row">
+        <label for="enabled">Play while driving</label>
+        <button id="enabled" type="button" aria-pressed="false">Off</button>
+      </div>
+      <p class="hint">On, the engine also plays on the main page (under CarPlay) once you tap the screen. Off by default.</p>
+      <div class="row">
+        <label for="volume">Volume</label>
+        <input id="volume" type="range" min="0" max="100" step="1">
+      </div>
+      <p class="hint">Keep it low enough to hear horns, sirens and other road users.</p>
+      <div class="row">
+        <label for="profile">Engine</label>
+        <select id="profile"></select>
+      </div>
+      <div class="row">
+        <label>Gearbox</label>
+        <div class="seg" id="mode">
+          <button type="button" data-mode="comfort">Comfort</button>
+          <button type="button" data-mode="normal">Normal</button>
+          <button type="button" data-mode="sport">Sport</button>
+        </div>
+      </div>
+      <div class="row">
+        <label for="car">Your car</label>
+        <select id="car"></select>
+      </div>
+      <p class="hint">Used to turn the car's acceleration into how hard the engine works.</p>
+    </div>
+
+    <div class="card">
+      <h2>Speed from</h2>
+      <div class="row">
+        <div class="seg" id="source">
+          <button type="button" data-src="gps">Car GPS</button>
+          <button type="button" data-src="sim">Simulator</button>
+        </div>
+        <button id="start" type="button" class="go">Start</button>
+      </div>
+      <div id="sim" hidden>
+        <div class="row">
+          <label for="fixms">Speed readings</label>
+          <select id="fixms">
+            <option value="1000">1 per second (like the car)</option>
+            <option value="500">2 per second</option>
+            <option value="100">10 per second</option>
+          </select>
+        </div>
+        <div class="pedals">
+          <button type="button" class="pedal" id="brake">Brake</button>
+          <button type="button" class="pedal" id="pedal">Accelerator</button>
+        </div>
+        <div class="row">
+          <label for="pedal-amt">Accelerator travel</label>
+          <input id="pedal-amt" type="range" min="10" max="100" step="5" value="70">
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" class="pedal" id="rev" style="height:72px">Rev (stopped only)</button>
+      </div>
+      <p class="hint">Rev works only while the car is stopped.</p>
+    </div>
+  </div>
+
+<script type="module">
+  import { RevSound, PROFILES, CARS } from './rev-sound.js'
+
+  const $ = (id) => document.getElementById(id)
+  const rs = new RevSound({ onState: render })
+
+  for (const [k, p] of Object.entries(PROFILES)) $('profile').add(new Option(p.name, k))
+  for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
+
+  function syncSettings() {
+    const s = rs.settings
+    $('enabled').setAttribute('aria-pressed', String(s.enabled))
+    $('enabled').textContent = s.enabled ? 'On' : 'Off'
+    $('enabled').classList.toggle('on', s.enabled)
+    $('volume').value = Math.round(s.volume * 100)
+    $('profile').value = s.profile
+    $('car').value = s.car
+    for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
+    for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
+    $('sim').hidden = rs.source !== 'sim'
+    $('start').textContent = rs.running ? 'Stop' : 'Start'
+    $('start').className = rs.running ? 'on' : 'go'
+  }
+
+  $('enabled').onclick = () => {
+    const on = !rs.settings.enabled
+    rs.update({ enabled: on })
+    // Turning it on is a tap, which is the gesture the browser wants before
+    // it lets a page make sound — so start right away.
+    if (on && !rs.running) rs.start().then(syncSettings)
+    if (!on && rs.running && rs.source === 'gps') rs.stop()
+    syncSettings()
+  }
+  $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
+  $('profile').onchange = (e) => rs.update({ profile: e.target.value })
+  $('car').onchange = (e) => rs.update({ car: e.target.value })
+  $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
+  $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings() } }
+  $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
+  $('start').onclick = async () => { if (rs.running) rs.stop(); else await rs.start(); syncSettings() }
+
+  // Press-and-hold controls. Pointer capture keeps the hold when a finger
+  // slides off the button; lostpointercapture catches every way it ends.
+  function hold(el, on, off) {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      try { el.setPointerCapture(e.pointerId) } catch {}
+      el.classList.add('held'); on()
+    })
+    const end = () => { el.classList.remove('held'); off() }
+    el.addEventListener('pointerup', end)
+    el.addEventListener('pointercancel', end)
+    el.addEventListener('lostpointercapture', end)
+  }
+  hold($('pedal'), () => rs.setPedal($('pedal-amt').value / 100), () => rs.setPedal(0))
+  hold($('brake'), () => rs.setBrake(0.6), () => rs.setBrake(0))
+  hold($('rev'), async () => { if (!rs.running) { await rs.start(); syncSettings() } rs.setRev(1) }, () => rs.setRev(0))
+
+  function render(s) {
+    $('g-speed').textContent = Math.round(s.v * 3.6)
+    $('g-rpm').textContent = Math.round(s.rpm / 50) * 50
+    $('g-gear').textContent = s.stopped ? 'N' : String(s.gear)
+    $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '—'
+    $('b-rpm').style.width = Math.min(100, (s.rpm / s.redline) * 100) + '%'
+    $('b-load').style.width = Math.round(Math.abs(s.load) * 100) + '%'
+    $('b-load-wrap').classList.toggle('neg', s.load < 0)
+    $('rev').disabled = !s.stopped
+    const err = $('err')
+    err.hidden = !s.error
+    if (s.error) err.textContent = s.error
+    $('state-line').textContent = !s.running ? 'Off.'
+      : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed…'
+      : s.shifting ? 'Shifting.'
+      : s.load < -0.2 ? 'Lifting off.'
+      : s.load > 0.6 ? 'Pulling hard.'
+      : s.stopped ? 'Idling.' : 'Cruising.'
+  }
+
+  syncSettings()
+  render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, running: false, stale: true, source: 'gps' })
+</script>
+</body>
+</html>
