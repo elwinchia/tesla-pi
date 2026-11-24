@@ -6,7 +6,7 @@
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
 import { SAMPLE_SETS, hasRecording, loopSlice } from './rev-samples.js'
-import { onLoadMix } from './rev-sampler.js'
+import { onLoadMix, IDLE_LOUDNESS } from './rev-sampler.js'
 import { DEFAULT_STYLE, styleKey } from './gauges/index.js'
 import {
   CARS, DEFAULT_CAR, MODES, DEFAULT_MODE,
@@ -41,8 +41,9 @@ const START_WAIT_MS = 1500
 const QUICK_MS = 250
 // The clips are levelled to the idle loop's file, but the loops play both
 // idle layers at once (on and off, weighted sqrt(on) and sqrt(1 - on), the
-// same audio): at idle that sums to this.
-const IDLE_SUM = Math.sqrt(onLoadMix(0)) + Math.sqrt(1 - onLoadMix(0))
+// same audio): at idle that sums to this, and the player turns its idle down
+// to IDLE_LOUDNESS (rpmLoudness in rev-sampler.js).
+const IDLE_SUM = (Math.sqrt(onLoadMix(0)) + Math.sqrt(1 - onLoadMix(0))) * IDLE_LOUDNESS
 
 // Settings live in the car browser's localStorage, shared by every page on
 // this origin. They are the browser's business only — the Pi neither needs

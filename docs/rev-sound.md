@@ -229,7 +229,12 @@ lope repeated audibly. The owner heard it as "weird".
   power. The nearest loop is never stretched more than 1.31× (just above
   idle), and about 1.2× elsewhere.
 - **Levels.** Each loop keeps the engine's own level relative to the loudest
-  on-load loop, square-rooted so overrun and idle stay audible.
+  on-load loop, square-rooted so overrun and idle stay audible. That left
+  the idle almost as loud as a hard rev, so the player turns the sound down
+  with the rpm on top: 0.45× (about −7 dB) at the idle loop, rising evenly in
+  decibels to full at the top loop (`rpmLoudness` in `static/rev-sampler.js`).
+  The start and stop clips play at the same 0.45×, so the handover to the
+  idle stays level.
 - **Fallback.** The V8's numbers in `static/rev-profiles.js` drive its
   gearbox and rev range. They also synthesise it, but only while the loops
   load or if they cannot be loaded; the dash then says "synthesised

@@ -39,6 +39,18 @@ export function pairWeights(loops, rpm, out) {
 // throttle up.
 export function onLoadMix(load) { return clamp((load + 0.1) / 0.4, 0, 1) }
 
+// How loud the engine plays at an rpm, on top of the loops' own levels: the
+// idle IDLE_LOUDNESS (about -7 dB) as loud, rising evenly in decibels to full
+// at the top loop. The loops alone leave the idle almost as loud as a hard
+// rev (their levels are square-rooted so overrun stays audible); this lets
+// the idle sit back and the revs build. The start and stop clips, which end
+// and begin at idle, are played at IDLE_LOUDNESS too (rev-sound.js).
+export const IDLE_LOUDNESS = 0.45
+export function rpmLoudness(rpm, idle, top, floor = IDLE_LOUDNESS) {
+  if (!(top > idle)) return 1
+  return Math.pow(floor, 1 - clamp((rpm - idle) / (top - idle), 0, 1))
+}
+
 export class SampleVoice {
   constructor(sampleRate) {
     this.sr = sampleRate
@@ -49,9 +61,10 @@ export class SampleVoice {
     this.lp = 0 // one-pole tone filter state
   }
 
-  // set: { loops: [{ rpm, layer: 'on' | 'off' | 'any', gain?, data: Float32Array, sr }] }
   // set: { loops: [{ rpm, layer: 'on' | 'off' | 'any', group?: 'engine' |
-  // 'exhaust', gain?, data: Float32Array, sr }] }
+  // 'exhaust', gain?, data: Float32Array, sr }], quiet? }
+  // quiet: rpmLoudness's floor, IDLE_LOUDNESS unless given (1 = flat); its
+  // idle and top are the set's lowest and highest loops.
   setSet(set) {
     const loops = (set && set.loops ? set.loops : [])
       .filter((l) => l && l.data && l.data.length > 1 && l.rpm > 0 && l.sr > 0)
@@ -61,6 +74,9 @@ export class SampleVoice {
     // never line up into a comb.
     loops.forEach((l, i) => { l.pos = (l.data.length * 0.37 * i) % l.data.length })
     this.loops = loops
+    this.quiet = set && Number.isFinite(set.quiet) ? set.quiet : IDLE_LOUDNESS
+    this.idleRpm = loops.length ? loops[0].rpm : 0
+    this.topRpm = loops.length ? loops[loops.length - 1].rpm : 0
     // Each group (the same engine heard from the engine or the exhaust) is
     // weighted on its own, by rpm and load, then scaled by the mix.
     this.groups = {}
@@ -133,6 +149,9 @@ export class SampleVoice {
     const cut = this.split ? 1 : 0.18 + 0.82 * Math.min(1, 0.35 + pos)
     const a = clamp(cut, 0.02, 1)
     for (const l of this.loops) l.dw = (l.wTarget - l.w) / n
+    // The rpm's loudness, ramped across the block like the rpm.
+    const loud0 = rpmLoudness(rpm0, this.idleRpm, this.topRpm, this.quiet)
+    const dLoud = (rpmLoudness(this.rpm, this.idleRpm, this.topRpm, this.quiet) - loud0) / n
 
     const out0 = outs[0]
     for (let i = 0; i < n; i++) {
@@ -153,7 +172,7 @@ export class SampleVoice {
         if (l.pos >= len) l.pos -= len
       }
       this.lp += (s - this.lp) * a
-      const y = clamp(this.lp * level * this.gain, -1, 1)
+      const y = clamp(this.lp * level * this.gain * (loud0 + dLoud * i), -1, 1)
       out0[i] = y
     }
     for (let c = 1; c < outs.length; c++) outs[c].set(out0.subarray(0, n))

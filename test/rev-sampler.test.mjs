@@ -2,7 +2,7 @@
 // loops so the tests need no audio files or decoder.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SampleVoice, pairWeights, onLoadMix, MAX_RATE } from '../static/rev-sampler.js'
+import { SampleVoice, pairWeights, onLoadMix, MAX_RATE, rpmLoudness, IDLE_LOUDNESS } from '../static/rev-sampler.js'
 
 const SR = 48000
 // A loop that is exactly `cycles` periods of a sine at `hz`: seamless.
@@ -35,9 +35,10 @@ function pitch(a) {
   for (let i = 1; i < a.length; i++) if (a[i - 1] < 0 && a[i] >= 0) z++
   return (z * SR) / a.length
 }
-const voice = (loops, params = {}) => {
+// Flat loudness (quiet: 1) unless a test asks: these check the loops.
+const voice = (loops, params = {}, quiet = 1) => {
   const v = new SampleVoice(SR)
-  v.setSet({ loops })
+  v.setSet({ loops, quiet })
   v.rpm = params.rpm ?? 1000; v.load = params.load ?? 0; v.gain = 1
   v.set({ rpm: params.rpm ?? 1000, load: params.load ?? 0, gain: 1 })
   return v
@@ -106,6 +107,24 @@ test('with on-load and off-load layers, load picks the layer', () => {
   assert.ok(power(lift, 90) > 20 * power(lift, 150), 'lifting plays the off-load loop')
   assert.equal(onLoadMix(-1), 0)
   assert.equal(onLoadMix(1), 1)
+})
+
+test('the idle plays quieter, and the engine gets louder evenly with the rpm', () => {
+  assert.equal(rpmLoudness(800, 800, 6000), IDLE_LOUDNESS)
+  assert.equal(rpmLoudness(500, 800, 6000), IDLE_LOUDNESS)
+  assert.equal(rpmLoudness(6000, 800, 6000), 1)
+  assert.equal(rpmLoudness(9000, 800, 6000), 1)
+  // Even in decibels: halfway is the geometric middle.
+  assert.ok(Math.abs(rpmLoudness(3400, 800, 6000) - Math.sqrt(IDLE_LOUDNESS)) < 1e-12)
+  let prev = 0
+  for (let r = 800; r <= 6000; r += 100) { const g = rpmLoudness(r, 800, 6000); assert.ok(g > prev); prev = g }
+  assert.equal(rpmLoudness(1000, 1000, 1000), 1, 'one loop: flat')
+  // In the player: the same loop, one at idle and one at the top.
+  const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length)
+  const loops = [{ rpm: 1000, data: sineLoop(100), sr: SR }, { rpm: 5000, data: sineLoop(100), sr: SR }]
+  const idle = rms(render(voice(loops, { rpm: 1000 }, null), 0.5))
+  const top = rms(render(voice(loops, { rpm: 5000 }, null), 0.5))
+  assert.ok(Math.abs(idle / top - IDLE_LOUDNESS) < 0.02, `${idle / top}`)
 })
 
 test('with one layer, load makes it louder', () => {
