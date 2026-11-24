@@ -6,7 +6,7 @@
 // two small panels: the battery's charge (the car's own over Bluetooth, else
 // made up) and water temperature as bars, marked by their icons alone, as
 // on the original.
-import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, sevenRow } from './kit.js'
+import { GaugeStyle, el, text, polar, arcPath, dialAngle, clamp, sevenRow, sevenPolys, segmentsOf } from './kit.js'
 
 // Wide (3.1:1): the dash gives the gauge everything beside its one column
 // of buttons, and the centre panels take the extra width.
@@ -24,6 +24,12 @@ const TAIL = 70, TIP = 22
 // reads red when it runs low, the water when it runs hot.
 const MID = 620
 const BAR = { x: MID - 150, w: 300, h: 14 }
+// The gear: one seven-segment cell in the speed's italic, centred in the
+// disc. The speed's cells are 40 x 70 with 10-unit segments.
+const GEAR = { w: 27, h: 46, t: 7, skew: 0.14 }
+// Letters the speed never needs: N as the tall arch gear readouts use, and
+// R and P for completeness.
+const GEAR_SEGS = { N: 'abcef', R: 'eg', P: 'abefg' }
 const BARS = {
   batt:  { top: 4, lo: 0, hi: 1, labels: ['0', '50', '100'], key: 'fuel', low: 0.15 },
   water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
@@ -66,7 +72,8 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit .bl-seg .on { fill: #ff5a24; filter: drop-shadow(0 0 3px rgba(255, 106, 42, 0.95)) drop-shadow(0 0 12px rgba(255, 80, 30, 0.55)); }
       .gs-backlit .bl-seg .off { fill: #ff5a24; opacity: 0.06; }
       .gs-backlit .bl-gear-disc { fill: #ff5a1f; }
-      .gs-backlit .bl-gear { fill: #2a0c04; font: italic 700 50px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+      .gs-backlit .bl-gseg .on { fill: #2a0c04; }
+      .gs-backlit .bl-gseg .off { fill: #2a0c04; opacity: 0.05; }
       .gs-backlit .bl-gearg.off { opacity: 0.28; }
       .gs-backlit .bl-track { fill: #231915; stroke: #ff6a2a; stroke-width: 1.6; stroke-opacity: 0.7; }
       .gs-backlit .bl-fill { fill: #ff5a24; }
@@ -105,7 +112,8 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit[data-theme=day] .bl-disc0 { stop-color: #f76707; }
       .gs-backlit[data-theme=day] .bl-disc1 { stop-color: #e8590c; }
       .gs-backlit[data-theme=day] .bl-disc2 { stop-color: #d9480f; }
-      .gs-backlit[data-theme=day] .bl-gear { fill: #fff; }
+      .gs-backlit[data-theme=day] .bl-gseg .on { fill: #fff; }
+      .gs-backlit[data-theme=day] .bl-gseg .off { fill: #fff; opacity: 0.08; }
       .gs-backlit[data-theme=day] .bl-gearg.off { opacity: 0.35; }
       .gs-backlit[data-theme=day] .bl-track { fill: #f4f4f4; stroke: #b5b8bb; stroke-opacity: 1; }
       .gs-backlit[data-theme=day] .bl-fill { fill: #e8590c; }
@@ -155,7 +163,6 @@ export default class BacklitStyle extends GaugeStyle {
       const [x, y] = polar(SPEEDO.cx, SPEEDO.cy, 80, k * 22.5)
       el('circle', { cx: x.toFixed(1), cy: y.toFixed(1), r: 2.6, class: 'bl-dot' }, sp)
     }
-    text(sp, SPEEDO.cx, SPEEDO.cy - 97, 'bl-cap', 'electronic')
     text(sp, SPEEDO.cx, SPEEDO.cy + 100, 'bl-cap', 'km/h')
     this.speed = sevenRow(sp, { x: SPEEDO.cx - 74, y: SPEEDO.cy - 35, n: 3, w: 40, h: 70, t: 10, gap: 9, skew: 0.14, cls: 'seg7 bl-seg' })
 
@@ -167,7 +174,7 @@ export default class BacklitStyle extends GaugeStyle {
     const gg = this.gearG = el('g', { class: 'bl-gearg' }, tg)
     el('circle', { cx: TACH.cx, cy: TACH.cy, r: 84, fill: this.url('glow'), class: 'bl-glow' }, gg)
     el('circle', { cx: TACH.cx, cy: TACH.cy, r: 42, fill: this.url('disc'), class: 'bl-gear-disc' }, gg)
-    this.gear = ctext(gg, TACH.cx, TACH.cy + 2, 'bl-gear', '–', 0.85)
+    this.gear = this.gearCell(gg)
     text(tg, TACH.cx, TACH.cy + 74, 'bl-cap', '× 100')
     this.finger = el('circle', { r: 26, class: 'bl-finger', style: 'display:none' }, tg)
 
@@ -187,6 +194,27 @@ export default class BacklitStyle extends GaugeStyle {
         if (major) ctext(g, x, y + 60, 'bl-blabel', b.labels[q / 2], 0.8)
       }
       this.bars[k] = { ...b, g, halo, bar, w: -1, isHot: false }
+    }
+  }
+
+  // The gear as one seven-segment cell, lit and faint unlit segments as the
+  // speed has. The slant shifts the top right by skew x h, so the cell
+  // starts half of that left of centre to sit in the middle of the disc.
+  gearCell(parent) {
+    const { w, h, t, skew } = GEAR
+    const polys = sevenPolys(TACH.cx - w / 2 - (skew * h) / 2, TACH.cy - h / 2, w, h, t, skew)
+    const g = el('g', { class: 'bl-gseg' }, parent)
+    const segs = {}
+    for (const k of 'abcdefg') segs[k] = el('polygon', { points: polys[k], class: 'off' }, g)
+    let shown = null
+    return {
+      g,
+      set(ch) {
+        if (ch === shown) return
+        shown = ch
+        const on = GEAR_SEGS[ch] ?? segmentsOf(ch)
+        for (const k of 'abcdefg') segs[k].setAttribute('class', on.includes(k) ? 'on' : 'off')
+      },
     }
   }
 
@@ -268,7 +296,7 @@ export default class BacklitStyle extends GaugeStyle {
     this.paintSweep(this.speedSweep, SPEEDO, dialAngle(v.kmh, 0, SPEEDO.max, A0, A1), force)
     this.paintSweep(this.tachSweep, TACH, dialAngle(v.rpm, 0, this.scale.max, A0, A1), force)
     this.speed.set(i.stale ? '--' : String(clamp(Math.round(v.kmh), 0, 999)))
-    setText(this.gear, i.gear)
+    this.gear.set(String(i.gear ?? '–'))
     const on = !!i.running
     if (force || on !== this.gearOn) { this.gearOn = on; this.gearG.classList.toggle('off', !on) }
     for (const b of Object.values(this.bars)) this.paintBar(b, v[b.key], force)

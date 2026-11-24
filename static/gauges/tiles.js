@@ -2,27 +2,26 @@
 // CarPlay, redrawn as closely as we can and without its marks. Ten dark,
 // grainy rounded tiles in six columns, standing straight on the page (no
 // plate behind them):
-//   1  the engine's name, etched wide where the original has its logo;
-//      a calendar-style list (trip and odometer, clock and gear)
-//   2  battery volts; oil temperature
+//   1  the outside and cabin temperatures, two time-circuit fields where the
+//      original has its logo; a calendar-style list (trip and odometer,
+//      clock and gear)
+//   2  the tyres, the car seen from above with a pressure by each wheel;
+//      oil temperature
 //   3  the speedometer: a grey band from 0 up to the speed, chrome digits
-//   4  the tachometer (in hundreds), a fuel arc and the range under it
-//   5  oil pressure; fuel
+//   4  the tachometer (in hundreds)
+//   5  a classic analogue clock; the battery (fuel)
 //   6  the green time-circuit clock; a cassette labelled with the engine
-// The car's own readouts, each shown only while it is read: the outside and
-// cabin temperatures as two more time-circuit fields over the name, the
-// heading over the speedometer, the tyres in its open bottom (the car seen
-// from above), as the tach's open bottom holds the fuel.
+// The car's own readouts (temperatures, tyres) show dashes until read.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
 
 const VIEW = { w: 1200, h: 390 }
 // Tiles: [x, y, w, h]. Narrower than the original's (its grid is ~3.7:1),
 // so every dial is sized by its tile's width and the tiles run tall.
 const T = {
-  name: [3, 3, 138, 185], cal: [3, 202, 138, 185],
-  volts: [155, 3, 138, 185], oilT: [155, 202, 138, 185],
+  temps: [3, 3, 138, 185], cal: [3, 202, 138, 185],
+  tyres: [155, 3, 138, 185], oilT: [155, 202, 138, 185],
   speed: [307, 3, 286, 384], tach: [607, 3, 286, 384],
-  oilP: [907, 3, 138, 185], fuel: [907, 202, 138, 185],
+  dial: [907, 3, 138, 185], fuel: [907, 202, 138, 185],
   clock: [1059, 3, 138, 185], tape: [1059, 202, 138, 185],
 }
 // The two big dials share one geometry: a 240° scale from bottom left to
@@ -30,9 +29,6 @@ const T = {
 const BIG = { R: 131, tick: 121, maj: 13, min: 7, num: 92, bandO: 125, bandI: 87, a0: 150, a1: 390, cy: 197 }
 const SPEED = { max: 200, cx: T.speed[0] + T.speed[2] / 2 }
 const TACH = { cx: T.tach[0] + T.tach[2] / 2 }
-// The fuel arc fills the tach's open bottom: 0 at the left, 4/4 at the right.
-const FUEL = { r: 117, a0: 145, a1: 35 }
-const RANGE_KM = 600 // a full tank, for the made-up range
 const SMALL_R = 56
 
 const YEL = '#e8bb2c', ORG = '#f29a4a', RED = '#d6392c'
@@ -86,20 +82,11 @@ ${D} .tl-hub { stroke: #1f2124; }
 ${D} .tl-hubsh { opacity: 0.14; }
 ${D} .tl-unit { fill: #393c41; }
 ${D} .tl-cap { fill: #5c5e62; }
-${D} .tl-flab { fill: #5c5e62; }
-${D} .tl-range { fill: #1f2124; }
-${D} .tl-fuel-off { stroke: rgba(0, 0, 0, 0.09); }
-${D} .tl-fuel-on { stroke: #393c41; }
-${D} .tl-fuel-on.low { stroke: ${D_YEL}; }
-${D} .tl-fuel-end { fill: #8a8d91; }
 ${D} .tl-icon { stroke: #393c41; }
 ${D} .tl-icon .fill { fill: #393c41; }
 ${D} .tl-utag { fill: #5c5e62; }
 ${D} .tl-turn { fill: rgba(0, 0, 0, 0.06); }
 ${D} .tl-arrow { fill: rgba(0, 0, 0, 0.16); }
-${D} .tl-etch.hi { fill: #ffffff; }
-${D} .tl-etch.lo { fill: #9a9da1; }
-${D} .tl-etch.face { fill: #c9cbce; stroke: #a9acb0; }
 ${D} .tl-y { fill: ${D_YEL}; }
 ${D} .tl-y.dim { fill: #9c8443; }
 ${D} .tl-r { fill: ${D_RED}; }
@@ -117,13 +104,14 @@ ${D} .tl-title { fill: #1f2124; }
 ${D} .tl-artist { fill: #5c5e62; }
 ${D} .tl-finger { fill: rgba(0, 0, 0, 0.07); stroke: #393c41; }
 ${D} .tl-sim { fill: #5c5e62; }
-${D} .tl-hdg { fill: #1f2124; }
-${D} .tl-hdg .dir { fill: #1f2124; }
 ${D} .tl-tyre { fill: #1f2124; }
+${D} .tl-tyre.dim { fill: #a4a7ab; }
 ${D} .tl-tyre.warn, ${D} .tl-car.warn .wh { fill: ${D_RED}; }
 ${D} .tl-car .body { stroke: #5c5e62; }
-${D} .tl-car .wh { fill: #5c5e62; }
-${D} .tl-tunit { fill: #5c5e62; }
+${D} .tl-car .glass { fill: rgba(0, 0, 0, 0.08); stroke: #8a8d91; }
+${D} .tl-car .wh { fill: #393c41; }
+${D} .tl-sec { stroke: ${D_ORG}; }
+${D} .tl-sec-cap { fill: ${D_ORG}; }
 `
 const CSS = `
 .gs-tiles { font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif; }
@@ -144,22 +132,12 @@ const CSS = `
 .gs-tiles .tl-speed { font-size: 64px; font-weight: 800; text-anchor: middle; letter-spacing: -2px; font-variant-numeric: tabular-nums; }
 .gs-tiles .tl-unit { fill: #e8e8e8; font-size: 15px; font-weight: 700; text-anchor: middle; letter-spacing: 0.04em; }
 .gs-tiles .tl-cap { fill: #8a8a8a; font-size: 14px; font-weight: 600; text-anchor: middle; letter-spacing: 0.1em; }
-.gs-tiles .tl-flab { fill: #8c8c8c; font-size: 15px; font-weight: 600; text-anchor: middle; dominant-baseline: central; }
-.gs-tiles .tl-range { fill: #f2f2f2; font-size: 19px; font-weight: 700; }
-.gs-tiles .tl-fuel-off { fill: none; stroke: #343434; stroke-width: 3.5; }
-.gs-tiles .tl-fuel-on { fill: none; stroke: #c9c9c9; stroke-width: 3.5; stroke-linecap: round; }
-.gs-tiles .tl-fuel-on.low { stroke: ${YEL}; }
 .gs-tiles .tl-hub { stroke: #050505; stroke-width: 1; }
 .gs-tiles .tl-icon { fill: none; stroke: #ececec; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .gs-tiles .tl-icon .fill { fill: #ececec; stroke: none; }
 .gs-tiles .tl-utag { fill: #8a8a8a; font-size: 14px; font-weight: 600; text-anchor: middle; }
 .gs-tiles .tl-turn { fill: #0d0d0d; }
 .gs-tiles .tl-arrow { fill: #574812; }
-.gs-tiles .tl-etch { font-weight: 800; text-anchor: middle; dominant-baseline: central; }
-.gs-tiles .tl-etch.hi { fill: #3d3d3d; }
-.gs-tiles .tl-etch.lo { fill: #070707; }
-.gs-tiles .tl-etch.face { fill: #262626; stroke: #4a4a4a; stroke-width: 0.9; }
-.gs-tiles .tl-etch.sub { font-size: 14px; font-weight: 700; letter-spacing: 0.14em; }
 .gs-tiles .tl-cal { font-size: 15px; }
 .gs-tiles .tl-cal.when { font-weight: 300; }
 .gs-tiles .tl-cal.what { font-size: 17px; font-weight: 600; }
@@ -189,15 +167,16 @@ const CSS = `
 .gs-tiles .tl-artist { fill: #5e5e5e; font-size: 15px; font-weight: 700; text-anchor: middle; }
 .gs-tiles .tl-finger { fill: rgba(255, 255, 255, 0.14); stroke: #f0f0f0; stroke-width: 3; pointer-events: none; }
 .gs-tiles .tl-sim { fill: #c9c9c9; font-size: 14px; font-weight: 700; text-anchor: middle; letter-spacing: 0.12em; }
-.gs-tiles .tl-hdg { fill: #f2f2f2; font-size: 19px; font-weight: 700; text-anchor: middle; dominant-baseline: central; font-variant-numeric: tabular-nums; }
-.gs-tiles .tl-hdg .dir { fill: #f2f2f2; font-weight: 800; letter-spacing: 0.04em; }
-.gs-tiles .tl-tyre { fill: #e8e8e8; font-size: 16px; font-weight: 700; dominant-baseline: central; font-variant-numeric: tabular-nums; }
+.gs-tiles .tl-tyre { fill: #f2f2f2; font-size: 17px; font-weight: 700; dominant-baseline: central; font-variant-numeric: tabular-nums; }
 .gs-tiles .tl-tyre.l { text-anchor: end; }
+.gs-tiles .tl-tyre.dim { fill: #555555; }
 .gs-tiles .tl-tyre.warn { fill: #ff3b2c; }
-.gs-tiles .tl-car .body { fill: none; stroke: #8a8a8a; stroke-width: 1.5; }
-.gs-tiles .tl-car .wh { fill: #8a8a8a; }
+.gs-tiles .tl-car .body { fill: none; stroke: #8a8a8a; stroke-width: 1.5; stroke-linejoin: round; }
+.gs-tiles .tl-car .glass { fill: rgba(255, 255, 255, 0.06); stroke: #6e6e6e; stroke-width: 1; stroke-linejoin: round; }
+.gs-tiles .tl-car .wh { fill: #bdbdbd; }
 .gs-tiles .tl-car.warn .wh { fill: #ff3b2c; }
-.gs-tiles .tl-tunit { fill: #8a8a8a; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; }
+.gs-tiles .tl-sec { stroke: ${ORG}; stroke-width: 1.3; stroke-linecap: round; }
+.gs-tiles .tl-sec-cap { fill: ${ORG}; }
 .gs-tiles[data-zone=red] .tl-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 44, 0.8)); }
 ${DAY}`
 
@@ -205,27 +184,15 @@ ${DAY}`
 // on the original, whose oil-temperature scale is uneven); `per` is ticks
 // per quarter turn; `tick(v)` and the labels give the colours.
 const SMALL = {
-  volts: {
-    tile: T.volts, stops: [[8, 90], [13, 180], [18, 270]], per: 10, icon: 'battery', unit: 'V',
-    tick: (v) => (v >= 16.5 ? 'red' : 'yel'),
-    majors: { 8: 'yel', 13: '', 18: 'red' },
-    labels: [[8, '8', 'org'], [13, '13', ''], [18, '18', 'red']],
-  },
   oilTemp: {
     tile: T.oilT, stops: [[40, 90], [80, 180], [120, 270]], per: 10, icon: 'oiltemp', unit: '°C',
     tick: (v) => (v > 80 ? 'olive' : 'grey'),
     majors: { 40: '', 80: '', 120: 'yel' },
     labels: [[40, '40', ''], [80, '80', ''], [120, '120', 'org']],
   },
-  // Pressure in bar, like the made-up model (0..6); 0 at the bottom.
-  oilPress: {
-    tile: T.oilP, stops: [[0, 90], [3, 0], [6, -90]], per: 15, icon: 'oilcan', unit: 'bar',
-    tick: () => 'light',
-    majors: { 0: '', 3: '', 6: '' },
-    labels: [[0, '0', ''], [6, '6', 'lite']],
-  },
+  // The car's battery charge stands in for the fuel.
   fuel: {
-    tile: T.fuel, stops: [[0, 90], [0.5, 0], [1, -90]], per: 15, icon: 'pump', unit: '',
+    tile: T.fuel, stops: [[0, 90], [0.5, 0], [1, -90]], per: 15, icon: 'battery', unit: '',
     tick: () => 'light',
     majors: { 0: '', 0.5: '', 1: '' },
     labels: [[0, '0', ''], [0.5, ['1', '2'], ''], [1, ['4', '4'], '']],
@@ -316,7 +283,7 @@ function fit(t, maxW) {
 export default class TilesStyle extends GaugeStyle {
   static meta = {
     key: 'tiles', name: 'Tile grid', era: 'DeLorean-style', view: VIEW,
-    blurb: 'Grainy dark tiles: a speedometer with chrome digits, a tach with a fuel arc, four small dials, a time-circuit clock and a cassette.',
+    blurb: 'Grainy dark tiles: a speedometer with chrome digits, a tach, the tyres, a classic clock, small dials, a time-circuit clock and a cassette.',
   }
 
   build() {
@@ -326,12 +293,12 @@ export default class TilesStyle extends GaugeStyle {
     this.defs(defs)
     for (const r of Object.values(T)) this.tile(s, r)
 
-    this.buildName(s)
     this.buildTemps(s)
     this.buildCal(s)
+    this.buildTyres(s)
     this.small = Object.entries(SMALL).map(([key, d]) => this.smallDial(s, key, d))
+    this.buildDial(s)
     this.buildSpeed(s)
-    this.buildCarRead(s)
     this.buildTach(s)
     this.buildClock(s)
     this.buildTape(s)
@@ -377,32 +344,22 @@ export default class TilesStyle extends GaugeStyle {
     el('path', { d: `M${x + 13} ${y + 1.2}H${x + w - 13}`, stroke: '#ffffff', 'stroke-opacity': 0.07, 'stroke-width': 1, class: 'tl-edge' }, s)
   }
 
-  // ── Column 1, top: the engine's name, etched wide where the logo was ──
-  buildName(s) {
-    const [x, y, w, h] = T.name
-    const cx = x + w / 2, cy = y + h / 2
-    // In a group, so it can step down when the temperatures show over it.
-    this.nameG = el('g', {}, s)
-    const etch = (dy, cls, size) => text(this.nameG, cx, cy + dy, 'tl-etch ' + cls, '', { 'font-size': size })
-    this.nameT = [etch(-11, 'lo', 34), etch(-9, 'hi', 34), etch(-10, 'face', 34)]
-    this.subT = [0, 1].map((k) => [etch(26 + k * 19, 'lo sub', 14), etch(28 + k * 19, 'hi sub', 14), etch(27 + k * 19, 'face sub', 14)])
-  }
-
-  // ── Column 1, top: outside and cabin temperatures, two small time-circuit
-  // fields (a red plate over a green LCD) side by side ──
+  // ── Column 1, top: outside and cabin temperatures, two time-circuit
+  // fields (a red plate over a green LCD), one over the other ──
   buildTemps(s) {
-    const cw = 14, ch = 21, ct = 2.7, cg = 2, n = 3
-    const W = n * cw + (n - 1) * cg, bw = W + 10
-    const field = (label) => {
-      const g = el('g', { style: 'display:none' }, s)
-      el('rect', { x: -21, y: 0, width: 42, height: 16, class: 'tl-plate' }, g)
-      text(g, 0, 8.5, 'tl-platet', label)
-      el('rect', { x: -bw / 2, y: 19, width: bw, height: ch + 10, rx: 2, class: 'tl-lcd' }, g)
-      el('rect', { x: -bw / 2 + 2, y: 21, width: bw - 4, height: ch + 6, class: 'tl-lcd-in' }, g)
-      return { g, row: alnumRow(g, { x: -W / 2, y: 24, n, w: cw, h: ch, t: ct, gap: cg }), on: false }
+    const [x, y, w, h] = T.temps
+    const cw = 19, ch = 30, ct = 3.8, cg = 3, n = 3
+    const W = n * cw + (n - 1) * cg, bw = W + 12, fh = 19 + ch + 10, gap = 20
+    const mid = x + w / 2, top = y + (h - 2 * fh - gap) / 2
+    const field = (label, ty) => {
+      el('rect', { x: mid - 26, y: ty, width: 52, height: 16, class: 'tl-plate' }, s)
+      text(s, mid, ty + 8.5, 'tl-platet', label)
+      el('rect', { x: mid - bw / 2, y: ty + 19, width: bw, height: ch + 10, rx: 2, class: 'tl-lcd' }, s)
+      el('rect', { x: mid - bw / 2 + 2, y: ty + 21, width: bw - 4, height: ch + 6, class: 'tl-lcd-in' }, s)
+      return alnumRow(s, { x: mid - W / 2, y: ty + 24, n, w: cw, h: ch, t: ct, gap: cg })
     }
-    this.tOut = field('OUT'); this.tIn = field('IN')
-    this.tempsW = bw; this.tempsKey = null
+    this.tOut = field('OUT', top); this.tIn = field('IN', top + fh + gap)
+    this.tempsKey = null
   }
 
   // ── Column 1, bottom: two calendar-style entries ──
@@ -429,11 +386,7 @@ export default class TilesStyle extends GaugeStyle {
     const lo = d.stops[0], hi = d.stops[d.stops.length - 1]
     const span = hi[1] - lo[1], dir = Math.sign(span)
     el('circle', { cx, cy, r: R + 8, class: 'tl-ring line' }, s)
-    // `col` is a TICK_COL key: inline at night, a c-<key> class for the day.
-    const line = (a, r0, r1, cls, col) => {
-      const [x0, y0] = polar(cx, cy, r0, a), [x1, y1] = polar(cx, cy, r1, a)
-      el('line', { x1: x0.toFixed(1), y1: y0.toFixed(1), x2: x1.toFixed(1), y2: y1.toFixed(1), class: 'tl-tk ' + cls + (col != null ? ' c-' + (col || 'base') : ''), style: col != null ? `stroke:${TICK_COL[col]}` : null }, s)
-    }
+    const line = (a, r0, r1, cls, col) => this.tick(s, cx, cy, a, r0, r1, cls, col)
     // Faint ticks on the unused half, as on the original's printed face.
     const step = 90 / d.per
     for (let a = hi[1] + dir * step; dir > 0 ? a < lo[1] + 360 - 0.1 : a > lo[1] - 360 + 0.1; a += dir * step) line(a, R, R - 6, 'ghost')
@@ -467,6 +420,60 @@ export default class TilesStyle extends GaugeStyle {
     return { key, d, cx, cy, needle, a: null }
   }
 
+  // A small dial's tick. `col` is a TICK_COL key: inline at night, a
+  // c-<key> class for the day.
+  tick(s, cx, cy, a, r0, r1, cls, col) {
+    const [x0, y0] = polar(cx, cy, r0, a), [x1, y1] = polar(cx, cy, r1, a)
+    el('line', { x1: x0.toFixed(1), y1: y0.toFixed(1), x2: x1.toFixed(1), y2: y1.toFixed(1), class: 'tl-tk ' + cls + (col != null ? ' c-' + (col || 'base') : ''), style: col != null ? `stroke:${TICK_COL[col]}` : null }, s)
+  }
+
+  // ── Column 2, top: the tyres, the car seen from above in a small dial's
+  // ring, a pressure by each wheel ──
+  buildTyres(s) {
+    const [x, y, w, h] = T.tyres
+    const cx = x + w / 2, cy = y + h / 2 - 5
+    el('circle', { cx, cy: y + h / 2, r: SMALL_R + 8, class: 'tl-ring line' }, s)
+    const car = this.carG = el('g', { class: 'tl-car', transform: `translate(${cx} ${cy})` }, s)
+    const bw = 15, bh = 41 // half width, half length
+    // Wheels first, the body over them: the tyres just show at its sides.
+    const axle = [-bh + 16, bh - 15]
+    for (const ay of axle) for (const sx of [-1, 1]) el('rect', { x: sx * (bw + 1.5) - 3, y: ay - 7, width: 6, height: 14, rx: 2, class: 'wh' }, car)
+    el('path', { class: 'body', d: `M${-bw + 4} ${-bh}Q0 ${-bh - 3} ${bw - 4} ${-bh}Q${bw} ${-bh + 1} ${bw} ${-bh + 7}V${bh - 6}Q${bw} ${bh} ${bw - 5} ${bh}H${-bw + 5}Q${-bw} ${bh} ${-bw} ${bh - 6}V${-bh + 7}Q${-bw} ${-bh + 1} ${-bw + 4} ${-bh}Z` }, car)
+    // Windscreen, roof and rear window.
+    el('path', { class: 'glass', d: `M${-bw + 3} -14Q0 -20 ${bw - 3} -14L${bw - 5} -4Q0 -6 ${-bw + 5} -4Z` }, car)
+    el('path', { class: 'glass', d: `M${-bw + 5} 20Q0 18 ${bw - 5} 20L${bw - 4} 27Q0 30 ${-bw + 4} 27Z` }, car)
+    this.tyreT = axle.flatMap((ay) => [-1, 1].map((sx) => text(s, cx + sx * (bw + 10), cy + ay, 'tl-tyre' + (sx < 0 ? ' l' : ''), '')))
+    text(s, cx, cy + bh + 16, 'tl-utag', 'bar')
+    this.tyreKey = undefined
+  }
+
+  // ── Column 5, top: a classic clock, on a small dial's face ──
+  buildDial(s) {
+    const [x, y, w, h] = T.dial
+    const cx = x + w / 2, cy = y + h / 2, R = SMALL_R
+    el('circle', { cx, cy, r: R + 8, class: 'tl-ring line' }, s)
+    for (let k = 0; k < 60; k++) {
+      const a = k * 6 - 90
+      if (k % 15 === 0) this.tick(s, cx, cy, a, R + 1, R - 10, 'maj', '')
+      else if (k % 5 === 0) this.tick(s, cx, cy, a, R + 1, R - 7, 'maj', '')
+      else this.tick(s, cx, cy, a, R, R - 4, 'min', 'light')
+    }
+    for (const [k, t] of [[0, '12'], [3, '3'], [6, '6'], [9, '9']]) {
+      const [lx, ly] = polar(cx, cy, R * 0.62, k * 30 - 90)
+      text(s, lx.toFixed(1), ly.toFixed(1), 'tl-num sm', t)
+    }
+    el('circle', { cx: cx + 1, cy: cy + 2, r: 9, fill: '#000', opacity: 0.4, class: 'tl-hubsh' }, s)
+    el('circle', { cx, cy, r: 7, fill: this.url('hub'), class: 'tl-hub' }, s)
+    // The hands point along +x and turn about the hub, as the needles do.
+    const hand = (tail, len, wb, wt) => el('polygon', { points: `${cx - tail},${cy - wb} ${cx + len},${cy - wt} ${cx + len},${cy + wt} ${cx - tail},${cy + wb}`, fill: this.url('needle') }, s)
+    this.hourH = hand(6, 31, 3.6, 1.6)
+    this.minH = hand(8, R - 5, 2.8, 0.8)
+    this.secH = el('g', {}, s)
+    el('line', { x1: cx - 13, y1: cy, x2: cx + R - 2, y2: cy, class: 'tl-sec' }, this.secH)
+    el('circle', { cx, cy, r: 2.4, class: 'tl-sec-cap' }, s)
+    this.dialC = [cx, cy]; this.dialKey = null
+  }
+
   // "¹⁄₂"-style fractions, as the original prints them.
   fraction(s, x, y, n, d) {
     const t = el('text', { x: x.toFixed(1), y: (y + 1).toFixed(1), class: 'tl-num sm' }, s)
@@ -480,19 +487,12 @@ export default class TilesStyle extends GaugeStyle {
     if (kind === 'battery') {
       el('rect', { x: -10, y: -8, width: 20, height: 12, rx: 1.5 }, g)
       el('path', { d: 'M-7 -8 V-10.5 H-3.5 V-8 M3.5 -8 V-10.5 H7 V-8 M-7 -2 H-3 M3 -2 H7 M5 -4 V0 M-9 7 H9 M-7 9.5 H7' }, g)
-    } else if (kind === 'oiltemp' || kind === 'oilcan') {
-      // An oil can (the drop says oil); the thermometer says temperature.
+    } else if (kind === 'oiltemp') {
+      // An oil can; the thermometer says temperature.
       el('path', { d: 'M-12 -1 H-7 L-5 -4 H3 L12 -7 L4 5 H-7 Z M-1 -4 V-7 M-3 -7 H1' }, g)
       el('path', { d: 'M-12 -1 L-12 3 L-7 3' }, g)
-      if (kind === 'oilcan') el('path', { class: 'fill', d: 'M12.5 0 q-2 3 0 5 q2 -2 0 -5' }, g)
-      else {
-        el('path', { d: 'M1 -9 V-19 M1 -16 H4 M1 -13 H4' }, g)
-        el('circle', { class: 'fill', cx: 1, cy: -8, r: 2.2 }, g)
-      }
-    } else if (kind === 'pump') {
-      el('path', { d: 'M-9 10 V-9 Q-9 -11 -7 -11 H1 Q3 -11 3 -9 V10 Z M-11 10 H5' }, g)
-      el('rect', { class: 'fill', x: -7, y: -8.5, width: 8, height: 5, rx: 0.8 }, g)
-      el('path', { d: 'M3 -3 H6 Q7.5 -3 7.5 -1.5 V5 Q7.5 7 9 7 Q10.5 7 10.5 5 V-5 L7.5 -8' }, g)
+      el('path', { d: 'M1 -9 V-19 M1 -16 H4 M1 -13 H4' }, g)
+      el('circle', { class: 'fill', cx: 1, cy: -8, r: 2.2 }, g)
     }
     return g
   }
@@ -537,27 +537,6 @@ export default class TilesStyle extends GaugeStyle {
     text(s, cx, cy + 45, 'tl-unit', 'KM/H')
   }
 
-  // ── Column 3, more: the heading over the speedometer, and the tyres in its
-  // open bottom, the car seen from above with a pressure by each wheel ──
-  buildCarRead(s) {
-    const cx = SPEED.cx, cy = BIG.cy
-    this.hdgT = text(s, cx, T.speed[1] + 35, 'tl-hdg', '')
-    this.hdgDir = el('tspan', { class: 'dir' }, this.hdgT)
-    this.hdgDeg = el('tspan', {}, this.hdgT)
-    this.hdgT.style.display = 'none'
-    const g = this.tyreG = el('g', { style: 'display:none' }, s)
-    const car = this.carG = el('g', { class: 'tl-car' }, g)
-    const top = cy + 59, h = 44, w = 18
-    el('rect', { x: cx - w / 2, y: top, width: w, height: h, rx: 6, class: 'body' }, car)
-    for (const [dx, dy] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
-      el('rect', { x: cx + dx * (w / 2 + 2) - 2.5, y: top + 4 + dy * (h - 18), width: 5, height: 10, rx: 1.5, class: 'wh' }, car)
-    }
-    const row = (dy) => top + 9 + dy * (h - 18)
-    this.tyreT = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([dx, dy]) => text(g, cx + dx * 22, row(dy), 'tl-tyre' + (dx < 0 ? ' l' : ''), ''))
-    text(g, cx, top + h + 12, 'tl-tunit', 'bar')
-    this.tyreKey = null; this.hdgKey = null
-  }
-
   // ── Column 4: the tachometer ──
   buildTach(s) {
     const cx = TACH.cx, cy = BIG.cy
@@ -569,19 +548,6 @@ export default class TilesStyle extends GaugeStyle {
     this.tachG = el('g', {}, s)
     const cap = el('text', { class: 'tl-cap' }, s)
     el('textPath', { href: '#' + this.id('rpmarc'), startOffset: '50%' }, cap).textContent = 'RPM × 100'
-
-    // Fuel: the arc in the open bottom, lit white from 0.
-    el('path', { d: arcPath(cx, cy, FUEL.r, FUEL.a0, FUEL.a1), class: 'tl-fuel-off' }, s)
-    const [ex, ey] = polar(cx, cy, FUEL.r, FUEL.a1)
-    el('circle', { cx: ex.toFixed(1), cy: ey.toFixed(1), r: 2.6, fill: '#8a8a8a', class: 'tl-fuel-end' }, s)
-    this.fuelArc = el('path', { class: 'tl-fuel-on' }, s)
-    for (const [t, a, r] of [['0', 141, 140], ['2/4', 90, 141], ['4/4', 41, 143]]) {
-      const [lx, ly] = polar(cx, cy, r, a)
-      text(s, lx.toFixed(1), ly.toFixed(1), 'tl-flab', t)
-    }
-    // Range, with a pump.
-    this.icon(s, 'pump', cx - 40, cy + 92)
-    this.rangeT = text(s, cx - 24, cy + 99, 'tl-range', '')
 
     // The needle points along +x and turns about the hub; it runs out to
     // the rim, past the numerals, as on the original.
@@ -695,17 +661,6 @@ export default class TilesStyle extends GaugeStyle {
     }
     setText(this.speedT, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
 
-    // Fuel: the tach's arc and the range under it. With the car read over
-    // Bluetooth, fuel is its battery's charge and the range is the car's own.
-    const fuel = clamp(v.fuel, 0, 1)
-    const range = Math.round(i.running && Number.isFinite(i.rangeKm) ? i.rangeKm : fuel * RANGE_KM)
-    if (force || this.fuelF == null || Math.abs(fuel - this.fuelF) > 0.002 || range !== this.rangeK) {
-      this.fuelF = fuel; this.rangeK = range
-      this.fuelArc.setAttribute('d', fuel > 0.005 ? arcPath(TACH.cx, cy, FUEL.r, FUEL.a0, FUEL.a0 + fuel * (FUEL.a1 - FUEL.a0)) : '')
-      this.fuelArc.classList.toggle('low', fuel > 0 && fuel < 0.15)
-      setText(this.rangeT, range + ' km')
-    }
-
     // Small dials. With the engine off they rest on a peg just past the
     // bottom stop, clear of its numeral, as a real gauge does.
     for (const sd of this.small) {
@@ -716,8 +671,18 @@ export default class TilesStyle extends GaugeStyle {
       sd.needle.setAttribute('transform', `rotate(${a.toFixed(2)} ${sd.cx} ${sd.cy})`)
     }
 
-    // The time circuit: only when the minute changes.
+    // The clock's hands, once a second, as a quartz clock ticks.
     const c = i.clock instanceof Date ? i.clock : new Date()
+    const sec = c.getHours() * 3600 + c.getMinutes() * 60 + c.getSeconds()
+    if (force || sec !== this.dialKey) {
+      this.dialKey = sec
+      const [dx, dy] = this.dialC, rot = (a) => `rotate(${(a - 90).toFixed(2)} ${dx} ${dy})`
+      this.hourH.setAttribute('transform', rot(((sec / 3600) % 12) * 30))
+      this.minH.setAttribute('transform', rot(((sec / 60) % 60) * 6))
+      this.secH.setAttribute('transform', rot(c.getSeconds() * 6))
+    }
+
+    // The time circuit: only when the minute changes.
     const stamp = c.getFullYear() * 1e8 + (c.getMonth() + 1) * 1e6 + c.getDate() * 1e4 + c.getHours() * 100 + c.getMinutes()
     const two = (n) => String(n).padStart(2, '0')
     if (force || stamp !== this.stamp) {
@@ -741,17 +706,12 @@ export default class TilesStyle extends GaugeStyle {
 
     this.paintCar(force)
 
-    // The engine's name, split at its dot: "V10" and "LFA-style".
+    // The engine's name on the cassette, split at its dot: "V10" and
+    // "LFA-style".
     if (force || i.car !== this.car) {
       this.car = i.car
       const [name, ...rest] = String(i.car || '').split(' · ')
       const style = rest.join(' · ')
-      const nm = (name || '—').toUpperCase()
-      // Wide, like the original's lettering: stretched to a set width.
-      const wide = Math.min(T.name[2] - 22, Math.max(84, nm.length * 34))
-      for (const t of this.nameT) { t.textContent = nm; t.setAttribute('textLength', wide); t.setAttribute('lengthAdjust', 'spacingAndGlyphs') }
-      const sub = this.wrap(style.toUpperCase(), 12)
-      this.subT.forEach((row, k) => row.forEach((t) => { t.textContent = sub[k] || ''; fit(t, T.name[2] - 16) }))
       setText(this.tapeNum, name || '')
       this.tapeLabel.textContent = style.toUpperCase(); fit(this.tapeLabel, 100)
       this.titleT.textContent = name || ''; fit(this.titleT, T.tape[2] - 16)
@@ -773,11 +733,11 @@ export default class TilesStyle extends GaugeStyle {
     this.reelT = now
   }
 
-  // The car's readouts: each hidden while its value is null.
+  // The car's readouts: dashes until they are read.
   paintCar(force) {
     const i = this.i
     const deg = (c) => {
-      if (!Number.isFinite(c)) return null
+      if (!Number.isFinite(c)) return '---'
       const r = Math.round(c), t = r + '°'
       return t.length <= 3 ? t : String(clamp(r, -99, 999))
     }
@@ -785,51 +745,21 @@ export default class TilesStyle extends GaugeStyle {
     const tk = out + '|' + inn
     if (force || tk !== this.tempsKey) {
       this.tempsKey = tk
-      const [x, , w] = T.name, mid = x + w / 2, top = T.name[1] + 7
-      const both = out != null && inn != null, gap = this.tempsW / 2 + 3
-      for (const [f, v, dx] of [[this.tOut, out, both ? -gap : 0], [this.tIn, inn, both ? gap : 0]]) {
-        f.g.style.display = v == null ? 'none' : ''
-        if (v == null) continue
-        f.g.setAttribute('transform', `translate(${mid + dx} ${top})`)
-        f.row.set(v)
-      }
-      // The name steps down under them, and back when they go.
-      this.nameG.setAttribute('transform', out != null || inn != null ? 'translate(0 16)' : '')
+      this.tOut.set(out); this.tIn.set(inn)
     }
 
-    const h = Number.isFinite(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
-    if (force || h !== this.hdgKey) {
-      this.hdgKey = h
-      this.hdgT.style.display = h == null ? 'none' : ''
-      if (h != null) {
-        this.hdgDir.textContent = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(h / 45) % 8]
-        this.hdgDeg.textContent = ' ' + h + '°'
-      }
-    }
-
-    const ty = Array.isArray(i.tyres) && i.tyres.length === 4 && i.tyres.some(Number.isFinite) ? i.tyres : null
-    const yk = ty ? ty.map((b) => (Number.isFinite(b) ? b.toFixed(2) : '–')).join(' ') + (i.tyreWarn ? '!' : '') : null
+    const ty = Array.isArray(i.tyres) && i.tyres.length === 4 ? i.tyres : null
+    const warn = !!(ty && i.tyreWarn)
+    const yk = (ty ? ty.map((b) => (Number.isFinite(b) ? b.toFixed(1) : '-')).join(' ') : '') + (warn ? '!' : '')
     if (force || yk !== this.tyreKey) {
       this.tyreKey = yk
-      this.tyreG.style.display = ty ? '' : 'none'
-      if (ty) {
-        const warn = !!i.tyreWarn
-        this.tyreT.forEach((t, k) => {
-          t.textContent = Number.isFinite(ty[k]) ? ty[k].toFixed(2) : '–'
-          t.classList.toggle('warn', warn)
-        })
-        this.carG.classList.toggle('warn', warn)
-      }
+      this.tyreT.forEach((t, k) => {
+        const b = ty ? ty[k] : null, ok = Number.isFinite(b)
+        t.textContent = ok ? b.toFixed(1) : '–.–'
+        t.classList.toggle('dim', !ok)
+        t.classList.toggle('warn', warn && ok)
+      })
+      this.carG.classList.toggle('warn', warn)
     }
-  }
-
-  // Up to two lines of at most n characters, broken at spaces or hyphens.
-  wrap(s, n) {
-    if (s.length <= n) return [s]
-    const words = s.split(/(?<=[ -])/)
-    let a = ''
-    while (words.length && (a + words[0]).trimEnd().length <= n) a += words.shift()
-    if (!a) a = words.shift()
-    return [a.trimEnd(), words.join('').trim()]
   }
 }

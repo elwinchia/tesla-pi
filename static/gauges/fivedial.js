@@ -392,7 +392,7 @@ ${DAY}
     el('path', { class: 'glass', d: 'M-7.6 13Q0 14.6 7.6 13L8.8 19Q0 21.4 -8.8 19Z' }, car)
     el('path', { d: 'M-7.6 -3.5V13M7.6 -3.5V13' }, car)
     this.tyreN = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) =>
-      this.wide(g, cx + sx * 15.5 * k + sx * 5, CY + sy * 16.5 * k, 'fd-tyre ' + (sx < 0 ? 'l' : 'r'), '\u2013.\u2013\u2013', 1.08))
+      this.wide(g, cx + sx * 15.5 * k + sx * 5, CY + sy * 16.5 * k, 'fd-tyre ' + (sx < 0 ? 'l' : 'r'), '\u2013.\u2013', 1.08))
     this.icon(g, 'tyre', cx, CY - 53, 1.05)
     text(g, cx, CY + 58, 'fd-small', 'bar')
   }
@@ -401,9 +401,9 @@ ${DAY}
     const i = this.i, num = (x) => x != null && Number.isFinite(x)
     const ty = Array.isArray(i.tyres) && i.tyres.some(num) ? i.tyres : null
     const warn = !!(ty && i.tyreWarn)
-    const s = ty ? ty.slice(0, 4).map((p) => (num(p) ? p.toFixed(2) : '\u2013.\u2013\u2013')) : null
+    const s = ty ? ty.slice(0, 4).map((p) => (num(p) ? p.toFixed(1) : '\u2013.\u2013')) : null
     if (!this.moved('tyres', (s ? s.join(' ') : '') + (warn ? '!' : ''), force)) return
-    this.tyreN.forEach((t, k) => setText(t, s ? s[k] : '\u2013.\u2013\u2013'))
+    this.tyreN.forEach((t, k) => setText(t, s ? s[k] : '\u2013.\u2013'))
     this.tyreG.classList.toggle('none', !ty)
     this.tyreG.classList.toggle('warn', warn)
   }

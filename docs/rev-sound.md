@@ -353,10 +353,10 @@ colours off it.
 |---|---|---|
 | Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with the gear in its corner, trip and odometer; water temperature and battery bars; outside/cabin temperature and heading LCDs. |
 | Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): the four tyre pressures around a car seen from above, a water temperature/battery split dial, the tach with a big gear and a boost bar, the speedometer with a digital speed, odometer and trip, a chronograph clock. |
-| Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear in a glowing disc, battery and water bars between, marked by their icons. |
+| Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear as a seven-segment digit in a glowing disc, battery and water bars between, marked by their icons. |
 | Twin dials | NSX | Big tach with a gear strip (fading away from the current gear) and big speedometer with a digital speed, their scales printed light so the readings stand out; small water/oil and G/volts dials at the edges. A moving needle leaves an orange trail that fades back into it. |
-| Digital bars | Corvette C4 | Curved bar fans for speed and revs (×100) with framed digital readouts; oil and coolant temperature boxes, a state-of-charge stack, trip and average speed, heading and outside/cabin temperature, the engine's name and the time. |
-| Tile grid | DeLorean | Grained tiles: the engine's name, trip and odometer, volts and oil temperature dials, the speedometer, the tach with a fuel arc and range, oil pressure and fuel dials, the date and time display, and a cassette labelled with the engine. |
+| Digital bars | Corvette C4 | Curved bar fans for speed and revs (×100) with framed digital readouts; tyre pressure and coolant boxes, a state-of-charge stack, trip and average speed, the engine's name and the time. |
+| Tile grid | DeLorean | Grained tiles: outside and cabin temperature in time-circuit fields, the tyre pressures around a car seen from above, trip and odometer, a water temperature dial, the speedometer, the tach, a classic clock, the battery dial, the date and time display, and a cassette labelled with the engine. |
 | Crosshair | Integrale | Two gunsight dials with dotted rings and glowing sweeps, the gear in a roundel, boost, water, battery and fuel tiles between. |
 
 **What is real.** Revs, speed, gear, trip and odometer: the engine model and
@@ -367,9 +367,9 @@ the battery's charge, shown on every battery and fuel gauge (the battery
 gauges of the S2000, Testarossa and 911 styles, the fuel gauges of the
 rest); its range (the DeLorean's range line; the car gives it in miles);
 its odometer, which the GPS count carries on from; the outside and cabin
-temperatures (S2000, C4, DeLorean and Integrale styles); and the four tyre
-pressures, red on a pressure warning (the 911's tyre dial, the DeLorean and
-Integrale styles). The Pi
+temperatures (S2000, DeLorean and Integrale styles); and the four tyre
+pressures, red on a pressure warning (the 911's and DeLorean's tyre dials,
+the C4's tyre box, the Integrale). The Pi
 reads them with its read-only car key (`/telemetry/ble`,
 [telemetry-options.md](telemetry-options.md)): charge, drive, climate and
 tyres when the engine sound starts, then the charge and climate every five
@@ -377,10 +377,10 @@ minutes while it runs and the tyres every fifteen, and nothing while it is
 off. Each read is one short Bluetooth connection of about 3 s, and the car
 takes only three at a time, which phone keys also use, so it is never held
 open or read faster. **From the browser's GPS**: the heading, shown as a
-compass readout on the S2000, C4, DeLorean and Integrale styles (the car's
-browser keeps reporting it while parked). Every one of these readouts is
-hidden until there is a value, except the 911's tyre dial, which shows
-dashes. A
+compass readout on the S2000 and Integrale styles (the car's browser keeps
+reporting it while parked). These readouts are hidden until there is a
+value, except where a whole dial or box is given to one (the tyre dials and
+box, the DeLorean's temperatures), which shows dashes. A
 failed read keeps the last good one; a reading older than 30 minutes is not
 shown. The gear stays the engine model's: a five-minute-old P or D would be
 wrong more often than right.

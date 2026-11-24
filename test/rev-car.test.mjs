@@ -52,18 +52,26 @@ test('parseCar: outside and cabin temperature, tyre pressures and their warning'
 test('CarReader: reads everything on start, charge and climate on the interval, tyres every third, nothing once stopped', async () => {
   const { f, calls } = fakeFetch((cat) => [200, { ok: true, data: DATA[cat] }])
   const got = []
-  const r = new CarReader({ fetch: f, every: 20, onRead: (x) => got.push(x) })
-  r.start()
-  await new Promise((ok) => setTimeout(ok, 70))
-  r.stop()
-  const n = calls.length
-  await new Promise((ok) => setTimeout(ok, 50))
-  assert.equal(calls.length, n, 'no reads after stop')
-  assert.deepEqual(calls.slice(0, 11).map((u) => u.split('=')[1]),
+  // A hand-driven clock: setInterval is swapped for one the test fires, so
+  // the schedule does not depend on how busy the machine is.
+  const real = globalThis.setInterval, realClear = globalThis.clearInterval
+  let tick = null
+  globalThis.setInterval = (fn) => { tick = fn; return 1 }
+  globalThis.clearInterval = () => { tick = null }
+  const settle = () => new Promise((ok) => setImmediate(ok))
+  try {
+    const r = new CarReader({ fetch: f, every: 1000, onRead: (x) => got.push(x) })
+    r.start(); await settle()
+    for (let k = 0; k < 3; k++) { tick(); await settle() }
+    r.stop()
+    assert.equal(tick, null, 'no timer after stop')
+  } finally { globalThis.setInterval = real; globalThis.clearInterval = realClear }
+  assert.deepEqual(calls.map((u) => u.split('=')[1]),
     ['charge', 'drive', 'climate', 'tire-pressure', 'charge', 'climate', 'charge', 'climate', 'charge', 'climate', 'tire-pressure'])
   assert.ok(got[0].odoKm > 0 && got[0].soc === 0.8 && got[0].outsideC === 32 && got[0].tyres.length === 4)
   assert.equal(got[1].odoKm, undefined, 'interval reads have no odometer')
   assert.equal(got[1].tyres, undefined, 'nor tyres, but every third')
+  assert.equal(got[3].tyres.length, 4)
 })
 
 test('CarReader: the setting off (403) stops it asking until the next start', async () => {

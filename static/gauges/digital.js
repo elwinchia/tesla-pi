@@ -2,7 +2,7 @@
 // "CarPlay Generations": two rounded panels where a fan of thin bars sweeps
 // up from the bottom left and flattens out at the top right, speed on the
 // left and revs on the right, each with a framed readout; in the middle, the
-// oil and coolant boxes either side of a stacked fuel bar, trip and average
+// tyre-pressure and coolant boxes either side of a stacked fuel bar, trip and average
 // speed readouts, two turn arrows and a "now playing" pill that shows the
 // engine, the time and the throttle. Our own drawing: no logos, no CarPlay
 // tiles, and no plate behind it all (the page's own background shows).
@@ -95,18 +95,25 @@ const CSS = `
 .gs-digital .dg-inset { fill: #141209; stroke: #3b381a; stroke-width: 3; }
 .gs-digital .dg-big { fill: ${C.yellow}; font-weight: 400; text-anchor: middle; font-variant-numeric: tabular-nums; }
 .gs-digital .dg-big.end { text-anchor: end; }
+.gs-digital .dg-big.start { text-anchor: start; }
 .gs-digital .dg-halo { fill: none; stroke: ${C.yellow}; stroke-width: 7; stroke-linejoin: round; opacity: 0.12; }
 .gs-digital .dg-unit { fill: ${C.yellow}; font-size: 31px; font-style: italic; text-anchor: middle; dominant-baseline: central; }
 .gs-digital .dg-lab { fill: ${C.yellow}; font-size: 23px; font-weight: 500; }
 .gs-digital .dg-lab.dim { fill: ${C.dim}; }
 .gs-digital .dg-lab.mid { text-anchor: middle; }
 .gs-digital .dg-lab.end { text-anchor: end; }
-.gs-digital .dg-in { font-size: 26px; font-weight: 500; }
 .gs-digital .dg-head { font-size: 26px; text-anchor: middle; }
 .gs-digital .dg-fuel-lab { fill: ${C.yellow}; font-size: 25px; font-weight: 500; }
 .gs-digital .dg-ftick { stroke: #3f5a37; stroke-width: 5; stroke-linecap: round; }
 .gs-digital .dg-icon { fill: none; stroke: ${C.yellow}; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .gs-digital .dg-icon-fill { fill: ${C.yellow}; }
+.gs-digital .dg-tyre.none { fill: ${C.dim}; }
+.gs-digital .dg-tyres.warn .dg-tyre { fill: ${C.red}; }
+.gs-digital .dg-tyres.warn .dg-halo { stroke: ${C.red}; opacity: 0.25; }
+.gs-digital .dg-tyres.warn .dg-tpms { stroke: ${C.red}; }
+.gs-digital .dg-tyres.warn .dg-tpms-fill { fill: ${C.red}; }
+.gs-digital .dg-car { fill: none; stroke: ${C.dim}; stroke-width: 2.5; stroke-linejoin: round; }
+.gs-digital .dg-wheel { fill: ${C.dim}; }
 .gs-digital .dg-btrack { fill: #4c2b0c; }
 .gs-digital .dg-bfill { fill: ${C.orange}; }
 .gs-digital .dg-bfill.hot { fill: ${C.red}; }
@@ -157,6 +164,12 @@ const CSS = `
 .gs-digital[data-theme=day] .dg-ftick { stroke: #a6a9ac; }
 .gs-digital[data-theme=day] .dg-icon { stroke: #393c41; }
 .gs-digital[data-theme=day] .dg-icon-fill { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-tyre.none { fill: #b4b7ba; }
+.gs-digital[data-theme=day] .dg-tyres.warn .dg-tyre { fill: ${D.red}; }
+.gs-digital[data-theme=day] .dg-tyres.warn .dg-tpms { stroke: ${D.red}; }
+.gs-digital[data-theme=day] .dg-tyres.warn .dg-tpms-fill { fill: ${D.red}; }
+.gs-digital[data-theme=day] .dg-car { stroke: #b4b7ba; }
+.gs-digital[data-theme=day] .dg-wheel { fill: #b4b7ba; }
 .gs-digital[data-theme=day] .dg-btrack { fill: rgba(0, 0, 0, 0.08); }
 .gs-digital[data-theme=day] .dg-bfill { fill: ${D.orange}; }
 .gs-digital[data-theme=day] .dg-bfill.hot { fill: ${D.red}; }
@@ -177,7 +190,7 @@ const CSS = `
 export default class DigitalStyle extends GaugeStyle {
   static meta = {
     key: 'digital', name: 'Digital bars', era: 'Corvette C4-style', view: VIEW,
-    blurb: 'An 80s digital dash: sweeping bar fans for speed and revs in framed panels, oil, coolant and fuel bars, trip and average speed.',
+    blurb: 'An 80s digital dash: sweeping bar fans for speed and revs in framed panels, tyre pressures, coolant and fuel bars, trip and average speed.',
   }
 
   build() {
@@ -229,7 +242,6 @@ export default class DigitalStyle extends GaugeStyle {
     this.tachG = el('g', {}, s)
     this.tachScaleG = el('g', { filter: this.url('glow'), class: 'dg-scale' }, s)
     this.tachNum = this.readout(s, 350 + DX, 'RPM/100', 140, 'tach')
-    this.buildCar(s)
     this.simTag = text(s, 1336, 136, 'dg-sim', 'SIM')
     this.simTag.style.display = 'none'
     this.finger = el('circle', { r: 40, class: 'dg-finger', style: 'display:none' }, s)
@@ -273,21 +285,38 @@ export default class DigitalStyle extends GaugeStyle {
   }
 
   buildCentre(s) {
-    // Oil and coolant: a big number, a bar with three ticks, the lit label
-    // over the dim one, and an icon. The temperatures are the lit ones.
+    // Each box: the lit label over the dim one and an icon along the bottom.
+    const frame = (g, x, lit, dimLab, icon) => {
+      el('rect', { x, y: 85, width: 200, height: 216, rx: 22, class: 'dg-tile' }, g)
+      this.fit(text(g, x + 16, 262, 'dg-lab', lit), 124)
+      this.fit(text(g, x + 16, 290, 'dg-lab dim', dimLab), 124)
+      icon(el('g', { transform: `translate(${x + 170} 266) scale(0.8)` }, g))
+    }
+    // Tyres: the four pressures as the wheels sit seen from above, the
+    // front pair over the rear, round a little car. Dashes until read.
+    {
+      const x = 663, tg = this.tyreG = el('g', { class: 'dg-tyres' }, s)
+      frame(tg, x, 'TYRE PRESS', 'BAR', (g) => this.tpmsIcon(g, 0, 0))
+      const cx = x + 100
+      el('rect', { x: cx - 13, y: 112, width: 26, height: 104, rx: 10, class: 'dg-car' }, tg)
+      for (const [dx, y] of [[-1, 128], [1, 128], [-1, 184], [1, 184]]) el('rect', { x: cx + dx * 15 - 3, y, width: 6, height: 18, rx: 2, class: 'dg-wheel' }, tg)
+      this.tyreVals = [[-1, 151], [1, 151], [-1, 220], [1, 220]].map(([dx, y]) => {
+        const side = dx < 0 ? ' end' : ' start', at = { 'font-size': 46 }
+        return [text(tg, cx + dx * 24, y, 'dg-big dg-halo' + side, '', at), text(tg, cx + dx * 24, y, 'dg-big dg-tyre' + side, '', at)]
+      })
+      this.tyreShown = null
+    }
+    // Coolant: a big number, a bar with three ticks, the lit label over the
+    // dim one, and an icon. The temperature is the lit one.
     const tile = (x, lit, dimLab, icon) => {
-      el('rect', { x, y: 85, width: 200, height: 216, rx: 22, class: 'dg-tile' }, s)
+      frame(s, x, lit, dimLab, icon)
       const halo = text(s, x + 100, 170, 'dg-big dg-halo', '', { 'font-size': 76 })
       const num = text(s, x + 100, 170, 'dg-big', '', { 'font-size': 76 })
       for (const k of [0, 1, 2]) el('line', { x1: x + 28 + k * 72, y1: 197, x2: x + 28 + k * 72, y2: 206, class: 'dg-btick' }, s)
       el('rect', { x: x + 26, y: 211, width: 148, height: 10, rx: 5, class: 'dg-btrack' }, s)
       const fill = el('rect', { x: x + 26, y: 211, width: 0, height: 10, rx: 5, class: 'dg-bfill' }, s)
-      this.fit(text(s, x + 16, 262, 'dg-lab', lit), 124)
-      this.fit(text(s, x + 16, 290, 'dg-lab dim', dimLab), 124)
-      icon(el('g', { transform: `translate(${x + 170} 266) scale(0.8)` }, s))
       return { halo, num, fill, w: -1 }
     }
-    this.oil = tile(663, 'OIL TEMP', 'OIL PRESS', (g) => this.oilIcon(g, 0, 0))
     this.water = tile(1082, 'COOLANT TEMP', 'VOLTS', (g) => this.batteryIcon(g, 0, 0))
 
     // Fuel: thirteen bars, E at the bottom, red to orange to yellow to
@@ -341,25 +370,6 @@ export default class DigitalStyle extends GaugeStyle {
     this.progW = -1
   }
 
-  // The car's own readings, in the free space inside the rev fan above its
-  // readout: the heading and the outside and cabin temperatures. Each is
-  // hidden until read.
-  buildCar(s) {
-    // Heading and temperatures, right-aligned inside the rev fan.
-    const R = 618 + DX
-    const hg = this.headG = el('g', { style: 'display:none' }, s)
-    text(hg, R, 284, 'dg-lab end', 'HEADING')
-    this.headNum = text(hg, R, 330, 'dg-big end', '', { 'font-size': 46 })
-    this.headLast = null
-    const tg = this.tempG = el('g', { style: 'display:none' }, s)
-    this.tempLab = text(tg, R, 366, 'dg-lab end', 'OUTSIDE')
-    // The outside temperature big, the cabin's small after it, as one line.
-    const tl = text(tg, R, 412, 'dg-big end', '', { 'font-size': 46 })
-    this.tempNum = el('tspan', {}, tl)
-    this.inNum = el('tspan', { class: 'dg-in' }, tl)
-    this.tempLast = null
-  }
-
   // Squeeze a label into `max` units if the car's font sets it wider.
   fit(t, max) {
     try { if (t.getComputedTextLength() > max) { t.setAttribute('textLength', max); t.setAttribute('lengthAdjust', 'spacingAndGlyphs') } } catch {}
@@ -372,10 +382,12 @@ export default class DigitalStyle extends GaugeStyle {
       `M${x - 13} ${y - 3}q4 -4 8 0t8 0t8 0M${x - 13} ${y + 2}q4 -4 8 0t8 0t8 0`, class: 'dg-icon', 'stroke-width': 2 }, s)
     el('circle', { cx: x, cy: y - 11, r: 3.5, class: 'dg-icon-fill' }, s)
   }
-  oilIcon(s, x, y) {
-    this.thermo(s, x, y - 2)
-    el('path', { d: `M${x - 22} ${y + 12}l9 -3h22l16 -7l3 3l-16 16h-25v-6zM${x - 22} ${y + 12}l-9 -3v5l9 4M${x - 4} ${y + 9}v-4h6v4`, class: 'dg-icon' }, s)
-    el('circle', { cx: x + 26, cy: y + 18, r: 2.5, class: 'dg-icon-fill' }, s)
+  // The tyre-pressure lamp: a tyre in section, flat on its tread, with a
+  // "!" inside.
+  tpmsIcon(s, x, y) {
+    el('path', { d: `M${x - 13} ${y - 24}C${x - 25} ${y - 12} ${x - 23} ${y + 4} ${x - 16} ${y + 10}H${x + 16}C${x + 23} ${y + 4} ${x + 25} ${y - 12} ${x + 13} ${y - 24}` +
+      `M${x - 12} ${y + 10}v5M${x - 4} ${y + 10}v5M${x + 4} ${y + 10}v5M${x + 12} ${y + 10}v5M${x} ${y - 18}v14`, class: 'dg-icon dg-tpms' }, s)
+    el('circle', { cx: x, cy: y + 3, r: 2.5, class: 'dg-icon-fill dg-tpms-fill' }, s)
   }
   batteryIcon(s, x, y) {
     this.thermo(s, x, y - 2)
@@ -453,7 +465,7 @@ export default class DigitalStyle extends GaugeStyle {
     const rp = String(Math.round(v.rpm / 100))
     setText(this.tachNum[0], rp); setText(this.tachNum[1], rp)
 
-    this.paintTile(this.oil, v.oilTemp, 40, 150, 130, force)
+    this.paintTyres(force)
     this.paintTile(this.water, v.water, 40, 130, 112, force)
 
     const fLit = clamp(Math.round(v.fuel * FUEL_BARS), 0, FUEL_BARS)
@@ -477,31 +489,24 @@ export default class DigitalStyle extends GaugeStyle {
       this.prog.setAttribute('width', pw)
       this.progDot.setAttribute('cx', 793 + pw)
     }
-    this.paintCar(force)
   }
 
-  // The car's readings: only touch the DOM when what is shown changes.
-  paintCar(force) {
+  // The tyre pressures, one decimal each; dashes in the unlit ink until
+  // they are read, red while any wheel warns. Only touches the DOM when
+  // what is shown changes.
+  paintTyres(force) {
     const i = this.i
-    const deg = (c) => Math.round(c) + '°'
-    const h = Number.isFinite(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
-    const hKey = h == null ? '' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(h / 45) % 8] + ' ' + h + '°'
-    if (force || hKey !== this.headLast) {
-      this.headLast = hKey
-      this.headG.style.display = hKey ? '' : 'none'
-      setText(this.headNum, hKey)
-    }
-    const out = Number.isFinite(i.outsideC) ? i.outsideC : null, ins = Number.isFinite(i.insideC) ? i.insideC : null
-    const big = out ?? ins, small = out != null && ins != null ? '  IN ' + deg(ins) : ''
-    const tKey2 = big == null ? '' : (out != null ? 'OUTSIDE' : 'INSIDE') + '|' + deg(big) + '|' + small
-    if (force || tKey2 !== this.tempLast) {
-      this.tempLast = tKey2
-      this.tempG.style.display = tKey2 ? '' : 'none'
-      if (tKey2) {
-        const [lab, num] = tKey2.split('|')
-        setText(this.tempLab, lab); setText(this.tempNum, num); setText(this.inNum, small)
-      }
-    }
+    const ty = Array.isArray(i.tyres) && i.tyres.length === 4 ? i.tyres : null
+    const vals = ty ? ty.map((p) => (Number.isFinite(p) ? (Math.round(p * 10) / 10).toFixed(1) : '-.-')) : null
+    const key = vals ? vals.join(' ') + (i.tyreWarn ? ' !' : '') : ''
+    if (!force && key === this.tyreShown) return
+    this.tyreShown = key
+    this.tyreG.classList.toggle('warn', !!(vals && i.tyreWarn))
+    this.tyreVals.forEach(([halo, num], k) => {
+      const t = vals ? vals[k] : '-.-'
+      setText(halo, t === '-.-' ? '' : t); setText(num, t)
+      num.classList.toggle('none', t === '-.-')
+    })
   }
 
   // A soft glow riding the lit run's tip (a gradient, no filter).
