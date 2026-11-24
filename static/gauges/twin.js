@@ -139,10 +139,12 @@ export default class TwinStyle extends GaugeStyle {
     return el('path', { d: rowPath(s, cx, cy, h), class: 'tw-glyph ' + cls, stroke, 'stroke-width': sw }, parent)
   }
 
-  // The trail a moving needle leaves, clipped to its scale.
-  trail(parent, name, cx, r, clipId) {
-    return new Trace(parent, this.id(name), { cx, cy: CY, r, color: ORANGE, tau: TRAIL_TAU, clip: clipId,
-      layers: [[22, 0.14], [12, 0.9]] })
+  // The trail a moving needle leaves, clipped to its scale: a band exactly
+  // as long as the needle, from r0 to r1 out from the centre, so it reads
+  // as the needle smeared by its own movement.
+  trail(parent, name, cx, r0, r1, clipId) {
+    return new Trace(parent, this.id(name), { cx, cy: CY, r: (r0 + r1) / 2, color: ORANGE, tau: TRAIL_TAU, clip: clipId,
+      layers: [[r1 - r0, 0.8]] })
   }
   wedge(id, cx, r, a0, a1) {
     const cp = el('clipPath', { id }, this.svg.querySelector('defs'))
@@ -155,7 +157,7 @@ export default class TwinStyle extends GaugeStyle {
     const g = el('g', { class: 'tw-tach' }, this.svg)
     this.scaleG = el('g', {}, g)
     this.wedge(this.id('tclip'), cx, r + 4, TACH.a0, TACH.a1)
-    this.tachTail = this.trail(g, 'ttrail', cx, r - 10, this.id('tclip'))
+    this.tachTail = this.trail(g, 'ttrail', cx, r - 44, r - 2, this.id('tclip'))
     this.tachNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 44, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.tachNeedle)
     text(g, cx + 42, CY + 140, 'tw-lab tw-dim', 'x1000r/min', { style: 'font-size:16px;letter-spacing:0.06em' })
@@ -178,7 +180,7 @@ export default class TwinStyle extends GaugeStyle {
       }
     }
     this.wedge(this.id('sclip'), cx, r + 4, SPEED.a0, SPEED.a1)
-    this.speedTail = this.trail(g, 'strail', cx, r - 15, this.id('sclip'))
+    this.speedTail = this.trail(g, 'strail', cx, r - 36, r - 2, this.id('sclip'))
     this.speedNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 36, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.speedNeedle)
     this.kmh = this.glyphs(g, '0', cx, CY - 8, 66, 4.2, '#f6f6f6')

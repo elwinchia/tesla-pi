@@ -13,8 +13,8 @@
   comes from how fast that speed changes. Everything runs in the browser —
   the Pi only serves the files. See docs/rev-sound.md.
 
-  Hold the dashboard's rev meter to rev (parked only). "Test drive" swaps the GPS
-  for an on-screen pedal, so driving can be tried at a desk; it reports
+  Hold the dashboard's rev meter to rev (parked only). The Simulator's
+  pedals drive a pretend car while held, so driving can be tried at a desk; it reports
   speed at a GPS-like rate on purpose, so it sounds the way the car will.
 -->
 <script>
@@ -161,15 +161,11 @@
     </div>
 
     <div class="card span2 noembed">
-      <h2>Speed from</h2>
+      <h2>Simulator</h2>
       <div class="row">
-        <div class="seg" id="source">
-          <button type="button" data-src="gps">Car GPS</button>
-          <button type="button" data-src="sim">Test drive</button>
-        </div>
         <button id="start" type="button" class="go">Start</button>
       </div>
-      <div id="sim" hidden>
+      <div id="sim">
         <div class="row">
           <label for="fixms">Speed readings</label>
           <select id="fixms">
@@ -182,15 +178,8 @@
           <button type="button" class="pedal" id="brake">Brake</button>
           <button type="button" class="pedal" id="pedal">Accelerator</button>
         </div>
-        <div class="row">
-          <label for="pedal-amt">Accelerator travel</label>
-          <input id="pedal-amt" type="range" min="10" max="100" step="5" value="70">
-        </div>
       </div>
-      <div class="row">
-        <button type="button" class="pedal" id="rev" style="height:72px">Rev (stopped only)</button>
-      </div>
-      <p class="hint">Rev, or holding the rev meter above, works only while the car is stopped.</p>
+      <p class="hint">Hold <b>Accelerator</b> to drive a pretend car and hear the engine pull through the gears; <b>Brake</b> to slow it. When it has stopped, the engine follows the car's GPS again. Nothing is saved. To rev on the spot, hold the rev meter above.</p>
     </div>
 
     <div class="card span2">
@@ -381,8 +370,6 @@
     }
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
-    for (const b of $('source').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.src === rs.source))
-    $('sim').hidden = rs.source !== 'sim'
     $('start').textContent = rs.running ? 'Stop' : 'Start'
     $('start').className = rs.running ? 'on' : 'go'
   }
@@ -400,7 +387,6 @@
   $('exhaust').oninput = (e) => rs.update({ exhaust: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
-  $('source').onclick = (e) => { const b = e.target.closest('[data-src]'); if (b) { rs.setSource(b.dataset.src); syncSettings(); rs.emit(performance.now()) } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
   $('start').onclick = async () => {
     if (rs.running) rs.stop(); else await rs.start()
@@ -420,9 +406,27 @@
     el.addEventListener('pointercancel', end)
     el.addEventListener('lostpointercapture', end)
   }
-  hold($('pedal'), () => rs.setPedal($('pedal-amt').value / 100), () => rs.setPedal(0))
-  hold($('brake'), () => rs.setBrake(0.6), () => rs.setBrake(0))
-  hold($('rev'), async () => { if (!rs.running) { await rs.start(); syncSettings() } rs.setRev(1) }, () => rs.setRev(0))
+  // The simulator: the pedals drive a pretend car for as long as it takes.
+  // The accelerator switches the engine to it (and starts it), always full
+  // travel; once the pretend car has been stopped with no pedal held for a
+  // few seconds, the engine goes back to the car's GPS. The source is never
+  // saved, so nothing about the setup changes.
+  const SIM_BACK_MS = 3000
+  let simHeld = 0, simLastBusy = 0
+  const simBusy = () => { simLastBusy = performance.now() }
+  hold($('pedal'), async () => {
+    simHeld++; simBusy()
+    if (!rs.running) { await rs.start(); syncSettings() }
+    if (!rs.running) return
+    if (rs.source !== 'sim') { rs.setSource('sim'); rs.emit(performance.now()) }
+    rs.setPedal(1)
+  }, () => { simHeld = Math.max(0, simHeld - 1); simBusy(); rs.setPedal(0) })
+  hold($('brake'), () => { simHeld++; simBusy(); rs.setBrake(0.6) }, () => { simHeld = Math.max(0, simHeld - 1); simBusy(); rs.setBrake(0) })
+  function simBack(s) {
+    if (rs.source !== 'sim') return
+    if (simHeld || (s.simSpeed || 0) > 0.3) { simBusy(); return }
+    if (performance.now() - simLastBusy > SIM_BACK_MS) { rs.setPedal(0); rs.setBrake(0); rs.setSource('gps') }
+  }
 
   function render(s) {
     fitTach()
@@ -430,7 +434,7 @@
     // Engine off reads 0, like a real cluster with the ignition off.
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
-    $('rev').disabled = !s.stopped
+    simBack(s)
     const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
     const err = $('err')
@@ -439,6 +443,7 @@
     if (msg) err.textContent = msg
     $('state-line').textContent = !s.running ? 'Off.'
       : s.sim ? (s.limiter ? 'Simulation: on the limiter.' : s.touching ? 'Simulation: following your finger.' : 'Simulation: idling.')
+      : s.source === 'sim' && !s.limiter && !s.shifting && (s.simSpeed || 0) > 0.3 ? (s.load > 0.6 ? 'Simulator: pulling hard.' : s.load < -0.2 ? 'Simulator: braking.' : 'Simulator: rolling.')
       : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed\u2026'
       : s.limiter ? 'On the limiter.'
       : s.stopped && s.rpm > s.idle * 1.2 ? 'Revving.'

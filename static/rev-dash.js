@@ -108,7 +108,10 @@ export class Dash {
   frame(dt) {
     this.fitScale()
     const st = this.st || {}
-    const read = this.inst.step(dt, { running: st.running, rpm: st.rpm, load: st.load, v: st.v, a: st.a, redline: this.scale.redFrom })
+    // The simulator's pretend car moves the needles but not the trip and
+    // odometer, which are the real car's.
+    const v = st.source === 'sim' ? 0 : st.v
+    const read = this.inst.step(dt, { running: st.running, rpm: st.rpm, load: st.load, v, a: st.a, redline: this.scale.redFrom })
     // The car's real charge stands in for the made-up fuel (every battery
     // and fuel gauge), and its range for the made-up one. Resting with the
     // engine off, as every gauge does.
