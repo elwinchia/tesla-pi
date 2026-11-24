@@ -403,8 +403,6 @@ ${DAY}
     const { cx, R } = D.tach
     const g = this.tachG = el('g', { class: 'fd-tach' }, this.svg)
     this.scaleG = el('g', {}, g)
-    // A short tick at 6 o'clock across the grey line.
-    this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
     // The scale's unit in the gap at the bottom, as km/h is on the speed.
     text(g, cx, CY + 92, 'fd-unit', 'RPM ×1000')
     // Needle above the scale, the gear above the needle.
@@ -459,7 +457,6 @@ ${DAY}
         end ? 'fd-tick red' : major ? 'fd-tick' : 'fd-tick min')
       if (major) this.wide(g, ...polar(cx, CY, R * 0.6, a), 'fd-snum', String(v))
     }
-    this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
     this.speedSweep = this.sweep(g, 'speed', cx, R, { a0: SPEED.a0, rIn: R * 0.2, w: 0.9, shade: true })
     this.kmh = this.wide(g, cx, CY + 14, 'fd-kmh', '0', 1.2)
     text(g, cx, CY + 38, 'fd-unit', 'km/h')

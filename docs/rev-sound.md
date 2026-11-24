@@ -351,7 +351,7 @@ colours off it.
 
 | Style | After | What it shows |
 |---|---|---|
-| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with a seven-segment gear in its corner, a trip and odometer LCD as wide as it; water temperature and battery bars; outside/cabin temperature and heading LCDs. |
+| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with a seven-segment gear in its corner, a trip and odometer LCD as wide as it; water temperature and battery bars; a heading LCD. |
 | Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): the four tyre pressures around a car seen from above, a battery/boost split dial, the tach with a big gear, the speedometer with a digital speed, a chronograph clock. |
 | Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear as a seven-segment digit in a glowing disc, battery and water bars between, marked by their icons. |
 | Twin dials | NSX | Big tach with a gear strip (fading away from the current gear) and big speedometer with a digital speed, their scales printed light so the readings stand out; small water/oil and G/volts dials at the edges. A moving needle leaves an orange trail that fades back into it. |
@@ -367,7 +367,7 @@ the battery's charge, shown on every battery and fuel gauge (the battery
 gauges of the S2000, Testarossa and 911 styles, the fuel gauges of the
 rest); its range (the DeLorean's range line; the car gives it in miles);
 its odometer, which the GPS count carries on from; the outside and cabin
-temperatures (S2000, DeLorean and Integrale styles); and the four tyre
+temperatures (DeLorean and Integrale styles); and the four tyre
 pressures, red on a pressure warning (the 911's and DeLorean's tyre dials,
 the C4's tyre box, the Integrale). The Pi
 reads them with its read-only car key (`/telemetry/ble`,

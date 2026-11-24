@@ -25,8 +25,10 @@ const TAIL = 70, TIP = 22
 const MID = 620
 const BAR = { x: MID - 150, w: 300, h: 14 }
 // The gear: one seven-segment cell in the speed's italic, centred in the
-// disc. The speed's cells are 40 x 70 with 10-unit segments.
-const GEAR = { w: 27, h: 46, t: 7, skew: 0.14 }
+// disc, as big as the speed's own digits (40 x 70, 10-unit segments).
+const GEAR = { w: 54, h: 92, t: 14, skew: 0.14 }
+// The disc, and its glow out to just short of the scale's numbers.
+const DISC = { r: 84, glow: 112 }
 const BARS = {
   batt:  { top: 4, lo: 0, hi: 1, labels: ['0', '50', '100'], key: 'fuel', low: 0.15 },
   water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
@@ -169,10 +171,11 @@ export default class BacklitStyle extends GaugeStyle {
     this.tachScaleG = el('g', {}, tg)
     this.tachSweep = this.sweep(tg)
     const gg = this.gearG = el('g', { class: 'bl-gearg' }, tg)
-    el('circle', { cx: TACH.cx, cy: TACH.cy, r: 84, fill: this.url('glow'), class: 'bl-glow' }, gg)
-    el('circle', { cx: TACH.cx, cy: TACH.cy, r: 42, fill: this.url('disc'), class: 'bl-gear-disc' }, gg)
+    el('circle', { cx: TACH.cx, cy: TACH.cy, r: DISC.glow, fill: this.url('glow'), class: 'bl-glow' }, gg)
+    el('circle', { cx: TACH.cx, cy: TACH.cy, r: DISC.r, fill: this.url('disc'), class: 'bl-gear-disc' }, gg)
     this.gear = this.gearCell(gg)
-    text(tg, TACH.cx, TACH.cy + 74, 'bl-cap', '× 100')
+    // In the scale's gap at the bottom, under the disc.
+    text(tg, TACH.cx, TACH.cy + DISC.r + 26, 'bl-cap', '× 100')
     this.finger = el('circle', { r: 26, class: 'bl-finger', style: 'display:none' }, tg)
 
     // ── Centre bars ──
