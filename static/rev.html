@@ -120,13 +120,6 @@
   .carcard[aria-pressed=true] { border: 2px solid #f08c00; background: var(--sel-bg); padding: 11px 13px; }
   .carcard[aria-pressed=true] .style { color: #e8590c; }
   .carcard { position: relative; }
-  .carcard .style { padding-right: 86px; }
-  .carcard .kind {
-    position: absolute; top: 10px; right: 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; padding: 2px 7px; border-radius: 8px; border: 1px solid var(--ctl-line); color: var(--muted);
-  }
-  .carcard .kind.rec { color: #fff; background: #2b8a3e; border-color: #40c057; }
-  .carcard .credit { font-size: 11px; color: var(--muted); font-weight: 400; line-height: 1.3; }
   .credits { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
   .credits a { color: var(--muted); }
   .dash-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; padding: 4px 6px 0; color: var(--muted); font-size: 13px; }
@@ -192,7 +185,6 @@
     <div class="card span2">
       <h2>Gauge style</h2>
       <div class="gauges" id="gauges" role="group" aria-label="Gauge style"></div>
-      <p class="hint">The rev meter and speedometer, here and under CarPlay. Each is our own drawing in the style of a classic car's cluster, after Blackbox Infinite's "CarPlay Generations" concept. Speed and trip are the car's GPS speed. With "Read telemetry from Bluetooth" on (Settings → Network → Experimental), the battery and fuel gauges, range and odometer are the car's own; the temperatures, oil pressure and volts are made up.</p>
     </div>
 
     <div class="card span2">
@@ -234,7 +226,7 @@
   import { Dash, CarReader } from './rev-dash.js'
   import { STYLES, loadStyle } from './gauges/index.js'
   import { tachScale } from './gauges/kit.js'
-  import { CREDITS, soundKind, creditsFor, creditLine } from './rev-samples.js'
+  import { CREDITS } from './rev-samples.js'
 
   const $ = (id) => document.getElementById(id)
   const rs = new RevSound({ onState: render })
@@ -281,12 +273,8 @@
   for (const [k, p] of Object.entries(PROFILES)) {
     const b = document.createElement('button')
     b.type = 'button'; b.className = 'carcard'; b.dataset.profile = k
-    b.innerHTML = '<span class="kind"></span><span class="style"></span><b></b><span class="blurb"></span><span class="credit"></span><span class="rng"></span>'
-    const kind = soundKind(k)
-    b.querySelector('.kind').textContent = kind === 'engine-sim' ? 'engine-sim' : kind === 'recorded' ? 'Recorded' : 'Synth'
-    b.querySelector('.kind').classList.toggle('rec', kind !== 'synth')
-    // Credit on the card itself, where the sound is chosen.
-    b.querySelector('.credit').textContent = creditsFor(k).map((c) => (c.kind === 'render' ? 'Sound: ' : 'Recording: ') + creditLine(c)).join('; ')
+    // The sounds' credits are in one line under the cards (#credits).
+    b.innerHTML = '<span class="style"></span><b></b><span class="blurb"></span><span class="rng"></span>'
     b.querySelector('.style').textContent = p.style
     b.querySelector('b').textContent = p.name
     b.querySelector('.blurb').textContent = p.blurb
@@ -345,7 +333,7 @@
     const list = Object.entries(CREDITS)
     const box = $('credits')
     if (list.length) {
-      box.append('Sound credits (recordings from Freesound and renders from engine-sim, cut into loops and re-encoded): ')
+      box.append('Sound credits (rendered with engine-sim, cut into loops and re-encoded): ')
       list.forEach(([id, c], i) => {
         const a = document.createElement('a'); a.href = c.url; a.textContent = c.kind === 'render' ? c.title : '\u201c' + c.title + '\u201d'; a.target = '_blank'; a.rel = 'noopener'
         const l = document.createElement('a'); l.href = c.licenceUrl; l.textContent = c.licence; l.target = '_blank'; l.rel = 'noopener'
