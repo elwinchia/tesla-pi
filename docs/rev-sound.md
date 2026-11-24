@@ -334,9 +334,9 @@ behind itself; it sits on the dock's own background.
 | Style | After | What it shows |
 |---|---|---|
 | Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with trip and odometer; water temperature and battery bars. The one style with a day palette. |
-| Five dials | 911 | Five round dials in an oval housing: battery/oil temperature and water/oil pressure split dials, the tach with a big gear and a boost bar, the speedometer with a digital speed, odometer and trip, a chronograph clock. |
+| Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): battery/oil temperature and water/oil pressure split dials, the tach with a big gear and a boost bar, the speedometer with a digital speed, odometer and trip, a chronograph clock. |
 | Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear in a glowing disc, battery and water bars between, marked by their icons. |
-| Twin dials | NSX | Big tach with a gear strip and big speedometer with a digital speed, small water/oil and G/volts dials at the edges. |
+| Twin dials | NSX | Big tach with a gear strip and big speedometer with a digital speed, small water/oil and G/volts dials at the edges. A moving needle leaves an orange trail that fades back into it. |
 | Digital bars | Corvette C4 | Curved bar fans for speed and revs (×100) with framed digital readouts; oil and coolant temperature boxes, a fuel stack, trip and average speed, the engine's name and the time. |
 | Tile grid | DeLorean | Grained tiles: the engine's name, trip and odometer, volts and oil temperature dials, the speedometer, the tach with a fuel arc and range, oil pressure and fuel dials, the date and time display, and a cassette labelled with the engine. |
 | Crosshair | Integrale | Two gunsight dials with dotted rings and glowing sweeps, the gear in a roundel, boost, water, battery and fuel tiles between. |

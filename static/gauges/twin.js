@@ -2,12 +2,14 @@
 // gear strip in its middle ("1 2 [3] 4 5") and the speedometer with a big
 // digital speed and a fuel arc at its foot, and small half-dials at the
 // outer edges: water temperature and oil pressure on the left, a g meter
-// and battery volts on the right. Orange comet tails trail the needles.
+// and battery volts on the right. A needle that moves leaves an orange
+// trail on the rim that fades back into it (Trace in kit.js); at rest
+// there is none.
 //
 // The wide geometric digits are drawn here as stroked paths, not set in a
 // font: the car's browser has few fonts, and this keeps the look the same
 // everywhere.
-import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
+import { GaugeStyle, Trace, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
 
 // Wide (3.1:1): the dash gives the gauge everything beside its one column
 // of buttons.
@@ -25,7 +27,8 @@ const SIDE = {
   volts: { cx: 1108, cy: 286, r: 64, a0: 132, a1: 228, lo: 8, hi: 16 },
 }
 const ORANGE = '#ff8a1a'
-const TAIL = 64  // degrees of comet tail behind a needle
+// The trail behind a moving needle: how slowly its tail follows (s).
+const TRAIL_TAU = 0.45
 
 const f1 = (x) => x.toFixed(1)
 const rot = (a, cx, cy = CY) => `rotate(${a.toFixed(2)} ${cx} ${cy})`
@@ -88,7 +91,7 @@ function fracAt(x, y, cx, cy, a0, a1) {
 export default class TwinStyle extends GaugeStyle {
   static meta = {
     key: 'twin', name: 'Twin dials', era: 'NSX-style', view: VIEW, dark: true,
-    blurb: 'Two big dials with orange comet needles, a gear strip and a digital speed; water, oil, g and volts at the edges.',
+    blurb: 'Two big dials with needles that leave an orange trail, a gear strip and a digital speed; water, oil, g and volts at the edges.',
   }
 
   build() {
@@ -136,18 +139,10 @@ export default class TwinStyle extends GaugeStyle {
     return el('path', { d: rowPath(s, cx, cy, h), class: 'tw-glyph ' + cls, stroke, 'stroke-width': sw }, parent)
   }
 
-  // A comet tail: arcs fading in towards the needle, drawn ending at 0°
-  // and turned with the needle; a static wedge clips it to the scale.
-  comet(parent, cx, r, wd, clipId, color = ORANGE) {
-    const g = el('g', { 'clip-path': `url(#${clipId})` }, parent)
-    const turn = el('g', {}, g)
-    const n = 12
-    for (let k = 0; k < n; k++) {
-      const a0 = -TAIL + (k * TAIL) / n, a1 = a0 + TAIL / n + 0.6
-      const t = (k + 1) / n
-      el('path', { d: arcPath(cx, CY, r, a0, Math.min(0, a1)), fill: 'none', stroke: color, 'stroke-width': wd, opacity: (t * t * 0.9).toFixed(3) }, turn)
-    }
-    return turn
+  // The trail a moving needle leaves, clipped to its scale.
+  trail(parent, name, cx, r, clipId) {
+    return new Trace(parent, this.id(name), { cx, cy: CY, r, color: ORANGE, tau: TRAIL_TAU, clip: clipId,
+      layers: [[22, 0.14], [12, 0.9]] })
   }
   wedge(id, cx, r, a0, a1) {
     const cp = el('clipPath', { id }, this.svg.querySelector('defs'))
@@ -160,7 +155,7 @@ export default class TwinStyle extends GaugeStyle {
     const g = el('g', { class: 'tw-tach' }, this.svg)
     this.scaleG = el('g', {}, g)
     this.wedge(this.id('tclip'), cx, r + 4, TACH.a0, TACH.a1)
-    this.tachTail = this.comet(g, cx, r - 10, 12, this.id('tclip'))
+    this.tachTail = this.trail(g, 'ttrail', cx, r - 10, this.id('tclip'))
     this.tachNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 44, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.tachNeedle)
     text(g, cx + 42, CY + 140, 'tw-lab tw-dim', 'x1000r/min', { style: 'font-size:16px;letter-spacing:0.06em' })
@@ -182,10 +177,8 @@ export default class TwinStyle extends GaugeStyle {
         this.glyphs(g, String(v), x, y, 16, 2.2, '#9c9ca0')
       }
     }
-    // The sweep: a soft band from 0 to the needle, and a comet at its head.
     this.wedge(this.id('sclip'), cx, r + 4, SPEED.a0, SPEED.a1)
-    this.speedBand = el('path', { fill: 'none', stroke: ORANGE, 'stroke-width': 18, opacity: 0.16 }, g)
-    this.speedTail = this.comet(g, cx, r - 15, 12, this.id('sclip'))
+    this.speedTail = this.trail(g, 'strail', cx, r - 15, this.id('sclip'))
     this.speedNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 36, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.speedNeedle)
     this.kmh = this.glyphs(g, '0', cx, CY - 8, 66, 4.2, '#f6f6f6')
@@ -314,16 +307,12 @@ export default class TwinStyle extends GaugeStyle {
     const v = this.v, i = this.i
     const q = (a) => Math.round(a * 10) / 10
     const ta = q(dialAngle(v.rpm, 0, this.scale.max, TACH.a0, TACH.a1))
-    if (this.moved('tach', ta, force)) {
-      this.tachNeedle.setAttribute('transform', rot(ta, TACH.cx))
-      this.tachTail.setAttribute('transform', rot(ta, TACH.cx))
-    }
+    // Trails every frame: a needle that has stopped still has one to fade.
+    this.tachTail.update(ta)
+    if (this.moved('tach', ta, force)) this.tachNeedle.setAttribute('transform', rot(ta, TACH.cx))
     const sa = q(dialAngle(v.kmh, 0, SPEED.max, SPEED.a0, SPEED.a1))
-    if (this.moved('speed', sa, force)) {
-      this.speedNeedle.setAttribute('transform', rot(sa, SPEED.cx))
-      this.speedTail.setAttribute('transform', rot(sa, SPEED.cx))
-      this.speedBand.setAttribute('d', sa - SPEED.a0 > 0.3 ? arcPath(SPEED.cx, CY, SPEED.r - 17, SPEED.a0, sa) : '')
-    }
+    this.speedTail.update(sa)
+    if (this.moved('speed', sa, force)) this.speedNeedle.setAttribute('transform', rot(sa, SPEED.cx))
     const gear = i.gear || '–'
     if (this.moved('gear', gear, force)) this.paintGear(gear)
     const kmh = i.stale ? '--' : String(Math.min(999, Math.round(v.kmh)))

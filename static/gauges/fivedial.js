@@ -10,7 +10,7 @@
 // itself, a glowing stroke from the rim inwards. Numerals are a wide,
 // medium-weight sans (stretched sideways, since no system font is
 // reliably extended); the big gear and speed digits are thin.
-import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, hhmm, follow } from './kit.js'
+import { GaugeStyle, Trace, el, text, setText, polar, arcPath, dialAngle, clamp, hhmm } from './kit.js'
 
 // About 3.2:1, the gauge area's shape. The reference is wider (3.9:1), so
 // the side dials are a little smaller next to the tach than on it.
@@ -173,41 +173,12 @@ export default class FiveDialStyle extends GaugeStyle {
     return text(parent, 0, 0, cls, s, { transform: `translate(${f1(x)} ${f1(y)}) scale(${sx} 1)` })
   }
 
-  // A glowing streak along the rim that trails a moving angle: its tail
-  // follows the head with time constant tau, fading out towards the tail.
-  // Returns a painter, (a) => still moving; call it every frame.
+  // A glowing streak along the rim that trails a moving angle (Trace in
+  // kit.js). Returns a painter, (a) => still moving; call it every frame.
   trace(parent, name, cx, rA, w, tau) {
-    const fade = this.grad('radialGradient', name + '-fade', { gradientUnits: 'userSpaceOnUse', cx, cy: CY, r: 1 },
-      [[0, ORANGE, 0], [0.45, ORANGE, 0.3], [1, ORANGE, 1]])
-    // One path, drawn three times: a wide haze, a glow and the bright core.
-    const arc = el('path', { id: this.id(name + '-arc') }, this.defs)
-    const g = el('g', { fill: 'none', stroke: this.url(name + '-fade') }, parent)
-    for (const [sw, op] of [[13 * w, 0.12], [7 * w, 0.3], [3.4 * w, 1]]) {
-      el('use', { href: '#' + this.id(name + '-arc'), 'stroke-width': sw, opacity: op }, g)
-    }
-    let tail = null, shown = false, t = 0
-    return (a) => {
-      const now = performance.now()
-      const dt = t ? Math.min(0.1, (now - t) / 1000) : 0
-      t = now
-      // A jump of more than half a turn (the clock at midnight, a redraw)
-      // is not a movement: start again from there.
-      if (tail == null || Math.abs(a - tail) > 180) tail = a
-      tail = follow(tail, a, dt, tau)
-      if (Math.abs(a - tail) < TRACE_MIN) {
-        // Hidden, but the tail keeps following: a slow sweep (the seconds)
-        // still grows its streak from here.
-        if (shown) { arc.setAttribute('d', ''); shown = false }
-        return false
-      }
-      arc.setAttribute('d', arcPath(cx, CY, rA, tail, a))
-      // The fade runs from clear at the tail to full at the needle.
-      const [tx, ty] = polar(cx, CY, rA, tail), [hx, hy] = polar(cx, CY, rA, a)
-      fade.setAttribute('cx', f1(tx)); fade.setAttribute('cy', f1(ty))
-      fade.setAttribute('r', f1(Math.max(1, Math.hypot(hx - tx, hy - ty))))
-      shown = true
-      return true
-    }
+    const t = new Trace(parent, this.id(name), { cx, cy: CY, r: rA, color: ORANGE, tau, min: TRACE_MIN,
+      layers: [[13 * w, 0.12], [7 * w, 0.3], [3.4 * w, 1]] })
+    return (a) => t.update(a)
   }
 
   // The orange needle: a radial stroke from the rim to rIn that fades

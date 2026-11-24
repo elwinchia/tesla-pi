@@ -216,6 +216,48 @@ export function sevenRow(parent, { x, y, n, w, h, t, gap, skew = 0.08, cls = 'se
   }
 }
 
+// The streak a moving needle leaves along its dial's rim: the tail follows
+// the head with time constant tau (s), so a sweep draws a glowing arc that
+// shrinks back into the needle once it stops; at rest there is none.
+// layers: [stroke width, opacity] drawn under one another (haze, glow,
+// core). The fade runs from clear at the tail to full at the head. Call
+// update(angle) every frame, stopped or not: a stopped needle's streak
+// still has to fade. clip: a clip-path id that keeps it on the scale.
+export class Trace {
+  constructor(parent, id, { cx, cy, r, color, tau = 0.35, min = 0.6, layers = [[3.4, 1]], clip = null }) {
+    Object.assign(this, { cx, cy, r, tau, min })
+    const defs = el('defs', {}, parent)
+    this.fade = el('radialGradient', { id: id + '-fade', gradientUnits: 'userSpaceOnUse', cx, cy, r: 1 }, defs)
+    for (const [o, a] of [[0, 0], [0.45, 0.3], [1, 1]]) el('stop', { offset: o, 'stop-color': color, 'stop-opacity': a }, this.fade)
+    this.arc = el('path', { id: id + '-arc' }, defs)
+    const g = el('g', { fill: 'none', stroke: `url(#${id}-fade)`, 'clip-path': clip ? `url(#${clip})` : null }, parent)
+    for (const [sw, op] of layers) el('use', { href: '#' + id + '-arc', 'stroke-width': sw, opacity: op }, g)
+    this.tail = null; this.shown = false; this.t = 0
+  }
+  update(a) {
+    const now = performance.now()
+    const dt = this.t ? Math.min(0.1, (now - this.t) / 1000) : 0
+    this.t = now
+    // A jump of more than half a turn (a clock at midnight, a redraw) is
+    // not a movement: start again from there.
+    if (this.tail == null || Math.abs(a - this.tail) > 180) this.tail = a
+    this.tail = follow(this.tail, a, dt, this.tau)
+    if (Math.abs(a - this.tail) < this.min) {
+      // Hidden, but the tail keeps following, so a slow sweep (a clock's
+      // seconds) still grows its streak from here.
+      if (this.shown) { this.arc.setAttribute('d', ''); this.shown = false }
+      return false
+    }
+    const { cx, cy, r } = this
+    this.arc.setAttribute('d', arcPath(cx, cy, r, this.tail, a))
+    const [tx, ty] = polar(cx, cy, r, this.tail), [hx, hy] = polar(cx, cy, r, a)
+    this.fade.setAttribute('cx', tx.toFixed(1)); this.fade.setAttribute('cy', ty.toFixed(1))
+    this.fade.setAttribute('r', Math.max(1, Math.hypot(hx - tx, hy - ty)).toFixed(1))
+    this.shown = true
+    return true
+  }
+}
+
 // Values a style can show. GaugeStyle eases the numeric ones; a style reads
 // them from this.v in paint(). The rest arrive as they are in this.i.
 //   rpm, kmh, load (-1..1)            the engine and the car
