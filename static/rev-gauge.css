@@ -1,12 +1,15 @@
 /* The engine sound's dash (static/rev-dash.js) and its segment-arc style
    (static/gauges/segment.js): colours for day and html.night. Shared by
    rev.html and the dock under CarPlay on index.html. The other styles
-   carry their own CSS inside their SVG (GaugeStyle.css). */
+   carry their own CSS inside their SVG (GaugeStyle.css), with a day look
+   keyed off the svg's data-theme. In day every style sits on the floor
+   grey of Tesla's own screen (#d6d7d6, its light theme's floor under the
+   car); at night on the night gradient. */
 :root {
-  --dash-a: #fbf8f4; --dash-b: #ede7df; --dash-line: rgba(0,0,0,0.06);
+  --dash-a: #d6d7d6; --dash-b: #d6d7d6; --dash-line: rgba(0,0,0,0.06);
   --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
   --rv-chip-bg: #ffffff; --rv-chip-line: rgba(0,0,0,0.12); --rv-chip-text: #d9480f;
-  --rv-bar-off: #dcd6cf; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
+  --rv-bar-off: #c2c4c6; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
   --rv-hit: rgba(240, 140, 0, 0.045);
 }
 :root.night {
@@ -92,6 +95,5 @@
 .rvd-set { width: min(55%, 17cqh); aspect-ratio: 1; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   color: var(--rv-num); background: var(--rv-chip-bg); box-shadow: 0 0 0 0.3cqh var(--rv-chip-line); }
 .rvd-set svg { width: 62%; height: 62%; }
-.rvd[data-dark] .rvd-set { color: #cfc7bc; background: #141820; box-shadow: 0 0 0 0.3cqh rgba(255,255,255,0.14); }
 /* The rev meter is the accelerator: press and hold it to rev (parked only). */
 .rvd-gauge { touch-action: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }

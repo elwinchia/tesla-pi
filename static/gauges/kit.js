@@ -274,9 +274,12 @@ export const EASE = { rpm: 0.08, kmh: 0.15, load: 0.12, water: 0.6, oilTemp: 0.6
 
 let UID = 0
 export class GaugeStyle {
-  // Each style sets its own: key, name, blurb, view { w, h }, and dark (true
-  // if it always draws its own dark panel, whatever the page theme).
-  static meta = { key: 'base', name: 'Base', blurb: '', view: { w: 1000, h: 400 }, dark: true }
+  // Each style sets its own: key, name, blurb, view { w, h }. Every style
+  // has a day and a night look: the svg carries data-theme="day" | "night"
+  // (the page's theme), and a style's CSS keys its day colours off
+  // .gs-<key>[data-theme=day]. In day it sits on the Tesla screen's floor
+  // grey (--dash-a in rev-gauge.css), at night on the night gradient.
+  static meta = { key: 'base', name: 'Base', blurb: '', view: { w: 1000, h: 400 } }
 
   constructor(host, { scale, theme = () => 'night' } = {}) {
     this.meta = this.constructor.meta
@@ -294,6 +297,8 @@ export class GaugeStyle {
     this.uid = `${this.meta.key}${++UID}-`
     const { w, h } = this.meta.view
     this.svg = el('svg', { viewBox: `0 0 ${w} ${h}`, class: `cluster-svg gs gs-${this.meta.key}`, role: 'img', 'aria-label': 'Engine speed and road speed' })
+    this.lastTheme = theme()
+    this.svg.setAttribute('data-theme', this.lastTheme)
     host.appendChild(this.svg)
     this.build()
     this.setScale(scale || tachScale(7000, 800))
@@ -339,7 +344,7 @@ export class GaugeStyle {
     if (z !== this.zone) { this.zone = z; this.svg.setAttribute('data-zone', z) }
     const theme = this.theme()
     const force = theme !== this.lastTheme
-    this.lastTheme = theme
+    if (force) { this.lastTheme = theme; this.svg.setAttribute('data-theme', theme) }
     this.paint(force)
   }
   destroy() { this.endDrag(false); this.svg.remove() }

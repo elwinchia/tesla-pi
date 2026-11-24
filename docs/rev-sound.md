@@ -340,9 +340,18 @@ chosen engine: numbers to the next thousand past its redline (7,000 for the
 V8, 10,000 for the others), red from the redline. No style draws a panel
 behind itself; it sits on the dock's own background.
 
+**Day and night.** Every style has both, following the car's theme like
+the rest of the page. At night they sit on a dark blue-black gradient with
+their backlighting and glows; in day on the floor grey of Tesla's own
+light-theme screen (`#d6d7d6`, the floor under the car in the
+[Tesla Dashboard UI Component Library](https://www.figma.com/community/file/1382192547846546595/tesla-dashboard-ui-component-library)),
+with light faces, dark numerals and the glows turned into a daylight
+print. Each style's svg carries `data-theme`, and its CSS keys the day
+colours off it.
+
 | Style | After | What it shows |
 |---|---|---|
-| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with trip and odometer; water temperature and battery bars. The one style with a day palette. |
+| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with trip and odometer; water temperature and battery bars. |
 | Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): battery/oil temperature and water/oil pressure split dials, the tach with a big gear and a boost bar, the speedometer with a digital speed, odometer and trip, a chronograph clock. |
 | Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear in a glowing disc, battery and water bars between, marked by their icons. |
 | Twin dials | NSX | Big tach with a gear strip and big speedometer with a digital speed, small water/oil and G/volts dials at the edges. A moving needle leaves an orange trail that fades back into it. |

@@ -27,6 +27,10 @@ const SIDE = {
   volts: { cx: 1108, cy: 286, r: 64, a0: 132, a1: 228, lo: 8, hi: 16 },
 }
 const ORANGE = '#ff8a1a'
+// Day: the same instrument printed for Tesla's light screen. Near-white
+// faces with mid-grey rims on the floor grey, dark-grey ink, and a deeper
+// orange for the trails and other accents so they hold on white.
+const DAY_ORANGE = '#e8590c'
 // The trail behind a moving needle: how slowly its tail follows (s).
 const TRAIL_TAU = 0.45
 
@@ -90,7 +94,7 @@ function fracAt(x, y, cx, cy, a0, a1) {
 
 export default class TwinStyle extends GaugeStyle {
   static meta = {
-    key: 'twin', name: 'Twin dials', era: 'NSX-style', view: VIEW, dark: true,
+    key: 'twin', name: 'Twin dials', era: 'NSX-style', view: VIEW,
     blurb: 'Two big dials with needles that leave an orange trail, a gear strip and a digital speed; water, oil, g and volts at the edges.',
   }
 
@@ -110,20 +114,47 @@ export default class TwinStyle extends GaugeStyle {
       .gs-twin[data-zone=red] .tw-red { stroke: #ff3a24; }
       .gs-twin[data-zone=red] .tw-gear { stroke: #ff4a2a; }
       .gs-twin[data-zone=red] .tw-tach .tw-needle { stroke: #ff4a2a; }
+
+      .gs-twin[data-theme=day] text { fill: #1f2124; }
+      .gs-twin[data-theme=day] .tw-dim { fill: #5c5e62; }
+      .gs-twin[data-theme=day] .tw-tick { stroke: #1f2124; }
+      .gs-twin[data-theme=day] .tw-tick.dim { stroke: #85888c; }
+      .gs-twin[data-theme=day] .tw-icon { stroke: #5c5e62; }
+      .gs-twin[data-theme=day] .tw-ink { stroke: #1f2124; }
+      .gs-twin[data-theme=day] .tw-sub { stroke: #393c41; }
+      .gs-twin[data-theme=day] .tw-nb { stroke: #a4a7ab; }
+      .gs-twin[data-theme=day] .tw-track { stroke: #cdd0d3; }
+      .gs-twin[data-theme=day] .tw-accent { stroke: ${DAY_ORANGE}; }
+      .gs-twin[data-theme=day] .tw-gdot { fill: ${DAY_ORANGE}; stroke: #fff; }
+      .gs-twin[data-theme=day] .tw-gdec { fill: ${DAY_ORANGE}; }
+      .gs-twin[data-theme=day] .tw-trail stop { stop-color: ${DAY_ORANGE}; }
+      .gs-twin[data-theme=day][data-zone=red] .tw-gear { stroke: #e8281e; }
+      .gs-twin[data-theme=day] .tw-shadow { opacity: 0.22; filter: url(#${this.id('soft')}); }
+      .gs-twin[data-theme=day] .tw-rim { stroke: #b5b8bb; stroke-width: 3; }
+      .gs-twin[data-theme=day] .tw-srim { stroke: #c4c7ca; stroke-width: 2.5; }
+      .gs-twin[data-theme=day] .tw-f0 { stop-color: #fbfbfb; }
+      .gs-twin[data-theme=day] .tw-f1 { stop-color: #f3f3f3; }
+      .gs-twin[data-theme=day] .tw-f2 { stop-color: #e7e8e9; }
+      .gs-twin[data-theme=day] .tw-s0 { stop-color: #fafafa; }
+      .gs-twin[data-theme=day] .tw-s1 { stop-color: #efeff0; }
     `)
     const defs = el('defs', {}, s)
     const face = el('radialGradient', { id: this.id('face'), cx: 0.5, cy: 0.45, r: 0.55 }, defs)
-    el('stop', { offset: 0, 'stop-color': '#0b0b0d' }, face)
-    el('stop', { offset: 0.85, 'stop-color': '#030304' }, face)
-    el('stop', { offset: 1, 'stop-color': '#111114' }, face)
+    el('stop', { offset: 0, 'stop-color': '#0b0b0d', class: 'tw-f0' }, face)
+    el('stop', { offset: 0.85, 'stop-color': '#030304', class: 'tw-f1' }, face)
+    el('stop', { offset: 1, 'stop-color': '#111114', class: 'tw-f2' }, face)
     const small = el('radialGradient', { id: this.id('small'), cx: 0.5, cy: 0.5, r: 0.5 }, defs)
-    el('stop', { offset: 0, 'stop-color': '#0e0e11' }, small)
-    el('stop', { offset: 1, 'stop-color': '#08080a' }, small)
+    el('stop', { offset: 0, 'stop-color': '#0e0e11', class: 'tw-s0' }, small)
+    el('stop', { offset: 1, 'stop-color': '#08080a', class: 'tw-s1' }, small)
+    // Day only (CSS): the faces' shadow, blurred and dropped a little.
+    const soft = el('filter', { id: this.id('soft'), x: -0.1, y: -0.1, width: 1.2, height: 1.25 }, defs)
+    el('feOffset', { dy: 3 }, soft)
+    el('feGaussianBlur', { stdDeviation: 4 }, soft)
 
     this.buildSides()
     for (const d of [TACH, SPEED]) {
-      el('circle', { cx: d.cx, cy: CY, r: d.r + 3, fill: '#000', opacity: 0.55 }, s)
-      el('circle', { cx: d.cx, cy: CY, r: d.r, fill: this.url('face'), stroke: '#2a2a30', 'stroke-width': 1.5 }, s)
+      el('circle', { cx: d.cx, cy: CY, r: d.r + 3, fill: '#000', opacity: 0.55, class: 'tw-shadow' }, s)
+      el('circle', { cx: d.cx, cy: CY, r: d.r, fill: this.url('face'), stroke: '#2a2a30', 'stroke-width': 1.5, class: 'tw-rim' }, s)
     }
     this.buildTach()
     this.buildSpeed()
@@ -143,8 +174,10 @@ export default class TwinStyle extends GaugeStyle {
   // as long as the needle, from r0 to r1 out from the centre, so it reads
   // as the needle smeared by its own movement.
   trail(parent, name, cx, r0, r1, clipId) {
-    return new Trace(parent, this.id(name), { cx, cy: CY, r: (r0 + r1) / 2, color: ORANGE, tau: TRAIL_TAU, clip: clipId,
+    const t = new Trace(parent, this.id(name), { cx, cy: CY, r: (r0 + r1) / 2, color: ORANGE, tau: TRAIL_TAU, clip: clipId,
       layers: [[r1 - r0, 0.8]] })
+    t.fade.classList.add('tw-trail')
+    return t
   }
   wedge(id, cx, r, a0, a1) {
     const cp = el('clipPath', { id }, this.svg.querySelector('defs'))
@@ -162,8 +195,8 @@ export default class TwinStyle extends GaugeStyle {
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 44, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.tachNeedle)
     text(g, cx + 42, CY + 140, 'tw-lab tw-dim', 'x1000r/min', { style: 'font-size:16px;letter-spacing:0.06em' })
     // Gear strip: the gear large, its neighbours small and grey.
-    this.gear = this.glyphs(g, '', cx, CY, 72, 4.6, '#f4f4f4', 'tw-gear')
-    this.gearNb = el('path', { class: 'tw-glyph', stroke: '#6c6c70', 'stroke-width': 2.6 }, g)
+    this.gear = this.glyphs(g, '', cx, CY, 72, 4.6, '#f4f4f4', 'tw-gear tw-ink')
+    this.gearNb = el('path', { class: 'tw-glyph tw-nb', stroke: '#6c6c70', 'stroke-width': 2.6 }, g)
     this.finger = el('circle', { r: 24, class: 'rv-finger', style: 'display:none' }, g)
   }
 
@@ -176,21 +209,21 @@ export default class TwinStyle extends GaugeStyle {
       this.tick(g, cx, CY, a, r - 8, major ? r - 22 : r - 14, major ? 4 : 2, major ? 'tw-tick' : 'tw-tick dim')
       if (v % 20 === 0) {
         const [x, y] = polar(cx, CY, r - 52, a)
-        this.glyphs(g, String(v), x, y, 16, 2.2, '#9c9ca0')
+        this.glyphs(g, String(v), x, y, 16, 2.2, '#9c9ca0', 'tw-sub')
       }
     }
     this.wedge(this.id('sclip'), cx, r + 4, SPEED.a0, SPEED.a1)
     this.speedTail = this.trail(g, 'strail', cx, r - 36, r - 2, this.id('sclip'))
     this.speedNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 36, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.speedNeedle)
-    this.kmh = this.glyphs(g, '0', cx, CY - 8, 66, 4.2, '#f6f6f6')
+    this.kmh = this.glyphs(g, '0', cx, CY - 8, 66, 4.2, '#f6f6f6', 'tw-ink')
     text(g, cx, CY + 50, 'tw-lab', 'KM/H')
     // Fuel, E to F along the foot: grey track, red reserve, orange level.
     const fr = FUEL.r
-    el('path', { d: arcPath(cx, CY, fr, FUEL.a0, FUEL.a1), fill: 'none', stroke: '#3a3a40', 'stroke-width': 5 }, g)
+    el('path', { d: arcPath(cx, CY, fr, FUEL.a0, FUEL.a1), fill: 'none', stroke: '#3a3a40', 'stroke-width': 5, class: 'tw-track' }, g)
     el('path', { d: arcPath(cx, CY, fr, FUEL.a0, FUEL.a0 - 8), fill: 'none', class: 'tw-red', 'stroke-width': 5 }, g)
     for (let k = 0; k <= 4; k++) this.tick(g, cx, CY, FUEL.a0 + (k / 4) * (FUEL.a1 - FUEL.a0), fr + 4, fr + (k % 2 ? 10 : 14), k % 2 ? 2 : 3, 'tw-tick dim')
-    this.fuelArc = el('path', { fill: 'none', stroke: ORANGE, 'stroke-width': 5 }, g)
+    this.fuelArc = el('path', { fill: 'none', stroke: ORANGE, 'stroke-width': 5, class: 'tw-accent' }, g)
     const [ex, ey] = polar(cx, CY, fr - 22, FUEL.a0 + 2), [fx, fy] = polar(cx, CY, fr - 22, FUEL.a1 - 2)
     text(g, f1(ex), f1(ey), 'tw-lab tw-dim', 'E')
     text(g, f1(fx), f1(fy), 'tw-lab tw-dim', 'F')
@@ -201,7 +234,7 @@ export default class TwinStyle extends GaugeStyle {
     const g = el('g', { class: 'tw-sides' }, this.svg)
     this.sides = {}
     for (const [k, d] of Object.entries(SIDE)) {
-      el('circle', { cx: d.cx, cy: d.cy, r: d.r, fill: this.url('small'), stroke: '#202026', 'stroke-width': 1.5 }, g)
+      el('circle', { cx: d.cx, cy: d.cy, r: d.r, fill: this.url('small'), stroke: '#202026', 'stroke-width': 1.5, class: 'tw-srim' }, g)
     }
     const scale = (k, labels, redAt, icon) => {
       const d = SIDE[k]
@@ -225,11 +258,11 @@ export default class TwinStyle extends GaugeStyle {
     // reading in the middle with its tenths in orange.
     const d = SIDE.g
     for (const a of [0, 90, 180, 270]) this.tick(g, d.cx, d.cy, a, d.r - 6, d.r - 16, 3)
-    el('line', { x1: d.cx - 44, y1: d.cy, x2: d.cx + 44, y2: d.cy, stroke: '#2e2e34', 'stroke-width': 2 }, g)
-    this.gDot = el('circle', { cx: d.cx, cy: d.cy, r: 6.5, fill: ORANGE, stroke: '#ffd2a0', 'stroke-width': 1.5 }, g)
+    el('line', { x1: d.cx - 44, y1: d.cy, x2: d.cx + 44, y2: d.cy, stroke: '#2e2e34', 'stroke-width': 2, class: 'tw-track' }, g)
+    this.gDot = el('circle', { cx: d.cx, cy: d.cy, r: 6.5, fill: ORANGE, stroke: '#ffd2a0', 'stroke-width': 1.5, class: 'tw-gdot' }, g)
     const t = text(g, d.cx + 4, d.cy - 22, 'tw-gnum', '')
     this.gInt = el('tspan', {}, t); this.gInt.textContent = '0.'
-    this.gDec = el('tspan', { fill: ORANGE }, t); this.gDec.textContent = '0'
+    this.gDec = el('tspan', { fill: ORANGE, class: 'tw-gdec' }, t); this.gDec.textContent = '0'
     text(g, d.cx, d.cy + 30, 'tw-lab', 'G')
   }
 
@@ -253,7 +286,7 @@ export default class TwinStyle extends GaugeStyle {
     while (g.firstChild) g.removeChild(g.firstChild)
     const ang = (v) => dialAngle(v, 0, scale.max, TACH.a0, TACH.a1)
     // The grey inner track the reference runs inside the ticks.
-    el('path', { d: arcPath(cx, CY, r - 32, TACH.a0, ang(scale.redFrom)), fill: 'none', stroke: '#3c3c42', 'stroke-width': 2.5 }, g)
+    el('path', { d: arcPath(cx, CY, r - 32, TACH.a0, ang(scale.redFrom)), fill: 'none', stroke: '#3c3c42', 'stroke-width': 2.5, class: 'tw-track' }, g)
     // The red zone: a solid rounded block on the rim, split where the
     // redline sits a whole thousand short of the end.
     el('path', { d: arcPath(cx, CY, r - 15, ang(scale.redFrom) + 1, TACH.a1), fill: 'none', class: 'tw-red', 'stroke-width': 14, 'stroke-linecap': 'round' }, g)
@@ -262,7 +295,7 @@ export default class TwinStyle extends GaugeStyle {
       if (v < scale.redFrom) this.tick(g, cx, CY, a, r - 8, major ? r - 24 : r - 15, major ? 4.5 : 2.2)
       if (!major) continue
       const [x, y] = polar(cx, CY, r - 62, a)
-      this.glyphs(g, String(v / 1000), x, y, 25, 4.2, '#f4f4f4')
+      this.glyphs(g, String(v / 1000), x, y, 25, 4.2, '#f4f4f4', 'tw-ink')
     }
     this.last = {}
   }

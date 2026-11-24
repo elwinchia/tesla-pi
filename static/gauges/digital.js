@@ -22,6 +22,14 @@ const C = {
   tGreen0: '#2c4a25', tGreen1: '#4f8a2e', tGreen2: '#8ed640', orange: '#f27a1c', red: '#ff2b1c',
   dim: '#5c5521', fuelOff: '#1c3022',
 }
+// The day look: the same instrument as a daylight LCD in Tesla's light UI.
+// The colour coding stays, darkened to read on light; the dim (far from the
+// tip, low in the revs) end fades towards the panel instead of to black.
+const D = {
+  tip: '#d9a300', lime: '#86ae12', green: '#3f9a24', olive: '#6c9c40', oliveDark: '#9dbd84',
+  tGreen0: '#93c47c', tGreen1: '#56a838', tGreen2: '#2f9324', orange: '#e0620a', red: '#d4261b',
+  fuelOff: 'rgba(0, 0, 0, 0.08)',
+}
 
 // A fan: a quarter ring about (cx, cy) from 180° (pointing left, the bottom
 // of the fan) to 270° (up, its right-hand end). Bars are radial pills.
@@ -35,21 +43,26 @@ const fanAngle = (f) => 180 + 90 * clamp(f, 0, 1)
 
 // The tach's colour along its scale: dark green, green, yellow near the
 // warning band, orange through it, red from the redline.
-function tachColor(rpm, scale) {
-  if (rpm >= scale.redFrom) return C.red
-  if (rpm >= scale.warnFrom) return mix(C.tip, C.orange, (rpm - scale.warnFrom) / Math.max(1, scale.redFrom - scale.warnFrom) * 1.6)
+function tachColor(rpm, scale, P = C) {
+  if (rpm >= scale.redFrom) return P.red
+  if (rpm >= scale.warnFrom) return mix(P.tip, P.orange, (rpm - scale.warnFrom) / Math.max(1, scale.redFrom - scale.warnFrom) * 1.6)
   const f = rpm / scale.warnFrom
-  if (f < 0.6) return mix(C.tGreen0, C.tGreen1, f / 0.6)
-  if (f < 0.85) return mix(C.tGreen1, C.tGreen2, (f - 0.6) / 0.25)
-  return mix(C.tGreen2, C.tip, (f - 0.85) / 0.15)
+  if (f < 0.6) return mix(P.tGreen0, P.tGreen1, f / 0.6)
+  if (f < 0.85) return mix(P.tGreen1, P.tGreen2, (f - 0.6) / 0.25)
+  return mix(P.tGreen2, P.tip, (f - 0.85) / 0.15)
 }
 // The speed run is coloured from its tip back: yellow, lime, green, then
 // the long olive tail of the reference.
-function speedColor(d) {
-  if (d < 3) return mix(C.tip, C.lime, d / 3)
-  if (d < 8) return mix(C.lime, C.green, (d - 3) / 5)
-  if (d < 16) return mix(C.green, C.olive, (d - 8) / 8)
-  return mix(C.olive, C.oliveDark, (d - 16) / 34)
+function speedColor(d, P = C) {
+  if (d < 3) return mix(P.tip, P.lime, d / 3)
+  if (d < 8) return mix(P.lime, P.green, (d - 3) / 5)
+  if (d < 16) return mix(P.green, P.olive, (d - 8) / 8)
+  return mix(P.olive, P.oliveDark, (d - 16) / 34)
+}
+// Fuel bar k's lit colour: red at E, orange, yellow, then green to F.
+function fuelColor(k, P = C) {
+  if (P === D) return k === 0 ? D.red : k === 1 ? D.orange : k < 4 ? mix(D.orange, D.tip, (k - 1) / 3) : mix(D.tip, D.green, (k - 4) / 8)
+  return k === 0 ? '#ff4a1c' : k === 1 ? C.orange : k < 4 ? mix(C.orange, '#f1d92a', (k - 1) / 3) : mix('#e6e22c', C.lime, (k - 4) / 8)
 }
 
 const f1 = (x) => x.toFixed(1)
@@ -109,11 +122,59 @@ const CSS = `
 .gs-digital[data-zone=red] .dg-tach-frame { stroke: ${C.red}; }
 .gs-digital[data-zone=red] .dg-tach-num { fill: ${C.red}; }
 .gs-digital[data-zone=red] .dg-tach-halo { stroke: ${C.red}; opacity: 0.3; }
+
+/* Day: light panels with soft shadows and mid-grey rims, dark grey type,
+   solid bars with no glow. */
+.gs-digital[data-theme=day] .dg-panel { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.13)); }
+.gs-digital[data-theme=day] .dg-st-panel0 { stop-color: #fafafa; }
+.gs-digital[data-theme=day] .dg-st-panel1 { stop-color: #eff0f1; }
+.gs-digital[data-theme=day] .dg-st-rim0 { stop-color: #cfd1d3; }
+.gs-digital[data-theme=day] .dg-st-rim1 { stop-color: #c4c7c9; }
+.gs-digital[data-theme=day] .dg-st-rim2 { stop-color: #b5b8bb; }
+.gs-digital[data-theme=day] .dg-st-pfill0 { stop-color: #d4580a; }
+.gs-digital[data-theme=day] .dg-st-pfill1 { stop-color: #ec8a10; }
+.gs-digital[data-theme=day] .dg-glowonly,
+.gs-digital[data-theme=day] .dg-halo { display: none; }
+.gs-digital[data-theme=day] .dg-scale { filter: none; }
+.gs-digital[data-theme=day] .dg-tile { fill: #f7f7f7; stroke: #cfd1d3; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.12)); }
+.gs-digital[data-theme=day] .dg-track { fill: #e4e5e6; stroke: #e4e5e6; }
+.gs-digital[data-theme=day] .dg-bar { stroke: rgba(0, 0, 0, 0.08); }
+.gs-digital[data-theme=day] .dg-bar.red { stroke: rgba(212, 38, 27, 0.16); }
+.gs-digital[data-theme=day] .dg-num { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-tick { stroke: #393c41; }
+.gs-digital[data-theme=day] .dg-tick.minor { stroke: #8e9195; opacity: 1; }
+.gs-digital[data-theme=day] .dg-tick.red { stroke: ${D.red}; }
+.gs-digital[data-theme=day] .dg-box { fill: #fbfbfb; }
+.gs-digital[data-theme=day] .dg-frame { stroke: #b5b8bb; }
+.gs-digital[data-theme=day] .dg-inset { fill: #fbfbfb; stroke: #cfd1d3; }
+.gs-digital[data-theme=day] .dg-big { fill: #1f2124; }
+.gs-digital[data-theme=day] .dg-unit { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-lab { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-lab.dim { fill: #9a9da1; }
+.gs-digital[data-theme=day] .dg-fuel-lab { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-ftick { stroke: #a6a9ac; }
+.gs-digital[data-theme=day] .dg-icon { stroke: #393c41; }
+.gs-digital[data-theme=day] .dg-icon-fill { fill: #393c41; }
+.gs-digital[data-theme=day] .dg-btrack { fill: rgba(0, 0, 0, 0.08); }
+.gs-digital[data-theme=day] .dg-bfill { fill: ${D.orange}; }
+.gs-digital[data-theme=day] .dg-bfill.hot { fill: ${D.red}; }
+.gs-digital[data-theme=day] .dg-btick { stroke: #a6a9ac; }
+.gs-digital[data-theme=day] .dg-arrow-well { fill: #f4f4f4; stroke: #cfd1d3; }
+.gs-digital[data-theme=day] .dg-arrow { fill: #c3d4bb; stroke: #c3d4bb; }
+.gs-digital[data-theme=day] .dg-pill { fill: #fafafa; stroke: #cfd1d3; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.12)); }
+.gs-digital[data-theme=day] .dg-song { fill: #1f2124; }
+.gs-digital[data-theme=day] .dg-time { fill: #5c5e62; }
+.gs-digital[data-theme=day] .dg-ptrack { fill: rgba(0, 0, 0, 0.08); }
+.gs-digital[data-theme=day] .dg-pdot { fill: #c4540a; }
+.gs-digital[data-theme=day] .dg-sim { fill: #1f2124; }
+.gs-digital[data-theme=day] .dg-finger { fill: rgba(0, 0, 0, 0.08); stroke: #393c41; }
+.gs-digital[data-theme=day][data-zone=red] .dg-tach-frame { stroke: ${D.red}; }
+.gs-digital[data-theme=day][data-zone=red] .dg-tach-num { fill: ${D.red}; }
 `
 
 export default class DigitalStyle extends GaugeStyle {
   static meta = {
-    key: 'digital', name: 'Digital bars', era: 'Corvette C4-style', view: VIEW, dark: true,
+    key: 'digital', name: 'Digital bars', era: 'Corvette C4-style', view: VIEW,
     blurb: 'An 80s digital dash: sweeping bar fans for speed and revs in framed panels, oil, coolant and fuel bars, trip and average speed.',
   }
 
@@ -122,7 +183,8 @@ export default class DigitalStyle extends GaugeStyle {
     const defs = el('defs', {}, this.svg)
     const lin = (name, stops, attrs = { x1: 0, y1: 0, x2: 0, y2: 1 }) => {
       const g = el('linearGradient', { id: this.id(name), ...attrs }, defs)
-      for (const [o, c, op] of stops) el('stop', { offset: o, 'stop-color': c, 'stop-opacity': op ?? 1 }, g)
+      // Each stop gets a class so the day look can recolour it from CSS.
+      stops.forEach(([o, c, op], k) => el('stop', { offset: o, 'stop-color': c, 'stop-opacity': op ?? 1, class: `dg-st-${name}${k}` }, g))
     }
     lin('panel', [[0, '#17150f'], [1, '#0e0d0a']])
     lin('rim', [[0, '#1c1b17'], [0.6, '#2a2925'], [1, '#3c3b37']])
@@ -149,9 +211,9 @@ export default class DigitalStyle extends GaugeStyle {
     // Speed: drawn once, km/h does not change with the engine.
     const sg = el('g', {}, s)
     el('path', { d: ringPath(SPEED_CX, FAN.cy, FAN.ri + 6, FAN.ro - 6, 180, 270), class: 'dg-track' }, sg)
-    this.speedTip = el('circle', { r: 64, fill: this.url('tip'), style: 'display:none' }, s)
+    this.speedTip = el('circle', { r: 64, fill: this.url('tip'), class: 'dg-glowonly', style: 'display:none' }, s)
     this.speedBars = this.fanBars(el('g', {}, s), SPEED_CX, () => 'dg-bar')
-    const sScale = el('g', { filter: this.url('glow') }, s)
+    const sScale = el('g', { filter: this.url('glow'), class: 'dg-scale' }, s)
     for (let v = 10; v <= SPEED_MAX; v += 10) {
       const lab = (v / 10) % 2 === 1
       this.tick(sScale, SPEED_CX, v / SPEED_MAX, lab ? 'dg-tick' : 'dg-tick minor')
@@ -161,9 +223,9 @@ export default class DigitalStyle extends GaugeStyle {
 
     // Revs: the track is fixed, the bars and scale follow the engine.
     el('path', { d: ringPath(TACH_CX, FAN.cy, FAN.ri + 6, FAN.ro - 6, 180, 270), class: 'dg-track' }, s)
-    this.tachTip = el('circle', { r: 64, fill: this.url('tip'), style: 'display:none' }, s)
+    this.tachTip = el('circle', { r: 64, fill: this.url('tip'), class: 'dg-glowonly', style: 'display:none' }, s)
     this.tachG = el('g', {}, s)
-    this.tachScaleG = el('g', { filter: this.url('glow') }, s)
+    this.tachScaleG = el('g', { filter: this.url('glow'), class: 'dg-scale' }, s)
     this.tachNum = this.readout(s, 350 + DX, 'RPM/100', 140, 'tach')
     this.simTag = text(s, 1336, 136, 'dg-sim', 'SIM')
     this.simTag.style.display = 'none'
@@ -198,7 +260,7 @@ export default class DigitalStyle extends GaugeStyle {
   // The framed readout bottom right of a panel: a big number, the unit
   // breaking the frame's bottom edge.
   readout(s, x, unit, gap, key) {
-    el('ellipse', { cx: x + 112, cy: 500, rx: 120, ry: 70, fill: this.url('boxglow') }, s)
+    el('ellipse', { cx: x + 112, cy: 500, rx: 120, ry: 70, fill: this.url('boxglow'), class: 'dg-glowonly' }, s)
     el('rect', { x, y: 433, width: 223, height: 138, rx: 22, class: 'dg-box' }, s)
     el('path', { d: gapBox(x, 433, 223, 138, 22, gap), class: `dg-frame dg-${key}-frame` }, s)
     text(s, x + 111.5, 571, 'dg-unit', unit)
@@ -230,8 +292,7 @@ export default class DigitalStyle extends GaugeStyle {
     this.fuelBars = []
     for (let k = 0; k < FUEL_BARS; k++) {
       const y = 233 - k * 11.25
-      const col = k === 0 ? '#ff4a1c' : k === 1 ? C.orange : k < 4 ? mix(C.orange, '#f1d92a', (k - 1) / 3) : mix('#e6e22c', C.lime, (k - 4) / 8)
-      this.fuelBars.push({ e: el('rect', { x: 900, y: f1(y), width: 104, height: 7, rx: 3.5, fill: C.fuelOff }, s), col })
+      this.fuelBars.push({ e: el('rect', { x: 900, y: f1(y), width: 104, height: 7, rx: 3.5, fill: C.fuelOff }, s), col: fuelColor(k), day: fuelColor(k, D) })
     }
     for (let k = 0; k <= 4; k++) {
       const y = 236.5 - k * 33.75
@@ -309,7 +370,7 @@ export default class DigitalStyle extends GaugeStyle {
     for (const n of [g, sg]) while (n.firstChild) n.removeChild(n.firstChild)
     const step = scale.max / FAN.n
     this.tachBars = this.fanBars(g, TACH_CX, (k) => (k + 0.5) * step >= scale.redFrom ? 'dg-bar red' : 'dg-bar')
-      .map((e, k) => ({ e, col: tachColor((k + 0.5) * step, scale) }))
+      .map((e, k) => ({ e, col: tachColor((k + 0.5) * step, scale), day: tachColor((k + 0.5) * step, scale, D) }))
     for (let v = 500; v <= scale.max + 1e-6; v += 500) {
       const major = v % 1000 === 0
       this.tick(sg, TACH_CX, v / scale.max, (major ? 'dg-tick' : 'dg-tick minor') + (v >= scale.redFrom ? ' red' : ''))
@@ -343,6 +404,7 @@ export default class DigitalStyle extends GaugeStyle {
   paint(force) {
     if (!this.tachBars) return
     const v = this.v, i = this.i
+    const day = this.theme() === 'day', P = day ? D : C
     const now = performance.now()
     const dt = this.avg.t ? clamp((now - this.avg.t) / 1000, 0, 0.5) : 0
     this.avg.t = now
@@ -351,7 +413,7 @@ export default class DigitalStyle extends GaugeStyle {
     const sLit = clamp(Math.round((v.kmh / SPEED_MAX) * FAN.n), 0, FAN.n)
     if (force || sLit !== this.speedLit) {
       this.speedLit = sLit
-      this.speedBars.forEach((e, k) => { e.style.stroke = k < sLit ? speedColor(sLit - 1 - k) : '' })
+      this.speedBars.forEach((e, k) => { e.style.stroke = k < sLit ? speedColor(sLit - 1 - k, P) : '' })
       this.tip(this.speedTip, SPEED_CX, sLit)
     }
     // Revs: each bar keeps its colour along the scale.
@@ -359,7 +421,7 @@ export default class DigitalStyle extends GaugeStyle {
     if (force || tLit !== this.tachLit) {
       const all = force || this.tachLit < 0
       const from = all ? 0 : Math.min(tLit, this.tachLit), to = all ? FAN.n : Math.max(tLit, this.tachLit)
-      for (let k = from; k < to; k++) this.tachBars[k].e.style.stroke = k < tLit ? this.tachBars[k].col : ''
+      for (let k = from; k < to; k++) this.tachBars[k].e.style.stroke = k < tLit ? (day ? this.tachBars[k].day : this.tachBars[k].col) : ''
       this.tachLit = tLit
       this.tip(this.tachTip, TACH_CX, tLit)
     }
@@ -375,7 +437,7 @@ export default class DigitalStyle extends GaugeStyle {
     const fLit = clamp(Math.round(v.fuel * FUEL_BARS), 0, FUEL_BARS)
     if (force || fLit !== this.fuelLit) {
       this.fuelLit = fLit
-      this.fuelBars.forEach((b, k) => b.e.setAttribute('fill', k < fLit ? b.col : C.fuelOff))
+      this.fuelBars.forEach((b, k) => b.e.setAttribute('fill', k < fLit ? (day ? b.day : b.col) : P.fuelOff))
     }
 
     // Rolls over at 999.9 km, as the old trip meters did.

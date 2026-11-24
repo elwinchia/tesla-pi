@@ -91,12 +91,14 @@
 
   /* ── Cluster: static/rev-gauge.css ─────────────────────────────── */
   #cluster { max-width: 1100px; margin: 0 auto; aspect-ratio: 3.3; }
+  /* The dash card wears the dock's background (rev-gauge.css): the Tesla
+     floor grey in day, the night gradient at night. */
+  .card.dash { background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%); }
   /* Gauge style picker: a live thumbnail of each style. */
   .gauges { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
   .gcard { text-align: left; padding: 8px 8px 10px; border-radius: 14px; display: flex; flex-direction: column; gap: 4px; }
   .gcard .thumb { height: 86px; display: flex; align-items: center; justify-content: center; border-radius: 9px;
                   background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%); overflow: hidden; }
-  .gcard .thumb.dark { background: radial-gradient(120% 90% at 50% 38%, #121a26 0%, #070a10 100%); }
   .gcard .thumb .cluster-svg { height: 100%; width: auto; max-width: 100%; pointer-events: none; }
   .gcard b { font-size: 15px; padding: 0 4px; }
   .gcard .era { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 4px; }
@@ -312,7 +314,6 @@
     gcards[k] = b
     loadStyle(k).then((Cls) => {
       const box = b.querySelector('.thumb')
-      box.classList.toggle('dark', !!Cls.meta.dark)
       const g = new Cls(box, { scale: thumbScale(), theme })
       thumbs.push(g)
       g.set({ running: true, rpm: 5200, kmh: 98, load: 0.6, gear: '3', source: 'GPS', fixRate: 1, water: 90, oilTemp: 98, oilPress: 3.6,
@@ -320,6 +321,10 @@
       for (let i = 0; i < 60; i++) g.frame(0.1)
     }).catch((e) => console.warn('gauge style', k, e))
   }
+  // Day and night: the dash repaints every frame, the thumbnails only when
+  // the theme flips.
+  new MutationObserver(() => { for (const g of thumbs) g.frame(0) })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   $('gauges').onclick = (e) => {
     const b = e.target.closest('[data-gauge]')
     if (!b) return

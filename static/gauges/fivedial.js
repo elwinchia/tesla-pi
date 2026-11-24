@@ -45,6 +45,66 @@ const TRACE_TAU = 0.35, TRACE_MIN = 0.6
 const SECONDS_TAU = 4.2
 const SX = 1.2  // the numerals' sideways stretch
 
+// Day: the same instrument printed for Tesla's light screen. Light faces in
+// a light grey housing, dark grey print, the orange a shade deeper, and
+// next to no glow. Everything is a CSS override of the night attributes,
+// so the night look is untouched; gradients are recoloured stop by stop.
+const DAY_ORANGE = '#e8590c', DAY_RED = '#d9381e'
+const stops = (g, ...cols) => cols.map((c, k) => {
+  const [col, a] = Array.isArray(c) ? c : [c, 1]
+  return `.gs-fivedial[data-theme=day] .fd-g-${g} stop:nth-child(${k + 1}) { stop-color: ${col}; stop-opacity: ${a}; }`
+}).join('\n')
+const DAY = `
+  .gs-fivedial[data-theme=day] text { fill: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-num.red { fill: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-end,
+  .gs-fivedial[data-theme=day] .fd-stack,
+  .gs-fivedial[data-theme=day] .fd-small { fill: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-cap,
+  .gs-fivedial[data-theme=day] .fd-rpmx,
+  .gs-fivedial[data-theme=day] .fd-unit,
+  .gs-fivedial[data-theme=day] .fd-trip tspan { fill: #5c5e62; }
+  .gs-fivedial[data-theme=day] .fd-trip tspan.n { fill: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-odo { fill: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-gear { fill: #1f2124; filter: none; }
+  .gs-fivedial[data-theme=day][data-zone=red] .fd-gear { fill: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-tick { stroke: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-tick.min { stroke: #75787d; }
+  .gs-fivedial[data-theme=day] .fd-tick.dim { stroke: #eba590; }
+  .gs-fivedial[data-theme=day] .fd-tick.red { stroke: ${DAY_ORANGE}; }
+  .gs-fivedial[data-theme=day] .fd-icon { stroke: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-icon .fill { fill: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-div { stroke: #c4c6c9; }
+  .gs-fivedial[data-theme=day] .fd-housing { fill: #e4e5e6; filter: drop-shadow(0 1.5px 2.5px rgba(0,0,0,0.16)); }
+  .gs-fivedial[data-theme=day] .fd-lip { stroke: #b9bcbf; stroke-opacity: 0.45; }
+  .gs-fivedial[data-theme=day] .fd-channel { fill: #c9cbce; }
+  .gs-fivedial[data-theme=day] .fd-chip { fill: #e7e8e9; stroke: #b5b8bb; }
+  .gs-fivedial[data-theme=day] .fd-sub { fill: #ebeced; stroke: #b5b8bb; }
+  .gs-fivedial[data-theme=day] .fd-subtick { stroke: #9a9da1; }
+  .gs-fivedial[data-theme=day] .fd-subtick.hr { stroke: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-subhand,
+  .gs-fivedial[data-theme=day] .fd-comb { stroke: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-subknob { fill: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-knob { stroke: #8e9195; }
+  .gs-fivedial[data-theme=day] .fd-hand { stroke: ${DAY_ORANGE}; }
+  .gs-fivedial[data-theme=day] .fd-glow { opacity: 0.07; }
+  .gs-fivedial[data-theme=day] .fd-bglow { opacity: 0.3; }
+  .gs-fivedial[data-theme=day] .fd-trace stop { stop-color: ${DAY_ORANGE}; }
+  .gs-fivedial[data-theme=day] .fd-tr use:nth-child(1) { opacity: 0.03; }
+  .gs-fivedial[data-theme=day] .fd-tr use:nth-child(2) { opacity: 0.12; }
+  ${stops('hshade', ['#ffffff', 0.55], ['#ffffff', 0], ['#000', 0.05])}
+  ${stops('hrim', '#ffffff', '#d4d6d8', '#a9acb0')}
+  ${stops('halo', ['#000', 0.13], ['#000', 0])}
+  ${stops('bezel', '#eeeff0', '#cfd1d3', '#b5b8bb')}
+  ${stops('face', '#fbfbfb', '#f6f6f6', '#efefef')}
+  ${stops('line', '#c4c6c9', '#c4c6c9', '#a3a6aa')}
+  ${stops('knob', '#ffffff', '#d4d6d8', '#a9acb0')}
+  ${stops('shade', ['#000', 0.05], ['#000', 0])}
+  ${stops('ndl', [DAY_ORANGE, 0.2], [DAY_ORANGE, 0.9], DAY_ORANGE)}
+  ${stops('btrack', '#ecd9d1', '#e8d6cf')}
+  ${stops('bfill', '#f0b59c', DAY_ORANGE, '#d9480f')}
+`
+
 const f1 = (x) => x.toFixed(1)
 const rot = (a, cx, cy = CY) => `rotate(${a.toFixed(2)} ${cx} ${cy})`
 
@@ -63,7 +123,7 @@ function rng(seed) { let s = seed; return () => ((s = (s * 1103515245 + 12345) %
 
 export default class FiveDialStyle extends GaugeStyle {
   static meta = {
-    key: 'fivedial', name: 'Five dials', era: '911-style', view: VIEW, dark: true,
+    key: 'fivedial', name: 'Five dials', era: '911-style', view: VIEW,
     blurb: 'Five round dials in an oval: battery and oil, water and oil pressure, the tach with the gear, speed, and a clock.',
   }
 
@@ -86,6 +146,7 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-odo { font-size: 14px; font-weight: 500; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; fill: #b9b9bb; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-trip { font-size: 15px; font-weight: 500; fill: #f0f0f0; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-trip tspan { fill: #a9a9ab; font-weight: 400; }
+      .gs-fivedial .fd-trip tspan.n { fill: #f0f0f0; }
       .gs-fivedial .fd-tick { stroke: #f2f2f2; stroke-linecap: butt; }
       .gs-fivedial .fd-tick.min { stroke: #77777a; }
       .gs-fivedial .fd-tick.dim { stroke: #5a2219; }
@@ -93,6 +154,7 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-icon { fill: none; stroke: #e6e6e6; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
       .gs-fivedial .fd-icon .fill { fill: #e6e6e6; stroke: none; }
       .gs-fivedial .fd-div { fill: none; stroke: #343437; stroke-width: 1.6; }
+${DAY}
     `)
     this.defs = el('defs', {}, s)
     this.housing()
@@ -115,8 +177,9 @@ export default class FiveDialStyle extends GaugeStyle {
 
   // ── Shared parts ──────────────────────────────────────────────────────
 
-  grad(kind, name, attrs, stops) {
-    const g = el(kind, { id: this.id(name), ...attrs }, this.defs)
+  // cls: the class fd-g-<cls> on the gradient, for its day stops (DAY).
+  grad(kind, name, attrs, stops, cls = name) {
+    const g = el(kind, { id: this.id(name), class: 'fd-g-' + cls, ...attrs }, this.defs)
     for (const [o, c, a = 1] of stops) el('stop', { offset: o, 'stop-color': c, 'stop-opacity': a }, g)
     return g
   }
@@ -139,11 +202,11 @@ export default class FiveDialStyle extends GaugeStyle {
     }
     this.grad('radialGradient', 'hshade', { cx: 0.5, cy: 0.3, r: 0.7 }, [[0, '#2a2a2c', 0.35], [0.6, '#000', 0], [1, '#000', 0.45]])
     this.grad('linearGradient', 'hrim', { x1: 0, y1: 0, x2: 0, y2: 1 }, [[0, '#4a4a4d'], [0.35, '#2a2a2c'], [1, '#121213']])
-    el('path', { d, fill: this.url('grain') }, this.svg)
+    el('path', { d, fill: this.url('grain'), class: 'fd-housing' }, this.svg)
     el('path', { d, fill: this.url('hshade') }, this.svg)
     el('path', { d, fill: 'none', stroke: this.url('hrim'), 'stroke-width': 1.6 }, this.svg)
     // A second, darker lip just inside the rim.
-    el('path', { d, fill: 'none', stroke: '#000', 'stroke-opacity': 0.55, 'stroke-width': 2,
+    el('path', { d, fill: 'none', stroke: '#000', 'stroke-opacity': 0.55, 'stroke-width': 2, class: 'fd-lip',
       transform: `translate(${w / 2} ${CY}) scale(0.992 0.972) translate(${-w / 2} ${-CY})` }, this.svg)
   }
 
@@ -151,7 +214,7 @@ export default class FiveDialStyle extends GaugeStyle {
   // dark channel, and the face with a thin grey line round it (brighter at
   // the bottom, where the light catches it).
   dial(k, cx, R) {
-    this.grad('radialGradient', 'halo-' + k, { cx: 0.5, cy: 0.5, r: 0.5 }, [[R / (R + 14), '#000', 0.75], [1, '#000', 0]])
+    this.grad('radialGradient', 'halo-' + k, { cx: 0.5, cy: 0.5, r: 0.5 }, [[R / (R + 14), '#000', 0.75], [1, '#000', 0]], 'halo')
     el('circle', { cx, cy: CY + 2, r: R + 14, fill: this.url('halo-' + k) }, this.svg)
     if (!this.dialDefs) {
       this.dialDefs = true
@@ -160,7 +223,7 @@ export default class FiveDialStyle extends GaugeStyle {
       this.grad('linearGradient', 'line', { x1: 0, y1: 0, x2: 0, y2: 1 }, [[0, '#2c2c2f'], [0.6, '#2c2c2f'], [1, '#4c4c50']])
     }
     el('circle', { cx, cy: CY, r: R, fill: this.url('bezel') }, this.svg)
-    el('circle', { cx, cy: CY, r: R * RING.channel, fill: '#0a0a0b' }, this.svg)
+    el('circle', { cx, cy: CY, r: R * RING.channel, fill: '#0a0a0b', class: 'fd-channel' }, this.svg)
     el('circle', { cx, cy: CY, r: R * RING.face, fill: this.url('face'), stroke: this.url('line'), 'stroke-width': 1.3 }, this.svg)
   }
 
@@ -178,6 +241,10 @@ export default class FiveDialStyle extends GaugeStyle {
   trace(parent, name, cx, rA, w, tau) {
     const t = new Trace(parent, this.id(name), { cx, cy: CY, r: rA, color: ORANGE, tau, min: TRACE_MIN,
       layers: [[13 * w, 0.12], [7 * w, 0.3], [3.4 * w, 1]] })
+    // For the day colours: its fade, and the group of its layers (the
+    // last thing Trace adds to parent).
+    t.fade.classList.add('fd-trace')
+    parent.lastElementChild.classList.add('fd-tr')
     return (a) => t.update(a)
   }
 
@@ -192,15 +259,15 @@ export default class FiveDialStyle extends GaugeStyle {
     const ng = el('g', {}, parent)
     if (shade) {
       this.grad('linearGradient', name + '-shade', { gradientUnits: 'userSpaceOnUse', x1: cx, y1: CY, x2: cx, y2: CY + R * 0.45 },
-        [[0, '#000', 0.42], [1, '#000', 0]])
+        [[0, '#000', 0.42], [1, '#000', 0]], 'shade')
       const rf = R * RING.face
       const [ex, ey] = polar(cx, CY, rf, 42)
       el('path', { d: `M${cx} ${CY}L${cx + rf} ${CY}A${rf} ${rf} 0 0 1 ${f1(ex)} ${f1(ey)}Z`, fill: this.url(name + '-shade') }, ng)
     }
     this.grad('linearGradient', name + '-ndl', { gradientUnits: 'userSpaceOnUse', x1: cx + rIn, y1: CY, x2: cx + rA, y2: CY },
-      [[0, ORANGE, 0.15], [0.55, ORANGE, 0.85], [1, ORANGE, 1]])
+      [[0, ORANGE, 0.15], [0.55, ORANGE, 0.85], [1, ORANGE, 1]], 'ndl')
     const x0 = f1(cx + rIn), x1 = f1(cx + rA + 1.7 * w)
-    el('line', { x1: x0, y1: CY, x2: x1, y2: CY, stroke: this.url(name + '-ndl'), 'stroke-width': 8 * w, opacity: 0.22 }, ng)
+    el('line', { x1: x0, y1: CY, x2: x1, y2: CY, stroke: this.url(name + '-ndl'), 'stroke-width': 8 * w, opacity: 0.22, class: 'fd-glow' }, ng)
     el('line', { x1: x0, y1: CY, x2: x1, y2: CY, stroke: this.url(name + '-ndl'), 'stroke-width': 2.8 * w }, ng)
     let last = null
     return (a) => {
@@ -275,7 +342,7 @@ export default class FiveDialStyle extends GaugeStyle {
       const paint = this.sweep(sweeps, `${name}-${sx < 0 ? 'l' : 'r'}`, cx, R, { a0: side.a0, rIn: R * 0.47, w: R > 100 ? 0.95 : 0.85 })
       this.halves.push({ ...h, side, paint })
     }
-    el('circle', { cx, cy: CY, r: R * 0.075, fill: this.url('knob'), stroke: '#000', 'stroke-width': 1 }, this.svg)
+    el('circle', { cx, cy: CY, r: R * 0.075, fill: this.url('knob'), stroke: '#000', 'stroke-width': 1, class: 'fd-knob' }, this.svg)
     if (!this.knobDef) {
       this.knobDef = true
       this.grad('radialGradient', 'knob', { cx: 0.45, cy: 0.35, r: 0.7 }, [[0, '#3a3a3d'], [0.6, '#151516'], [1, '#050505']])
@@ -305,7 +372,7 @@ export default class FiveDialStyle extends GaugeStyle {
     this.grad('linearGradient', 'bfill', { x1: 0, y1: 0, x2: 1, y2: 0 }, [[0, '#6a2412'], [0.7, '#e2461c'], [1, '#ff6a34']])
     this.grad('radialGradient', 'bglow', {}, [[0, '#ff5a24', 0.55], [1, '#ff5a24', 0]])
     el('rect', { x: f1(bx), y: by, width: f1(bw), height: bh, rx: bh / 2, fill: this.url('btrack') }, g)
-    this.boostGlow = el('ellipse', { cy: by + bh / 2, rx: 20, ry: 14, fill: this.url('bglow'), style: 'display:none' }, g)
+    this.boostGlow = el('ellipse', { cy: by + bh / 2, rx: 20, ry: 14, fill: this.url('bglow'), style: 'display:none', class: 'fd-bglow' }, g)
     this.boostBar = el('rect', { x: f1(bx), y: by, width: 0, height: bh, rx: bh / 2, fill: this.url('bfill') }, g)
     // Needle above the scale, the gear above the needle.
     this.tachSweep = this.sweep(g, 'tach', cx, R, { a0: TACH.a0, rIn: R * 0.2, shade: true })
@@ -364,11 +431,11 @@ export default class FiveDialStyle extends GaugeStyle {
       const a = dialAngle(38 + k * 2.6, 0, SPEED.max, SPEED.a0, SPEED.a1)
       el('line', { x1: f1(polar(cx, CY, R * 0.74, a)[0]), y1: f1(polar(cx, CY, R * 0.74, a)[1]),
         x2: f1(polar(cx, CY, R * 0.66, a + 4)[0]), y2: f1(polar(cx, CY, R * 0.66, a + 4)[1]),
-        stroke: '#ff4a2a', 'stroke-width': 2.2, opacity: 1 - k * 0.2 }, g)
+        stroke: '#ff4a2a', 'stroke-width': 2.2, opacity: 1 - k * 0.2, class: 'fd-comb' }, g)
     }
     this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
     // Odometer chip under the top numeral.
-    el('rect', { x: cx - 31, y: CY - 46, width: 62, height: 18, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1 }, g)
+    el('rect', { x: cx - 31, y: CY - 46, width: 62, height: 18, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1, class: 'fd-chip' }, g)
     this.odo = text(g, cx, CY - 36.5, 'fd-odo', '000000')
     this.speedSweep = this.sweep(g, 'speed', cx, R, { a0: SPEED.a0, rIn: R * 0.2, w: 0.9, shade: true })
     this.kmh = this.wide(g, cx, CY + 14, 'fd-kmh', '0', 1.2)
@@ -378,10 +445,9 @@ export default class FiveDialStyle extends GaugeStyle {
     const ic = el('g', { class: 'fd-icon', transform: `translate(${cx - 34} ${CY + 76})` }, tg)
     el('path', { d: 'M-6 7L-2 -7M6 7L2 -7M0 -5.5V-3M0 0V2.5M0 5V7' }, ic)
     this.trip = text(g, cx - 22, CY + 81, 'fd-trip', '')
-    this.tripN = el('tspan', {}, this.trip)
+    this.tripN = el('tspan', { class: 'n' }, this.trip)
     this.tripU = el('tspan', { dx: 3 }, this.trip)
     this.tripU.textContent = 'km'
-    this.tripN.style.fill = '#f0f0f0'
   }
 
   // ── Clock ─────────────────────────────────────────────────────────────
@@ -402,13 +468,13 @@ export default class FiveDialStyle extends GaugeStyle {
     this.subs = []
     for (const [dx, dy, n] of [[-0.31, 0.0, 60], [0.31, 0.0, 30], [0, 0.31, 12]]) {
       const sx = cx + dx * R, sy = CY + dy * R, r = R * 0.2
-      el('circle', { cx: f1(sx), cy: f1(sy), r: f1(r), fill: '#0b0b0c', stroke: '#2a2a2d', 'stroke-width': 1 }, g)
+      el('circle', { cx: f1(sx), cy: f1(sy), r: f1(r), fill: '#0b0b0c', stroke: '#2a2a2d', 'stroke-width': 1, class: 'fd-sub' }, g)
       for (let k = 0; k < 12; k++) {
         const [x0, y0] = polar(sx, sy, r - 1.5, k * 30), [x1, y1] = polar(sx, sy, r - (k % 3 ? 3.5 : 5.5), k * 30)
-        el('line', { x1: f1(x0), y1: f1(y0), x2: f1(x1), y2: f1(y1), stroke: k % 3 ? '#555' : '#bbb', 'stroke-width': 0.9 }, g)
+        el('line', { x1: f1(x0), y1: f1(y0), x2: f1(x1), y2: f1(y1), stroke: k % 3 ? '#555' : '#bbb', 'stroke-width': 0.9, class: k % 3 ? 'fd-subtick' : 'fd-subtick hr' }, g)
       }
-      const hand = el('line', { x1: f1(sx), y1: f1(sy + 2), x2: f1(sx), y2: f1(sy - r + 3), stroke: '#ff4a2a', 'stroke-width': 1.4, 'stroke-linecap': 'round' }, g)
-      el('circle', { cx: f1(sx), cy: f1(sy), r: 2, fill: '#dcdcdc' }, g)
+      const hand = el('line', { x1: f1(sx), y1: f1(sy + 2), x2: f1(sx), y2: f1(sy - r + 3), stroke: '#ff4a2a', 'stroke-width': 1.4, 'stroke-linecap': 'round', class: 'fd-subhand' }, g)
+      el('circle', { cx: f1(sx), cy: f1(sy), r: 2, fill: '#dcdcdc', class: 'fd-subknob' }, g)
       this.subs.push({ hand, sx, sy, n })
     }
     // The seconds: a trace sweeping round the rim, as the needles leave.
@@ -416,10 +482,10 @@ export default class FiveDialStyle extends GaugeStyle {
     this.secTrace = this.trace(g, 'sec', cx, rA, 0.85, SECONDS_TAU)
     // The minute hand, drawn at 12 and turned.
     this.minG = el('g', {}, g)
-    el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 7, opacity: 0.2 }, this.minG)
-    el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 2.6 }, this.minG)
-    this.hourH = el('line', { x1: cx, y1: CY - R * 0.12, x2: cx, y2: CY - R * 0.52, stroke: '#f2582a', 'stroke-width': 4.6, 'stroke-linecap': 'round' }, g)
-    el('circle', { cx, cy: CY, r: R * 0.065, fill: this.url('knob'), stroke: '#3a3a3d', 'stroke-width': 1 }, g)
+    el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 7, opacity: 0.2, class: 'fd-hand fd-glow' }, this.minG)
+    el('line', { x1: cx, y1: CY - 6, x2: cx, y2: f1(CY - rA - 1.5), stroke: ORANGE, 'stroke-width': 2.6, class: 'fd-hand' }, this.minG)
+    this.hourH = el('line', { x1: cx, y1: CY - R * 0.12, x2: cx, y2: CY - R * 0.52, stroke: '#f2582a', 'stroke-width': 4.6, 'stroke-linecap': 'round', class: 'fd-hand' }, g)
+    el('circle', { cx, cy: CY, r: R * 0.065, fill: this.url('knob'), stroke: '#3a3a3d', 'stroke-width': 1, class: 'fd-knob' }, g)
   }
 
   // True when key's value moved since the last paint (or force).

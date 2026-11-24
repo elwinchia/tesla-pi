@@ -65,7 +65,6 @@ export class Dash {
       const touch = this.touchHandlers
       this.style = new Cls(this.gaugeHost, { scale: this.scale, theme: this.theme })
       if (old) old.destroy()
-      this.root.toggleAttribute('data-dark', !!Cls.meta.dark)
       this.root.dataset.style = key
       if (touch) this.style.setTouch(touch)
       if (this.st) this.push()

@@ -46,7 +46,7 @@ const narrow = (x, y, sx = 0.76) => `translate(${fx(x)} ${fx(y)}) scale(${sx} 1)
 
 export default class CrosshairStyle extends GaugeStyle {
   static meta = {
-    key: 'crosshair', name: 'Crosshair', era: 'Integrale-style', view: VIEW, dark: true,
+    key: 'crosshair', name: 'Crosshair', era: 'Integrale-style', view: VIEW,
     blurb: 'Two gunsight dials with glowing yellow sweeps, wide speed numerals, the gear in a roundel, and four bar tiles.',
   }
 
@@ -96,27 +96,85 @@ export default class CrosshairStyle extends GaugeStyle {
       .gs-crosshair .cx-arrow path { fill: #1a160a; }
       .gs-crosshair .cx-lamp { fill: #3a1310; opacity: 0.8; }
       .gs-crosshair .cx-finger { fill: rgba(245, 200, 20, 0.18); stroke: #ffe680; stroke-width: 3; pointer-events: none; }
+
+      /* Day: the same instrument in Tesla's light UI, on the #d6d7d6 floor.
+         Light faces in pale metal bezels, the sweeps in solid darker amber
+         with no glow, dark grey type. */
+      .gs-crosshair[data-theme=day] .st-bz0 { stop-color: #e4e6e8; }
+      .gs-crosshair[data-theme=day] .st-bz1 { stop-color: #cfd1d3; }
+      .gs-crosshair[data-theme=day] .st-bz2 { stop-color: #b5b8bb; }
+      .gs-crosshair[data-theme=day] .st-fc0 { stop-color: #fbfbfb; }
+      .gs-crosshair[data-theme=day] .st-fc1 { stop-color: #eff0f1; }
+      .gs-crosshair[data-theme=day] .st-gl0,
+      .gs-crosshair[data-theme=day] .st-gl1 { stop-opacity: 0; }
+      .gs-crosshair[data-theme=day] .st-fr0 { stop-color: #d2d4d6; }
+      .gs-crosshair[data-theme=day] .st-fr1 { stop-color: #c2c5c8; }
+      .gs-crosshair[data-theme=day] .cx-bezel,
+      .gs-crosshair[data-theme=day] .cx-frame { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.16)); }
+      .gs-crosshair[data-theme=day] .cx-rim { stroke: #a9acb0; stroke-width: 1.2; }
+      .gs-crosshair[data-theme=day] .cx-track { stroke: rgba(0, 0, 0, 0.07); }
+      .gs-crosshair[data-theme=day] .cx-track.red { stroke: rgba(200, 40, 20, 0.16); }
+      .gs-crosshair[data-theme=day] .cx-bdot { fill: rgba(0, 0, 0, 0.2); }
+      .gs-crosshair[data-theme=day] .cx-bdot.on { fill: #fff2b8; }
+      .gs-crosshair[data-theme=day] .cx-bdot.red { fill: rgba(190, 40, 20, 0.45); }
+      .gs-crosshair[data-theme=day] .cx-bdot.red.on { fill: #ffd2c4; }
+      .gs-crosshair[data-theme=day] .cx-idot { fill: rgba(0, 0, 0, 0.16); }
+      .gs-crosshair[data-theme=day] .cx-circle { stroke: rgba(0, 0, 0, 0.14); }
+      .gs-crosshair[data-theme=day] .cx-cross { stroke: rgba(0, 0, 0, 0.1); }
+      .gs-crosshair[data-theme=day] .cx-mark { stroke: #c99700; }
+      .gs-crosshair[data-theme=day] .cx-sweep.halo,
+      .gs-crosshair[data-theme=day] .cx-hotglow { opacity: 0; }
+      .gs-crosshair[data-theme=day] .cx-sweep.main { stroke: #e0aa00; }
+      .gs-crosshair[data-theme=day] .cx-sweep.head { stroke: #d29700; }
+      .gs-crosshair[data-theme=day] .cx-sweep.core { stroke: #fff4cc; }
+      .gs-crosshair[data-theme=day][data-zone=red] .cx-tach .cx-sweep.main { stroke: #d8401a; }
+      .gs-crosshair[data-theme=day][data-zone=red] .cx-tach .cx-sweep.head { stroke: #bf2e10; }
+      .gs-crosshair[data-theme=day][data-zone=red] .cx-tach .cx-sweep.core { stroke: #ffe0d4; }
+      .gs-crosshair[data-theme=day] .cx-speed { fill: #1f2124; }
+      .gs-crosshair[data-theme=day] .cx-unit,
+      .gs-crosshair[data-theme=day] .cx-arc-label { fill: #5c5e62; }
+      .gs-crosshair[data-theme=day] .cx-roundel { fill: #f2c200; }
+      .gs-crosshair[data-theme=day] .cx-roundel-in { stroke: #1f2124; }
+      .gs-crosshair[data-theme=day] .cx-notch { stroke: #f6f6f7; }
+      .gs-crosshair[data-theme=day] .cx-gear { fill: #1f2124; }
+      .gs-crosshair[data-theme=day] .cx-tile { fill: #f7f7f7; }
+      .gs-crosshair[data-theme=day] .cx-val { fill: #1f2124; }
+      .gs-crosshair[data-theme=day] .cx-val .u,
+      .gs-crosshair[data-theme=day] .cx-val .deg { fill: #5c5e62; }
+      .gs-crosshair[data-theme=day] .cx-ttrack { stroke: rgba(0, 0, 0, 0.08); }
+      .gs-crosshair[data-theme=day] .cx-tdot { fill: rgba(0, 0, 0, 0.2); }
+      .gs-crosshair[data-theme=day] .cx-fill { stroke: #d9a300; }
+      .gs-crosshair[data-theme=day] .cx-tileg.hot .cx-fill { stroke: #d8401a; }
+      .gs-crosshair[data-theme=day] .cx-tlabel { fill: #5c5e62; }
+      .gs-crosshair[data-theme=day] .cx-icon { stroke: #393c41; }
+      .gs-crosshair[data-theme=day] .cx-icon .f { fill: #393c41; }
+      .gs-crosshair[data-theme=day] .cx-icon .hole { fill: #f7f7f7; }
+      .gs-crosshair[data-theme=day] .cx-arrow { opacity: 1; }
+      .gs-crosshair[data-theme=day] .cx-arrow circle { fill: rgba(0, 0, 0, 0.06); stroke: rgba(0, 0, 0, 0.1); }
+      .gs-crosshair[data-theme=day] .cx-arrow path { fill: rgba(0, 0, 0, 0.28); }
+      .gs-crosshair[data-theme=day] .cx-lamp { fill: rgba(190, 40, 20, 0.14); opacity: 1; }
+      .gs-crosshair[data-theme=day] .cx-finger { fill: rgba(217, 163, 0, 0.18); stroke: #c78f00; }
     `)
     const defs = el('defs', {}, s)
     // Brushed grey metal: lighter on top, as if lit from above.
     const bezel = el('linearGradient', { id: this.id('bezel'), x1: '0', y1: '0', x2: '0', y2: '1' }, defs)
-    el('stop', { offset: '0', 'stop-color': '#959aa2' }, bezel)
-    el('stop', { offset: '0.5', 'stop-color': '#71757d' }, bezel)
-    el('stop', { offset: '1', 'stop-color': '#565a61' }, bezel)
+    el('stop', { offset: '0', 'stop-color': '#959aa2', class: 'st-bz0' }, bezel)
+    el('stop', { offset: '0.5', 'stop-color': '#71757d', class: 'st-bz1' }, bezel)
+    el('stop', { offset: '1', 'stop-color': '#565a61', class: 'st-bz2' }, bezel)
     const face = el('radialGradient', { id: this.id('face') }, defs)
-    el('stop', { offset: '0', 'stop-color': '#18181a' }, face)
-    el('stop', { offset: '1', 'stop-color': '#0a0a0c' }, face)
+    el('stop', { offset: '0', 'stop-color': '#18181a', class: 'st-fc0' }, face)
+    el('stop', { offset: '1', 'stop-color': '#0a0a0c', class: 'st-fc1' }, face)
     // Static yellow light behind the speed, the gear and the sweep's head.
     const glow = el('radialGradient', { id: this.id('glow') }, defs)
-    el('stop', { offset: '0', 'stop-color': YELLOW, 'stop-opacity': '0.2' }, glow)
-    el('stop', { offset: '1', 'stop-color': YELLOW, 'stop-opacity': '0' }, glow)
+    el('stop', { offset: '0', 'stop-color': YELLOW, 'stop-opacity': '0.2', class: 'st-gl0' }, glow)
+    el('stop', { offset: '1', 'stop-color': YELLOW, 'stop-opacity': '0', class: 'st-gl1' }, glow)
     const hot = el('radialGradient', { id: this.id('hot') }, defs)
     el('stop', { offset: '0', 'stop-color': '#fff4b0', 'stop-opacity': '0.75' }, hot)
     el('stop', { offset: '0.35', 'stop-color': '#ffd21a', 'stop-opacity': '0.3' }, hot)
     el('stop', { offset: '1', 'stop-color': '#ffc81a', 'stop-opacity': '0' }, hot)
     const frame = el('linearGradient', { id: this.id('frame'), x1: '0', y1: '0', x2: '0', y2: '1' }, defs)
-    el('stop', { offset: '0', 'stop-color': '#5c5f66' }, frame)
-    el('stop', { offset: '1', 'stop-color': '#43464c' }, frame)
+    el('stop', { offset: '0', 'stop-color': '#5c5f66', class: 'st-fr0' }, frame)
+    el('stop', { offset: '1', 'stop-color': '#43464c', class: 'st-fr1' }, frame)
     const gold = el('linearGradient', { id: this.id('gold'), x1: '0', y1: '0', x2: '0', y2: '1' }, defs)
     el('stop', { offset: '0', 'stop-color': '#f0d56a' }, gold)
     el('stop', { offset: '1', 'stop-color': '#9c7d22' }, gold)
@@ -163,7 +221,7 @@ export default class CrosshairStyle extends GaugeStyle {
     el('circle', { cx: GRID.x - 16, cy: 308, r: 14, class: 'cx-lamp' }, s)
     el('circle', { cx: GRID.x + GRID.w + 16, cy: 308, r: 14, class: 'cx-lamp' }, s)
     const { x: gx, y: gy, w: gw, h: gh, pad } = GRID
-    el('rect', { x: gx, y: gy, width: gw, height: gh, rx: 16, fill: this.url('frame') }, s)
+    el('rect', { x: gx, y: gy, width: gw, height: gh, rx: 16, fill: this.url('frame'), class: 'cx-frame' }, s)
     const tw = (gw - 3 * pad) / 2, th = (gh - 3 * pad) / 2
     this.tiles = TILES.map((p, k) => {
       const tx = gx + pad + (k % 2) * (tw + pad), ty = gy + pad + Math.floor(k / 2) * (th + pad)
@@ -225,7 +283,7 @@ export default class CrosshairStyle extends GaugeStyle {
     const halo = mk('halo'), main = mk('main')
     const dotsG = el('g', {}, g)
     const head = mk('head'), core = mk('core')
-    const glow = el('circle', { r: look.glow, fill: this.url('hot'), style: 'display:none' }, g)
+    const glow = el('circle', { r: look.glow, fill: this.url('hot'), class: 'cx-hotglow', style: 'display:none' }, g)
     return { d, look, redG, dotsG, halo, main, head, core, glow, dots: [], lit: 0, last: NaN }
   }
   // N + 1 dots along the band; red(f) marks the ones in the red zone.
@@ -268,7 +326,7 @@ export default class CrosshairStyle extends GaugeStyle {
     } else {
       // A fuel pump with its hose.
       el('rect', { x: -9, y: -11, width: 12, height: 22, rx: 1.5, class: 'f' }, ic)
-      el('rect', { x: -6.5, y: -8, width: 7, height: 6, rx: 0.8, fill: '#141518', stroke: 'none' }, ic)
+      el('rect', { x: -6.5, y: -8, width: 7, height: 6, rx: 0.8, fill: '#141518', stroke: 'none', class: 'hole' }, ic)
       el('path', { d: 'M3 -6 H6 L9 -3 V6 Q9 9 7 9 Q5 9 5 6 V1 H3' }, ic)
     }
   }

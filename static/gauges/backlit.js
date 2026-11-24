@@ -37,7 +37,7 @@ function ctext(parent, x, y, cls, s, sx = 0.8) {
 
 export default class BacklitStyle extends GaugeStyle {
   static meta = {
-    key: 'backlit', name: 'Backlit pair', era: 'Testarossa-style', view: VIEW, dark: true,
+    key: 'backlit', name: 'Backlit pair', era: 'Testarossa-style', view: VIEW,
     blurb: 'Two orange-backlit dials with glowing sweeps, a seven-segment speed, the gear in a lit disc, battery and water bars.',
   }
 
@@ -78,6 +78,44 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit .bl-icon { fill: none; stroke: #ff6a2a; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
       .gs-backlit .bl-icon .solid { fill: #ff6a2a; stroke: none; }
       .gs-backlit .bl-finger { fill: rgba(255, 140, 60, 0.18); stroke: #ffb07a; stroke-width: 3; pointer-events: none; }
+
+      /* Day: the same cluster printed rather than backlit, on Tesla's light
+         floor: pale housings, white faces, dark numerals and ticks, and the
+         orange kept as solid ink with no glow. */
+      .gs-backlit[data-theme=day] .bl-panel { fill: #e8e9ea; stroke: #c4c6c8; }
+      .gs-backlit[data-theme=day] .bl-well { fill: #f8f8f8; stroke: #b5b8bb; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.14)); }
+      .gs-backlit[data-theme=day] .bl-ring { stroke: #d9480f; opacity: 0.55; }
+      .gs-backlit[data-theme=day] .bl-ring.red { stroke: #d61f1f; opacity: 1; }
+      .gs-backlit[data-theme=day] .bl-tick { stroke: #393c41; }
+      .gs-backlit[data-theme=day] .bl-tick.red { stroke: #d61f1f; }
+      .gs-backlit[data-theme=day] .bl-num { fill: #1f2124; }
+      .gs-backlit[data-theme=day] .bl-sweep { stroke: #f76707; }
+      .gs-backlit[data-theme=day] .bl-sweep.halo { opacity: 0; }
+      .gs-backlit[data-theme=day] .bl-sweep.base { opacity: 0.24; }
+      .gs-backlit[data-theme=day] .bl-sweep.tail { opacity: 0.38; }
+      .gs-backlit[data-theme=day] .bl-sweep.tip { stroke: #d9480f; opacity: 1; }
+      .gs-backlit[data-theme=day] .bl-cap-end { fill: #d9480f; opacity: 1; }
+      .gs-backlit[data-theme=day][data-zone=red] .bl-tach .bl-cap-end { fill: #d61f1f; }
+      .gs-backlit[data-theme=day][data-zone=red] .bl-tach .bl-sweep { stroke: #d61f1f; }
+      .gs-backlit[data-theme=day] .bl-cap { fill: #d9480f; }
+      .gs-backlit[data-theme=day] .bl-dot { fill: #d49a00; }
+      .gs-backlit[data-theme=day] .bl-seg .on { fill: #d9480f; filter: none; }
+      .gs-backlit[data-theme=day] .bl-seg .off { fill: #000; opacity: 0.08; }
+      .gs-backlit[data-theme=day] .bl-glow { opacity: 0; }
+      .gs-backlit[data-theme=day] .bl-disc0 { stop-color: #f76707; }
+      .gs-backlit[data-theme=day] .bl-disc1 { stop-color: #e8590c; }
+      .gs-backlit[data-theme=day] .bl-disc2 { stop-color: #d9480f; }
+      .gs-backlit[data-theme=day] .bl-gear { fill: #fff; }
+      .gs-backlit[data-theme=day] .bl-gearg.off { opacity: 0.35; }
+      .gs-backlit[data-theme=day] .bl-track { fill: #f4f4f4; stroke: #b5b8bb; stroke-opacity: 1; }
+      .gs-backlit[data-theme=day] .bl-fill { fill: #e8590c; }
+      .gs-backlit[data-theme=day] .bl-fill.halo { opacity: 0; }
+      .gs-backlit[data-theme=day] .bl-bar.hot .bl-fill { fill: #d61f1f; }
+      .gs-backlit[data-theme=day] .bl-btick { stroke: #393c41; }
+      .gs-backlit[data-theme=day] .bl-blabel { fill: #393c41; }
+      .gs-backlit[data-theme=day] .bl-icon { stroke: #d9480f; }
+      .gs-backlit[data-theme=day] .bl-icon .solid { fill: #d9480f; }
+      .gs-backlit[data-theme=day] .bl-finger { fill: rgba(217, 72, 15, 0.14); stroke: #d9480f; }
     `)
     const defs = el('defs', {}, s)
     // Soft backlight behind the gear disc: a radial gradient, not a blur,
@@ -88,9 +126,9 @@ export default class BacklitStyle extends GaugeStyle {
     el('stop', { offset: '0.5', 'stop-color': '#ff5a1f', 'stop-opacity': '0.12' }, glow)
     el('stop', { offset: '1', 'stop-color': '#ff5a1f', 'stop-opacity': '0' }, glow)
     const disc = el('radialGradient', { id: this.id('disc'), cx: '0.45', cy: '0.4', r: '0.6' }, defs)
-    el('stop', { offset: '0', 'stop-color': '#ffa070' }, disc)
-    el('stop', { offset: '0.6', 'stop-color': '#ff6a2a' }, disc)
-    el('stop', { offset: '1', 'stop-color': '#ff4f1f' }, disc)
+    el('stop', { offset: '0', 'stop-color': '#ffa070', class: 'bl-disc0' }, disc)
+    el('stop', { offset: '0.6', 'stop-color': '#ff6a2a', class: 'bl-disc1' }, disc)
+    el('stop', { offset: '1', 'stop-color': '#ff4f1f', class: 'bl-disc2' }, disc)
     const fill = el('linearGradient', { id: this.id('fill'), x1: '0', y1: '0', x2: '1', y2: '0' }, defs)
     el('stop', { offset: '0', 'stop-color': '#ff7a3a' }, fill)
     el('stop', { offset: '1', 'stop-color': '#ff4f1f' }, fill)
@@ -127,7 +165,7 @@ export default class BacklitStyle extends GaugeStyle {
     this.tachScaleG = el('g', {}, tg)
     this.tachSweep = this.sweep(tg)
     const gg = this.gearG = el('g', { class: 'bl-gearg' }, tg)
-    el('circle', { cx: TACH.cx, cy: TACH.cy, r: 84, fill: this.url('glow') }, gg)
+    el('circle', { cx: TACH.cx, cy: TACH.cy, r: 84, fill: this.url('glow'), class: 'bl-glow' }, gg)
     el('circle', { cx: TACH.cx, cy: TACH.cy, r: 42, fill: this.url('disc'), class: 'bl-gear-disc' }, gg)
     this.gear = ctext(gg, TACH.cx, TACH.cy + 2, 'bl-gear', '–', 0.85)
     text(tg, TACH.cx, TACH.cy + 74, 'bl-cap', '× 100')

@@ -32,6 +32,88 @@ const RANGE_KM = 600 // a full tank, for the made-up range
 const SMALL_R = 56
 
 const YEL = '#e8bb2c', ORG = '#f29a4a', RED = '#d6392c'
+// Day: the same instrument in Tesla's light UI, on its #d6d7d6 floor. Near-
+// white tiles with a soft shadow and a mid-grey edge; dark grey numerals and
+// needles; the colour coding kept but darkened, with no glow; the time
+// circuit a daylight LCD (dark green on pale glass).
+const D = '.gs-tiles[data-theme=day]'
+const D_YEL = '#b07f00', D_ORG = '#c4601a', D_RED = '#c22a1e'
+const DAY = `
+${D} .tl-st-tile0 { stop-color: #fafafa; }
+${D} .tl-st-tile1 { stop-color: #f0f0f1; }
+${D} .tl-shadow { opacity: 0.09; }
+${D} .tl-tile { stroke: #c3c6c9; }
+${D} .tl-gr-l, ${D} .tl-gr-s { opacity: 0; }
+${D} .tl-gr-d { opacity: 0.035; }
+${D} .tl-edge { stroke-opacity: 0; }
+${D} .tl-ring { fill: rgba(0, 0, 0, 0.03); stroke: rgba(0, 0, 0, 0.13); }
+${D} .tl-ring.line { fill: none; }
+${D} .tl-face { fill: rgba(0, 0, 0, 0.03); }
+${D} .tl-tk.maj { stroke: #1f2124; }
+${D} .tl-tk.min { stroke: #8a8d91; }
+${D} .tl-tk.ghost { stroke: #dddee0; }
+${D} .tl-tk.red { stroke: ${D_RED}; }
+${D} .tl-tk.min.red { stroke: #e39a92; }
+${D} .tl-tk.c-yel { stroke: ${D_YEL} !important; }
+${D} .tl-tk.c-red { stroke: ${D_RED} !important; }
+${D} .tl-tk.c-olive { stroke: #8a7424 !important; }
+${D} .tl-tk.c-grey { stroke: #a4a7ab !important; }
+${D} .tl-tk.c-light { stroke: #5c5e62 !important; }
+${D} .tl-tk.c-base { stroke: #1f2124 !important; }
+${D} .tl-num { fill: #1f2124; }
+${D} .tl-num.red { fill: ${D_RED}; }
+${D} .tl-num.c-org { fill: ${D_ORG} !important; }
+${D} .tl-num.c-red { fill: ${D_RED} !important; }
+${D} .tl-num.c-lite { fill: #5c5e62 !important; }
+${D}[data-zone=red] .tl-num.red { filter: none; }
+${D} .tl-band { fill: #393c41; opacity: 0.11; }
+${D} .tl-st-chrome0 { stop-color: #55585d; }
+${D} .tl-st-chrome1 { stop-color: #3d4045; }
+${D} .tl-st-chrome2 { stop-color: #1f2124; }
+${D} .tl-st-chrome3 { stop-color: #17181a; }
+${D} .tl-st-chrome4 { stop-color: #2b2d31; }
+${D} .tl-st-needle0 { stop-color: #4a4d52; }
+${D} .tl-st-needle1 { stop-color: #393c41; }
+${D} .tl-st-needle2 { stop-color: #1f2124; }
+${D} .tl-st-needle3 { stop-color: #2b2d31; }
+${D} .tl-st-hub0 { stop-color: #63666b; }
+${D} .tl-st-hub1 { stop-color: #26282b; }
+${D} .tl-hub { stroke: #1f2124; }
+${D} .tl-hubsh { opacity: 0.14; }
+${D} .tl-unit { fill: #393c41; }
+${D} .tl-cap { fill: #5c5e62; }
+${D} .tl-flab { fill: #5c5e62; }
+${D} .tl-range { fill: #1f2124; }
+${D} .tl-fuel-off { stroke: rgba(0, 0, 0, 0.09); }
+${D} .tl-fuel-on { stroke: #393c41; }
+${D} .tl-fuel-on.low { stroke: ${D_YEL}; }
+${D} .tl-fuel-end { fill: #8a8d91; }
+${D} .tl-icon { stroke: #393c41; }
+${D} .tl-icon .fill { fill: #393c41; }
+${D} .tl-utag { fill: #5c5e62; }
+${D} .tl-turn { fill: rgba(0, 0, 0, 0.06); }
+${D} .tl-arrow { fill: rgba(0, 0, 0, 0.16); }
+${D} .tl-etch.hi { fill: #ffffff; }
+${D} .tl-etch.lo { fill: #9a9da1; }
+${D} .tl-etch.face { fill: #c9cbce; stroke: #a9acb0; }
+${D} .tl-y { fill: ${D_YEL}; }
+${D} .tl-y.dim { fill: #9c8443; }
+${D} .tl-r { fill: ${D_RED}; }
+${D} .tl-r.dim { fill: #b0645c; }
+${D} .tl-plate { fill: #a8261c; }
+${D} .tl-platet { fill: #fbeeea; }
+${D} .tl-lcd { fill: #e3e9e5; stroke: #b5b8bb; }
+${D} .tl-lcd-in { stroke: #d3dbd6; }
+${D} .tl-seg .off { fill: rgba(0, 0, 0, 0.07); }
+${D} .tl-seg .on { fill: #0b7d59; }
+${D} .tl-shell { stroke: #a9a69e; }
+${D} .tl-prog { fill: rgba(0, 0, 0, 0.09); }
+${D} .tl-prog-on { fill: #5c5e62; }
+${D} .tl-title { fill: #1f2124; }
+${D} .tl-artist { fill: #5c5e62; }
+${D} .tl-finger { fill: rgba(0, 0, 0, 0.07); stroke: #393c41; }
+${D} .tl-sim { fill: #5c5e62; }
+`
 const CSS = `
 .gs-tiles { font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif; }
 .gs-tiles .tl-shadow { fill: #000; opacity: 0.35; }
@@ -97,7 +179,7 @@ const CSS = `
 .gs-tiles .tl-finger { fill: rgba(255, 255, 255, 0.14); stroke: #f0f0f0; stroke-width: 3; pointer-events: none; }
 .gs-tiles .tl-sim { fill: #c9c9c9; font-size: 14px; font-weight: 700; text-anchor: middle; letter-spacing: 0.12em; }
 .gs-tiles[data-zone=red] .tl-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 44, 0.8)); }
-`
+${DAY}`
 
 // The small dials: `stops` are [value, angle] pairs (piecewise linear, as
 // on the original, whose oil-temperature scale is uneven); `per` is ticks
@@ -107,20 +189,20 @@ const SMALL = {
     tile: T.volts, stops: [[8, 90], [13, 180], [18, 270]], per: 10, icon: 'battery', unit: 'V',
     tick: (v) => (v >= 16.5 ? 'red' : 'yel'),
     majors: { 8: 'yel', 13: '', 18: 'red' },
-    labels: [[8, '8', ORG], [13, '13', ''], [18, '18', RED]],
+    labels: [[8, '8', 'org'], [13, '13', ''], [18, '18', 'red']],
   },
   oilTemp: {
     tile: T.oilT, stops: [[40, 90], [80, 180], [120, 270]], per: 10, icon: 'oiltemp', unit: '°C',
     tick: (v) => (v > 80 ? 'olive' : 'grey'),
     majors: { 40: '', 80: '', 120: 'yel' },
-    labels: [[40, '40', ''], [80, '80', ''], [120, '120', ORG]],
+    labels: [[40, '40', ''], [80, '80', ''], [120, '120', 'org']],
   },
   // Pressure in bar, like the made-up model (0..6); 0 at the bottom.
   oilPress: {
     tile: T.oilP, stops: [[0, 90], [3, 0], [6, -90]], per: 15, icon: 'oilcan', unit: 'bar',
     tick: () => 'light',
     majors: { 0: '', 3: '', 6: '' },
-    labels: [[0, '0', ''], [6, '6', '#c4c4c4']],
+    labels: [[0, '0', ''], [6, '6', 'lite']],
   },
   fuel: {
     tile: T.fuel, stops: [[0, 90], [0.5, 0], [1, -90]], per: 15, icon: 'pump', unit: '',
@@ -130,6 +212,8 @@ const SMALL = {
   },
 }
 const TICK_COL = { yel: YEL, red: RED, olive: '#7d6c27', grey: '#555555', light: '#bdbdbd', '': '#ececec' }
+// Numeral colours on the small dials (night; the day look recolours by class).
+const LBL_COL = { org: ORG, red: RED, lite: '#c4c4c4' }
 
 // Piecewise-linear angle for a value on a small dial.
 function stopAngle(stops, v) {
@@ -209,7 +293,7 @@ function fit(t, maxW) {
 
 export default class TilesStyle extends GaugeStyle {
   static meta = {
-    key: 'tiles', name: 'Tile grid', era: 'DeLorean-style', view: VIEW, dark: true,
+    key: 'tiles', name: 'Tile grid', era: 'DeLorean-style', view: VIEW,
     blurb: 'Grainy dark tiles: a speedometer with chrome digits, a tach with a fuel arc, four small dials, a time-circuit clock and a cassette.',
   }
 
@@ -230,9 +314,10 @@ export default class TilesStyle extends GaugeStyle {
   }
 
   defs(defs) {
+    // Each stop gets a class (tl-st-<name><n>) so the day look can recolour it.
     const lin = (name, stops, attrs = { x1: 0, y1: 0, x2: 0, y2: 1 }) => {
       const g = el('linearGradient', { id: this.id(name), ...attrs }, defs)
-      for (const [o, c, op] of stops) el('stop', { offset: o, 'stop-color': c, 'stop-opacity': op ?? 1 }, g)
+      stops.forEach(([o, c, op], k) => el('stop', { offset: o, 'stop-color': c, 'stop-opacity': op ?? 1, class: `tl-st-${name}${k}` }, g))
     }
     lin('tile', [[0, '#1f1f1f'], [1, '#161616']])
     // Chrome digits: bright at the top, a hard step at the middle, dark below.
@@ -241,8 +326,8 @@ export default class TilesStyle extends GaugeStyle {
     lin('needle', [[0, '#ffffff'], [0.5, '#e6e6e6'], [0.5, '#9d9d9d'], [1, '#bdbdbd']])
     lin('shell', [[0, '#bdbab1'], [0.6, '#a19e95'], [1, '#86837b']])
     const hub = el('radialGradient', { id: this.id('hub'), cx: 0.4, cy: 0.35, r: 0.7 }, defs)
-    el('stop', { offset: 0, 'stop-color': '#3c3c3c' }, hub)
-    el('stop', { offset: 1, 'stop-color': '#111111' }, hub)
+    el('stop', { offset: 0, 'stop-color': '#3c3c3c', class: 'tl-st-hub0' }, hub)
+    el('stop', { offset: 1, 'stop-color': '#111111', class: 'tl-st-hub1' }, hub)
     // Grain: a few hundred faint specks and two scratches in a 96 px pattern,
     // static, so it costs nothing per frame.
     const p = el('pattern', { id: this.id('grain'), width: 96, height: 96, patternUnits: 'userSpaceOnUse' }, defs)
@@ -253,9 +338,9 @@ export default class TilesStyle extends GaugeStyle {
       const d = `M${x} ${y}h${w}v${w}h-${w}z`
       if (r() < 0.5) light += d; else dark += d
     }
-    el('path', { d: light, fill: '#ffffff', opacity: 0.045 }, p)
-    el('path', { d: dark, fill: '#000000', opacity: 0.22 }, p)
-    el('path', { d: 'M8 30 l34 9 M60 70 l22 -14', stroke: '#ffffff', 'stroke-width': 0.6, opacity: 0.05 }, p)
+    el('path', { d: light, fill: '#ffffff', opacity: 0.045, class: 'tl-gr-l' }, p)
+    el('path', { d: dark, fill: '#000000', opacity: 0.22, class: 'tl-gr-d' }, p)
+    el('path', { d: 'M8 30 l34 9 M60 70 l22 -14', stroke: '#ffffff', 'stroke-width': 0.6, opacity: 0.05, class: 'tl-gr-s' }, p)
     // The rev meter's caption follows the rim on the right.
     el('path', { id: this.id('rpmarc'), d: arcPath(TACH.cx, BIG.cy, 126, -13, 25) }, defs)
   }
@@ -265,7 +350,7 @@ export default class TilesStyle extends GaugeStyle {
     el('rect', { x, y, width: w, height: h, rx: 13, fill: this.url('tile'), class: 'tl-tile' }, s)
     el('rect', { x, y, width: w, height: h, rx: 13, fill: this.url('grain') }, s)
     // The fine lighter edge along the top.
-    el('path', { d: `M${x + 13} ${y + 1.2}H${x + w - 13}`, stroke: '#ffffff', 'stroke-opacity': 0.07, 'stroke-width': 1 }, s)
+    el('path', { d: `M${x + 13} ${y + 1.2}H${x + w - 13}`, stroke: '#ffffff', 'stroke-opacity': 0.07, 'stroke-width': 1, class: 'tl-edge' }, s)
   }
 
   // ── Column 1, top: the engine's name, etched wide where the logo was ──
@@ -301,9 +386,10 @@ export default class TilesStyle extends GaugeStyle {
     const lo = d.stops[0], hi = d.stops[d.stops.length - 1]
     const span = hi[1] - lo[1], dir = Math.sign(span)
     el('circle', { cx, cy, r: R + 8, class: 'tl-ring line' }, s)
-    const line = (a, r0, r1, cls, color) => {
+    // `col` is a TICK_COL key: inline at night, a c-<key> class for the day.
+    const line = (a, r0, r1, cls, col) => {
       const [x0, y0] = polar(cx, cy, r0, a), [x1, y1] = polar(cx, cy, r1, a)
-      el('line', { x1: x0.toFixed(1), y1: y0.toFixed(1), x2: x1.toFixed(1), y2: y1.toFixed(1), class: 'tl-tk ' + cls, style: color ? `stroke:${color}` : null }, s)
+      el('line', { x1: x0.toFixed(1), y1: y0.toFixed(1), x2: x1.toFixed(1), y2: y1.toFixed(1), class: 'tl-tk ' + cls + (col != null ? ' c-' + (col || 'base') : ''), style: col != null ? `stroke:${TICK_COL[col]}` : null }, s)
     }
     // Faint ticks on the unused half, as on the original's printed face.
     const step = 90 / d.per
@@ -314,24 +400,24 @@ export default class TilesStyle extends GaugeStyle {
       const n = Math.round((Math.abs(a1 - a0) / 90) * d.per)
       for (let j = 1; j < n; j++) {
         const v = v0 + ((v1 - v0) * j) / n
-        line(a0 + ((a1 - a0) * j) / n, R, R - 6, 'min', TICK_COL[d.tick(v)])
+        line(a0 + ((a1 - a0) * j) / n, R, R - 6, 'min', d.tick(v))
       }
     }
     for (const [v, a] of d.stops) {
       const c = d.majors[v]
-      line(a, R + 1, R - 10, 'maj', c ? TICK_COL[c] : null)
+      line(a, R + 1, R - 10, 'maj', c || null)
     }
     for (const [v, label, color] of d.labels) {
       const [lx, ly] = polar(cx, cy, R * 0.6, stopAngle(d.stops, v))
       if (Array.isArray(label)) this.fraction(s, lx, ly, label[0], label[1])
-      else text(s, lx.toFixed(1), ly.toFixed(1), 'tl-num sm', label, { style: color ? `fill:${color}` : null })
+      else text(s, lx.toFixed(1), ly.toFixed(1), 'tl-num sm' + (color ? ' c-' + color : ''), label, { style: color ? `fill:${LBL_COL[color]}` : null })
     }
     // The icon on the open side, a unit under it.
     const side = span > 0 ? 1 : -1 // left-hand scales open to the right
     this.icon(s, d.icon, cx + side * R * 0.66, cy)
     if (d.unit) text(s, cx + side * R * 0.66, cy + 30, 'tl-utag', d.unit)
     const needle = el('polygon', { points: `${cx - 3},${cy - 2.8} ${cx + R - 5},${cy - 0.7} ${cx + R - 5},${cy + 0.7} ${cx - 3},${cy + 2.8}`, fill: this.url('needle') }, s)
-    el('circle', { cx: cx + 1, cy: cy + 2, r: 9, fill: '#000', opacity: 0.4 }, s)
+    el('circle', { cx: cx + 1, cy: cy + 2, r: 9, fill: '#000', opacity: 0.4, class: 'tl-hubsh' }, s)
     el('circle', { cx, cy, r: 8, fill: this.url('hub'), class: 'tl-hub' }, s)
     // The needle over its hub's shadow but under the cap, as on the original.
     s.appendChild(needle)
@@ -412,7 +498,7 @@ export default class TilesStyle extends GaugeStyle {
   buildTach(s) {
     const cx = TACH.cx, cy = BIG.cy
     this.turn(s, T.tach[0] + T.tach[2] - 28, T.tach[1] + 28, -1)
-    el('circle', { cx, cy, r: BIG.R, fill: 'rgba(0,0,0,0.14)' }, s)
+    el('circle', { cx, cy, r: BIG.R, fill: 'rgba(0,0,0,0.14)', class: 'tl-face' }, s)
     // The rim, broken where its caption runs.
     el('path', { d: arcPath(cx, cy, BIG.R, 29, 345), class: 'tl-ring line' }, s)
     this.tachBand = el('path', { class: 'tl-band' }, s)
@@ -423,7 +509,7 @@ export default class TilesStyle extends GaugeStyle {
     // Fuel: the arc in the open bottom, lit white from 0.
     el('path', { d: arcPath(cx, cy, FUEL.r, FUEL.a0, FUEL.a1), class: 'tl-fuel-off' }, s)
     const [ex, ey] = polar(cx, cy, FUEL.r, FUEL.a1)
-    el('circle', { cx: ex.toFixed(1), cy: ey.toFixed(1), r: 2.6, fill: '#8a8a8a' }, s)
+    el('circle', { cx: ex.toFixed(1), cy: ey.toFixed(1), r: 2.6, fill: '#8a8a8a', class: 'tl-fuel-end' }, s)
     this.fuelArc = el('path', { class: 'tl-fuel-on' }, s)
     for (const [t, a, r] of [['0', 141, 140], ['2/4', 90, 141], ['4/4', 41, 143]]) {
       const [lx, ly] = polar(cx, cy, r, a)
@@ -435,7 +521,7 @@ export default class TilesStyle extends GaugeStyle {
 
     // The needle points along +x and turns about the hub; it runs out to
     // the rim, past the numerals, as on the original.
-    el('circle', { cx: cx + 2, cy: cy + 4, r: 16, fill: '#000', opacity: 0.45 }, s)
+    el('circle', { cx: cx + 2, cy: cy + 4, r: 16, fill: '#000', opacity: 0.45, class: 'tl-hubsh' }, s)
     el('circle', { cx, cy, r: 15, fill: this.url('hub'), class: 'tl-hub' }, s)
     this.tachNeedle = el('polygon', { points: `${cx - 16},${cy - 4.4} ${cx + BIG.R - 9},${cy - 1} ${cx + BIG.R - 9},${cy + 1} ${cx - 16},${cy + 4.4}`, fill: this.url('needle') }, s)
     this.finger = el('circle', { r: 24, class: 'tl-finger', style: 'display:none' }, s)

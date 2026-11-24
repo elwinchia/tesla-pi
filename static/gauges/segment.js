@@ -11,7 +11,7 @@ import { GaugeStyle, el, text, setText, polar, mix, sevenRow } from './kit.js'
 
 // Unlit arc segments run from warm brown to cool grey; day gets a pale
 // version of the same.
-const OFF = { night: ['#5a4434', '#3a3d43'], day: ['#e6d5c8', '#d3d7dd'] }
+const OFF = { night: ['#5a4434', '#3a3d43'], day: ['#cdb9aa', '#bcc0c5'] }
 // Water: C is 50 °C, H is 130 °C; the needle sits mid-way at a warm 90.
 export const WATER = { lo: 50, hi: 130 }
 // Everything in the middle is centred on the arc (ARC.cx).
@@ -23,7 +23,7 @@ const BARS = {
 
 export default class SegmentStyle extends GaugeStyle {
   static meta = {
-    key: 'segment', name: 'Segment arc', era: 'S2000-style', view: VIEW, dark: false,
+    key: 'segment', name: 'Segment arc', era: 'S2000-style', view: VIEW,
     blurb: 'A wide segmented rev arc, a seven-segment speed LCD, trip and odometer, water temperature and battery.',
   }
 
