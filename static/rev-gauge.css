@@ -46,12 +46,11 @@
 .rv-lcd-unit { fill: #ff9a5a; font: 700 15px -apple-system, system-ui, sans-serif; text-anchor: end; letter-spacing: 0.04em; }
 .rv-lcd-label { fill: #ff9a5a; font: 700 9px -apple-system, system-ui, sans-serif; letter-spacing: 0.12em; opacity: 0.85; }
 .rv-lcd-dot { fill: #ffb45a; }
+/* The gear, in the speed LCD's top-left corner; red at the redline. */
+.rv-lcd-gear { fill: #ffd98a; font: 700 30px -apple-system, system-ui, sans-serif; text-anchor: middle; filter: drop-shadow(0 0 4px rgba(255, 170, 60, 0.6)); }
+.cluster-svg[data-zone=red] .rv-lcd-gear { fill: var(--rv-red); filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
 .rv-icon-line path, .rv-icon-line circle { fill: none; stroke: var(--rv-num); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.85; }
-.rv-chip circle { fill: var(--rv-chip-bg); stroke: var(--rv-chip-line); stroke-width: 2; }
-.rv-chip-text { fill: var(--rv-chip-text); font: 800 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
-.rv-chip-text.small { font-size: 13px; letter-spacing: 0.06em; }
-.cluster-svg[data-zone=red] .rv-chip:first-of-type circle { stroke: var(--rv-red); }
-.rv-chip-cap, .rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
+.rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
 .rv-bar rect { fill: var(--rv-bar-off); }
 .rv-bar rect.hot { fill: var(--rv-red); opacity: 0.35; }
 .rv-bar rect.red { fill: var(--rv-red); opacity: 1; }

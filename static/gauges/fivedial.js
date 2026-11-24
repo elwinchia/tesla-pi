@@ -1,9 +1,10 @@
 // Five dials, 911-style: five round dials in a dark oval housing, as on the
-// concept this copies. Left to right: the battery's charge (where the
-// original has the tank: the car's own over Bluetooth, else made up) and oil
-// temperature (a split dial), water temperature and oil pressure (split), the big
-// tachometer with the gear and a boost bar, the speedometer with a digital
-// readout, and a clock with three small chronograph dials.
+// concept this copies. Left to right: the car's tyre pressures (a little
+// car seen from above, a pressure at each wheel), water temperature and the
+// battery's charge (a split dial; the charge is where the original has the
+// tank: the car's own over Bluetooth, else made up), the big tachometer with
+// the gear and a boost bar, the speedometer with a digital readout, and a
+// clock with three small chronograph dials.
 //
 // Every needle is drawn the same way: a glowing orange arc along the rim
 // from the start of the scale, brightest at the needle, and the needle
@@ -17,7 +18,7 @@ import { GaugeStyle, Trace, el, text, setText, polar, arcPath, dialAngle, clamp,
 const VIEW = { w: 1136, h: 352 }
 const CY = 176
 const D = {
-  batt:  { cx: 106,  R: 86 },
+  tyre:  { cx: 106,  R: 86 },
   temp:  { cx: 310,  R: 110 },
   tach:  { cx: 568,  R: 140 },
   speed: { cx: 826,  R: 110 },
@@ -66,11 +67,18 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-trip tspan { fill: #5c5e62; }
   .gs-fivedial[data-theme=day] .fd-trip tspan.n { fill: #1f2124; }
   .gs-fivedial[data-theme=day] .fd-odo { fill: #1f2124; }
-  .gs-fivedial[data-theme=day] .fd-lcd tspan.u { fill: #6b6e72; }
-  .gs-fivedial[data-theme=day] .fd-lcd.dim { fill: #5c5e62; }
-  .gs-fivedial[data-theme=day] .fd-car.warn .fd-lcd { fill: ${DAY_RED}; }
-  .gs-fivedial[data-theme=day] .fd-carbody { stroke: #8e9195; }
-  .gs-fivedial[data-theme=day] .fd-carbody .w { fill: #8e9195; }
+  .gs-fivedial[data-theme=day] .fd-tyres.none .fd-tyre { fill: #a3a6aa; }
+  .gs-fivedial[data-theme=day] .fd-tyres.warn .fd-tyre,
+  .gs-fivedial[data-theme=day] .fd-half.low .fd-stack,
+  .gs-fivedial[data-theme=day] .fd-half.low .fd-end { fill: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-half.low .fd-icon,
+  .gs-fivedial[data-theme=day] .fd-tyres.warn .fd-icon { stroke: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-tyres.warn .fd-icon .fill { fill: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-auto { stroke: #75787d; }
+  .gs-fivedial[data-theme=day] .fd-auto .glass { fill: #dfe0e2; }
+  .gs-fivedial[data-theme=day] .fd-auto .w { fill: #393c41; }
+  .gs-fivedial[data-theme=day] .fd-tyres.none .fd-auto .w { fill: #b5b8bb; }
+  .gs-fivedial[data-theme=day] .fd-tyres.warn .fd-auto .w { fill: ${DAY_RED}; }
   .gs-fivedial[data-theme=day] .fd-gear { fill: #1f2124; filter: none; }
   .gs-fivedial[data-theme=day][data-zone=red] .fd-gear { fill: ${DAY_RED}; }
   .gs-fivedial[data-theme=day] .fd-tick { stroke: #1f2124; }
@@ -87,8 +95,7 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-sub { fill: #ebeced; stroke: #b5b8bb; }
   .gs-fivedial[data-theme=day] .fd-subtick { stroke: #9a9da1; }
   .gs-fivedial[data-theme=day] .fd-subtick.hr { stroke: #393c41; }
-  .gs-fivedial[data-theme=day] .fd-subhand,
-  .gs-fivedial[data-theme=day] .fd-comb { stroke: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-subhand { stroke: ${DAY_RED}; }
   .gs-fivedial[data-theme=day] .fd-subknob { fill: #393c41; }
   .gs-fivedial[data-theme=day] .fd-knob { stroke: #8e9195; }
   .gs-fivedial[data-theme=day] .fd-hand { stroke: ${DAY_ORANGE}; }
@@ -129,7 +136,7 @@ function rng(seed) { let s = seed; return () => ((s = (s * 1103515245 + 12345) %
 export default class FiveDialStyle extends GaugeStyle {
   static meta = {
     key: 'fivedial', name: 'Five dials', era: '911-style', view: VIEW,
-    blurb: 'Five round dials in an oval: battery and oil, water and oil pressure, the tach with the gear, speed, and a clock.',
+    blurb: 'Five round dials in an oval: tyre pressures, water and battery, the tach with the gear, speed, and a clock.',
   }
 
   build() {
@@ -149,13 +156,21 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-kmh { font-size: 40px; font-weight: 200; text-anchor: middle; fill: #ececec; }
       .gs-fivedial .fd-unit { font-size: 15px; font-weight: 600; text-anchor: middle; fill: #a9a9ab; }
       .gs-fivedial .fd-odo { font-size: 14px; font-weight: 500; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; fill: #b9b9bb; font-variant-numeric: tabular-nums; }
-      .gs-fivedial .fd-lcd { font-size: 14px; font-weight: 500; dominant-baseline: central; letter-spacing: 0.06em; fill: #c9c9cb; font-variant-numeric: tabular-nums; }
-      .gs-fivedial .fd-lcd tspan.u { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; fill: #8a8a8d; }
-      .gs-fivedial .fd-lcd.sm { font-size: 12px; letter-spacing: 0.03em; }
-      .gs-fivedial .fd-lcd.dim { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; fill: #8a8a8d; }
-      .gs-fivedial .fd-car.warn .fd-lcd { fill: #ff5a3c; }
-      .gs-fivedial .fd-carbody { fill: none; stroke: #5c5c60; stroke-width: 1.2; }
-      .gs-fivedial .fd-carbody .w { fill: #5c5c60; stroke: none; }
+      .gs-fivedial .fd-tyre { font-size: 16px; font-weight: 600; dominant-baseline: central; font-variant-numeric: tabular-nums; }
+      .gs-fivedial .fd-tyre.l { text-anchor: end; }
+      .gs-fivedial .fd-tyre.r { text-anchor: start; }
+      .gs-fivedial .fd-tyres.none .fd-tyre { fill: #6c6c70; }
+      .gs-fivedial .fd-tyres.warn .fd-tyre,
+      .gs-fivedial .fd-half.low .fd-stack,
+      .gs-fivedial .fd-half.low .fd-end { fill: #ff5a3c; }
+      .gs-fivedial .fd-half.low .fd-icon,
+      .gs-fivedial .fd-tyres.warn .fd-icon { stroke: #ff5a3c; }
+      .gs-fivedial .fd-tyres.warn .fd-icon .fill { fill: #ff5a3c; }
+      .gs-fivedial .fd-auto { fill: none; stroke: #8a8a8e; stroke-width: 1.2; stroke-linejoin: round; }
+      .gs-fivedial .fd-auto .glass { fill: #2a2a2d; stroke: none; }
+      .gs-fivedial .fd-auto .w { fill: #e6e6e6; stroke: none; }
+      .gs-fivedial .fd-tyres.none .fd-auto .w { fill: #4a4a4e; }
+      .gs-fivedial .fd-tyres.warn .fd-auto .w { fill: #ff5a3c; }
       .gs-fivedial .fd-trip { font-size: 15px; font-weight: 500; fill: #f0f0f0; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-trip tspan { fill: #a9a9ab; font-weight: 400; }
       .gs-fivedial .fd-trip tspan.n { fill: #f0f0f0; }
@@ -173,18 +188,16 @@ ${DAY}
     for (const [k, d] of Object.entries(D)) this.dial(k, d.cx, d.R)
 
     this.halves = []
-    this.buildSplit('batt', D.batt, {
-      left: { word: 'BATT', key: 'fuel', lo: 0, hi: 1, ends: ['E', 'F'], icon: 'batt' },
-      right: { word: 'OEL', key: 'oilTemp', lo: 50, hi: 150, ends: ['L', 'H'], icon: 'oiltemp' },
-    })
+    this.buildTyres()
     this.buildSplit('temp', D.temp, {
       left: { word: 'TEMP', key: 'water', lo: 50, hi: 130, ends: ['L', 'H'], icon: 'water' },
-      right: { word: 'DRUCK', key: 'oilPress', lo: 0, hi: 10, ends: ['0', '10'], icon: 'oil', thirds: true },
+      // The charge goes red below 15%: its first ticks, and the half's
+      // name, ends and icon while it is that low.
+      right: { word: 'BATT', key: 'fuel', lo: 0, hi: 1, ends: ['E', 'F'], icon: 'batt', reserve: 0.15 },
     })
     this.buildTach()
     this.buildSpeed()
     this.buildClock()
-    this.buildCar()
     this.last = {}
   }
 
@@ -291,19 +304,15 @@ ${DAY}
 
   icon(parent, kind, x, y, k = 1) {
     const g = el('g', { class: 'fd-icon', transform: `translate(${f1(x)} ${f1(y)}) scale(${k})` }, parent)
-    const oilcan = () => {
-      el('path', { d: 'M-10 -1H-6L-4 -3H3L10 -6L5 5H-7Z' }, g)
-      el('path', { d: 'M-1 -3V-6M-3 -6H1M-10 -1L-11 3' }, g)
-      el('path', { class: 'fill', d: 'M11 1Q12.4 3.4 11 4.2Q9.6 3.4 11 1Z' }, g)
-    }
     if (kind === 'batt') {
       el('rect', { x: -9, y: -5, width: 18, height: 12, rx: 1.5 }, g)
       el('path', { d: 'M-6 -5V-7.5H-3V-5M3 -5V-7.5H6V-5M-6.5 1H-2.5M-4.5 -1V3M2.5 1H6.5' }, g)
-    } else if (kind === 'oil') {
-      oilcan()
-    } else if (kind === 'oiltemp') {
-      oilcan()
-      el('path', { d: 'M1 -6V-14M1 -11H3.5M1 -8.5H3.5' }, g)
+    } else if (kind === 'tyre') {
+      // The tyre-pressure lamp: a tyre in section, open at the top, with
+      // its tread below and a "!" inside.
+      el('path', { d: 'M-8 -8C-11.5 -3 -11 3 -8 6.5H8C11 3 11.5 -3 8 -8' }, g)
+      el('path', { d: 'M-6 6.5V9M-2 6.5V9M2 6.5V9M6 6.5V9M0 -5V0.5' }, g)
+      el('circle', { class: 'fill', cx: 0, cy: 3.4, r: 1.1 }, g)
     } else {
       el('path', { d: 'M0 -11V2M0 -8H3M0 -5H3' }, g)
       el('circle', { cx: 0, cy: 4, r: 2.6 }, g)
@@ -330,36 +339,73 @@ ${DAY}
     // Short ticks at 12 and 6 o'clock.
     this.tick(g, cx, -90, R * 0.84, R * 0.79, 1.4, 'fd-tick min')
     this.tick(g, cx, 90, R * 0.84, R * 0.79, 1.4, 'fd-tick min')
-    const stack = (x, word) => {
+    const stack = (hg, x, word) => {
       const lh = 15.5, y0 = CY - ((word.length - 1) * lh) / 2
-      ;[...word].forEach((ch, k) => text(g, f1(x), f1(y0 + k * lh), 'fd-stack', ch))
+      ;[...word].forEach((ch, k) => text(hg, f1(x), f1(y0 + k * lh), 'fd-stack', ch))
     }
     const sweeps = el('g', {}, this.svg)
     for (const [h, side, sx] of [[left, LEFT, -1], [right, RIGHT, 1]]) {
-      stack(cx + sx * R * 0.29, h.word)
-      // Long ticks at the ends and the middle (or the thirds), short ones
-      // between, all inside the face line.
-      const n = h.thirds ? 15 : 16, majors = h.thirds ? 5 : 8
+      const hg = el('g', { class: 'fd-half' }, g)
+      stack(hg, cx + sx * R * 0.29, h.word)
+      // Long ticks at the ends and the middle, short ones between, all
+      // inside the face line; the reserve's in red.
+      const n = 16, majors = 8
       const rT = R * 0.845
       for (let k = 0; k <= n; k++) {
         const a = side.a0 + (k / n) * (side.a1 - side.a0)
-        const major = k % majors === 0
-        this.tick(g, cx, a, rT, major ? R * 0.72 : R * 0.8, major ? 1.8 : 1.2, major ? 'fd-tick' : 'fd-tick min')
+        const major = k % majors === 0, low = h.reserve && k / n <= h.reserve
+        this.tick(hg, cx, a, rT, major ? R * 0.72 : R * 0.8, major ? 1.8 : low ? 1.6 : 1.2,
+          low ? 'fd-tick red' : major ? 'fd-tick' : 'fd-tick min')
       }
       // End labels just inside the end ticks.
-      const lab = (a, s) => { const [x, y] = polar(cx, CY, R * 0.62, a); text(g, f1(x), f1(y), 'fd-end', s) }
+      const lab = (a, s) => { const [x, y] = polar(cx, CY, R * 0.62, a); text(hg, f1(x), f1(y), 'fd-end', s) }
       lab(side.a0 + sx * -11, h.ends[0])
       lab(side.a1 + sx * 11, h.ends[1])
       const [ix, iy] = polar(cx, CY, R * 0.58, sx < 0 ? 180 : 0)
-      this.icon(g, h.icon, ix, iy, R > 100 ? 1.05 : 0.95)
+      this.icon(hg, h.icon, ix, iy, R > 100 ? 1.05 : 0.95)
       const paint = this.sweep(sweeps, `${name}-${sx < 0 ? 'l' : 'r'}`, cx, R, { a0: side.a0, rIn: R * 0.47, w: R > 100 ? 0.95 : 0.85 })
-      this.halves.push({ ...h, side, paint })
+      this.halves.push({ ...h, side, paint, g: hg })
     }
     el('circle', { cx, cy: CY, r: R * 0.075, fill: this.url('knob'), stroke: '#000', 'stroke-width': 1, class: 'fd-knob' }, this.svg)
-    if (!this.knobDef) {
-      this.knobDef = true
-      this.grad('radialGradient', 'knob', { cx: 0.45, cy: 0.35, r: 0.7 }, [[0, '#3a3a3d'], [0.6, '#151516'], [1, '#050505']])
+    this.grad('radialGradient', 'knob', { cx: 0.45, cy: 0.35, r: 0.7 }, [[0, '#3a3a3d'], [0.6, '#151516'], [1, '#050505']])
+  }
+
+  // ── Tyre pressures ────────────────────────────────────────────────────
+  // The first dial: a little car seen from above, nose up, with each
+  // wheel's pressure beside it, front pair over rear pair; the pressure
+  // lamp over it and "bar" under it. Dashes in a dim ink until the car's
+  // pressures are read; all red while any wheel has a warning.
+  buildTyres() {
+    const { cx, R } = D.tyre
+    const g = this.tyreG = el('g', { class: 'fd-tyres none' }, this.svg)
+    // Short ticks at 12, 3, 6 and 9 o'clock, as the split dials have.
+    for (const a of [-90, 0, 90, 180]) this.tick(g, cx, a, R * 0.84, R * 0.79, 1.4, 'fd-tick min')
+    const k = 1.18  // the car's size: drawn about 24 × 58, then scaled
+    const car = el('g', { class: 'fd-auto', transform: `translate(${cx} ${CY}) scale(${k})` }, g)
+    // Wheels first, so the body's outline runs over their inner edge.
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      el('rect', { x: f1(sx * 12.6 - 2.4), y: f1(sy * 16.5 - 5), width: 4.8, height: 10, rx: 1.6, class: 'w' }, car)
     }
+    el('path', { d: 'M-8 -28Q0 -30.5 8 -28Q12 -26.5 12 -20V21Q12 27.5 7 28H-7Q-12 27.5 -12 21V-20Q-12 -26.5 -8 -28Z' }, car)
+    // Windscreen and roof, rear window.
+    el('path', { class: 'glass', d: 'M-9.5 -11Q0 -15 9.5 -11L7.6 -3.5Q0 -5.6 -7.6 -3.5Z' }, car)
+    el('path', { class: 'glass', d: 'M-7.6 13Q0 14.6 7.6 13L8.8 19Q0 21.4 -8.8 19Z' }, car)
+    el('path', { d: 'M-7.6 -3.5V13M7.6 -3.5V13' }, car)
+    this.tyreN = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) =>
+      this.wide(g, cx + sx * 15.5 * k + sx * 5, CY + sy * 16.5 * k, 'fd-tyre ' + (sx < 0 ? 'l' : 'r'), '\u2013.\u2013\u2013', 1.08))
+    this.icon(g, 'tyre', cx, CY - 53, 1.05)
+    text(g, cx, CY + 58, 'fd-small', 'bar')
+  }
+
+  paintTyres(force) {
+    const i = this.i, num = (x) => x != null && Number.isFinite(x)
+    const ty = Array.isArray(i.tyres) && i.tyres.some(num) ? i.tyres : null
+    const warn = !!(ty && i.tyreWarn)
+    const s = ty ? ty.slice(0, 4).map((p) => (num(p) ? p.toFixed(2) : '\u2013.\u2013\u2013')) : null
+    if (!this.moved('tyres', (s ? s.join(' ') : '') + (warn ? '!' : ''), force)) return
+    this.tyreN.forEach((t, k) => setText(t, s ? s[k] : '\u2013.\u2013\u2013'))
+    this.tyreG.classList.toggle('none', !ty)
+    this.tyreG.classList.toggle('warn', warn)
   }
 
   // ── Tachometer ────────────────────────────────────────────────────────
@@ -439,13 +485,6 @@ ${DAY}
         end ? 'fd-tick red' : major ? 'fd-tick' : 'fd-tick min')
       if (major) this.wide(g, ...polar(cx, CY, R * 0.6, a), 'fd-snum', String(v))
     }
-    // The little red comb before 50, as on the reference.
-    for (let k = 0; k < 4; k++) {
-      const a = dialAngle(38 + k * 2.6, 0, SPEED.max, SPEED.a0, SPEED.a1)
-      el('line', { x1: f1(polar(cx, CY, R * 0.74, a)[0]), y1: f1(polar(cx, CY, R * 0.74, a)[1]),
-        x2: f1(polar(cx, CY, R * 0.66, a + 4)[0]), y2: f1(polar(cx, CY, R * 0.66, a + 4)[1]),
-        stroke: '#ff4a2a', 'stroke-width': 2.2, opacity: 1 - k * 0.2, class: 'fd-comb' }, g)
-    }
     this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
     // Odometer chip under the top numeral.
     el('rect', { x: cx - 31, y: CY - 46, width: 62, height: 18, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1, class: 'fd-chip' }, g)
@@ -501,76 +540,6 @@ ${DAY}
     el('circle', { cx, cy: CY, r: R * 0.065, fill: this.url('knob'), stroke: '#3a3a3d', 'stroke-width': 1, class: 'fd-knob' }, g)
   }
 
-  // ── The car's own readouts ────────────────────────────────────────────
-  // Small LCD windows like the odometer's, set into the housing in the free
-  // space over and under the side dials: outside and cabin temperature over
-  // the water dial, the heading over the speedometer, and the tyre
-  // pressures under the oil-pressure (DRUCK) dial, front pair over rear
-  // pair beside a little car seen from above. Each is hidden while its value
-  // is null, so with nothing read the cluster looks as it always did.
-  buildCar() {
-    const g = el('g', { class: 'fd-cars' }, this.svg)
-    const chip = (parent, x, y, w, h) =>
-      el('rect', { x: f1(x), y: f1(y), width: f1(w), height: h, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1, class: 'fd-chip' }, parent)
-    const hidden = (cls = 'fd-car') => el('g', { class: cls, style: 'display:none' }, g)
-    // Temperatures: "32°  IN 22°", centred over the water dial.
-    const T = this.carTemp = { g: hidden(), cx: D.temp.cx, y: 31, h: 18 }
-    T.chip = chip(T.g, T.cx - 40, T.y, 80, T.h)
-    T.t = text(T.g, T.cx, T.y + T.h / 2 + 0.5, 'fd-lcd', '', { 'text-anchor': 'middle' })
-    T.out = el('tspan', {}, T.t)
-    T.inU = el('tspan', { class: 'u' }, T.t)
-    T.inN = el('tspan', {}, T.t)
-    // Heading: "E 89°", centred over the speedometer.
-    const H = this.carHead = { g: hidden(), cx: D.speed.cx, y: 31, h: 18 }
-    chip(H.g, H.cx - 31, H.y, 62, H.h)
-    H.t = text(H.g, H.cx, H.y + H.h / 2 + 0.5, 'fd-lcd', '', { 'text-anchor': 'middle' })
-    // Tyres: a 2×2 grid either side of a small car, "bar" at the right.
-    const cx = D.temp.cx - 10, y = 294, h = 30
-    const Y = this.carTyre = { g: hidden() }
-    chip(Y.g, cx - 45, y, 110, h)
-    const body = el('g', { class: 'fd-carbody' }, Y.g)
-    el('rect', { x: cx - 4, y: y + 5, width: 8, height: h - 10, rx: 3 }, body)
-    for (const [dx, dy] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
-      el('rect', { x: f1(cx + dx * 5.4 - 1.1), y: f1(y + 7.5 + dy * 10.5), width: 2.2, height: 4.5, rx: 0.8, class: 'w' }, body)
-    }
-    Y.n = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([sx, row]) =>
-      text(Y.g, f1(cx + sx * 10.5), f1(y + 8.5 + row * 13), 'fd-lcd sm', '', { 'text-anchor': sx < 0 ? 'end' : 'start' }))
-    text(Y.g, cx + 46, y + h / 2 + 0.5, 'fd-lcd dim', 'bar', { 'text-anchor': 'start' })
-  }
-
-  // The car's readouts (buildCar), redrawn only when what they show changes.
-  paintCar(force) {
-    const i = this.i, num = (x) => x != null && Number.isFinite(x)
-    const deg = (c) => (Math.round(c) < 0 ? '\u2212' : '') + Math.abs(Math.round(c)) + '°'
-    const show = (o, on) => { if (o.on !== on) { o.on = on; o.g.style.display = on ? '' : 'none' } }
-    // Temperatures.
-    const T = this.carTemp, out = num(i.outsideC) ? deg(i.outsideC) : '', inn = num(i.insideC) ? deg(i.insideC) : ''
-    if (this.moved('carTemp', out + '|' + inn, force)) {
-      show(T, !!(out || inn))
-      T.out.textContent = out
-      T.inU.textContent = inn ? (out ? '\u2002IN ' : 'IN ') : ''
-      T.inN.textContent = inn
-      // The window fits its text: measured when drawn, else estimated.
-      let w = 0
-      try { w = T.t.getComputedTextLength() } catch {}
-      if (!(w > 0)) w = (out.length + inn.length) * 9 + (inn ? 22 : 0)
-      const cw = Math.round(w + 16)
-      T.chip.setAttribute('x', f1(T.cx - cw / 2)); T.chip.setAttribute('width', cw)
-    }
-    // Heading: the nearest of eight points, then the degrees.
-    const H = this.carHead, hd = num(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
-    const hs = hd == null ? '' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(hd / 45) % 8] + '\u2002' + hd + '°'
-    if (this.moved('carHead', hs, force)) { show(H, !!hs); H.t.textContent = hs }
-    // Tyres, red on a warning.
-    const Y = this.carTyre, ty = Array.isArray(i.tyres) && i.tyres.some(num) ? i.tyres : null
-    const ys = ty ? ty.slice(0, 4).map((p) => (num(p) ? p.toFixed(2) : '')).join(' ') + (i.tyreWarn ? '!' : '') : ''
-    if (this.moved('carTyre', ys, force)) {
-      show(Y, !!ty)
-      if (ty) Y.n.forEach((t, k) => { t.textContent = num(ty[k]) ? ty[k].toFixed(2) : '' })
-      Y.g.classList.toggle('warn', !!(ty && i.tyreWarn))
-    }
-  }
-
   // True when key's value moved since the last paint (or force).
   moved(key, val, force) {
     if (!force && this.last[key] === val) return false
@@ -588,9 +557,12 @@ ${DAY}
     this.tachSweep(ta)
     const sa = q(dialAngle(v.kmh, 0, SPEED.max, SPEED.a0, SPEED.a1))
     this.speedSweep(sa)
-    this.halves.forEach((h, k) => {
-      const a = q(dialAngle(v[h.key], h.lo, h.hi, h.side.a0, h.side.a1))
-      h.paint(a)
+    this.halves.forEach((h) => {
+      h.paint(q(dialAngle(v[h.key], h.lo, h.hi, h.side.a0, h.side.a1)))
+      if (h.reserve) {
+        const low = v[h.key] < h.reserve
+        if (this.moved('low-' + h.key, low, force)) h.g.classList.toggle('low', low)
+      }
     })
     // Boost: the bar grows from its left cap; the glow sits on its end.
     const { bx, bw, bh } = this.boost
@@ -605,7 +577,7 @@ ${DAY}
     setText(this.kmh, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
     setText(this.odo, String(Math.floor(v.odo) % 1000000).padStart(6, '0'))
     setText(this.tripN, (Math.floor(v.trip * 10) / 10).toFixed(1))
-    this.paintCar(force)
+    this.paintTyres(force)
     // The clock: the seconds trace moves every frame, smoothly; the hands
     // turn only when the second changes.
     const c = i.clock instanceof Date ? i.clock : new Date()

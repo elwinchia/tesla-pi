@@ -5,10 +5,7 @@
 // x100 with a red end and the gear in a glowing orange disc. Between them,
 // two small panels: the battery's charge (the car's own over Bluetooth, else
 // made up) and water temperature as bars, marked by their icons alone, as
-// on the original. Two small lit readouts sit in the top centre panel's
-// upper corners, beside the battery icon: the car's outside temperature
-// with the cabin's after it, and the compass heading; each is gone when
-// its value is not read.
+// on the original.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp, sevenRow } from './kit.js'
 
 // Wide (3.1:1): the dash gives the gauge everything beside its one column
@@ -27,9 +24,6 @@ const TAIL = 70, TIP = 22
 // reads red when it runs low, the water when it runs hot.
 const MID = 620
 const BAR = { x: MID - 150, w: 300, h: 14 }
-// The readouts' baseline-centre height and their corner insets.
-const READ = { y: 50, left: 430, right: 810 }
-const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 const BARS = {
   batt:  { top: 4, lo: 0, hi: 1, labels: ['0', '50', '100'], key: 'fuel', low: 0.15 },
   water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
@@ -84,9 +78,6 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit .bl-icon { fill: none; stroke: #ff6a2a; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
       .gs-backlit .bl-icon .solid { fill: #ff6a2a; stroke: none; }
       .gs-backlit .bl-finger { fill: rgba(255, 140, 60, 0.18); stroke: #ffb07a; stroke-width: 3; pointer-events: none; }
-      .gs-backlit .bl-read { fill: #ff6a2a; font: 500 26px -apple-system, system-ui, sans-serif; dominant-baseline: central; }
-      .gs-backlit .bl-read.end { text-anchor: end; }
-      .gs-backlit .bl-read .dim { fill: #b4501f; font-size: 21px; }
 
       /* Day: the same cluster printed rather than backlit, on Tesla's light
          floor: pale housings, white faces, dark numerals and ticks, and the
@@ -125,8 +116,6 @@ export default class BacklitStyle extends GaugeStyle {
       .gs-backlit[data-theme=day] .bl-icon { stroke: #d9480f; }
       .gs-backlit[data-theme=day] .bl-icon .solid { fill: #d9480f; }
       .gs-backlit[data-theme=day] .bl-finger { fill: rgba(217, 72, 15, 0.14); stroke: #d9480f; }
-      .gs-backlit[data-theme=day] .bl-read { fill: #d9480f; }
-      .gs-backlit[data-theme=day] .bl-read .dim { fill: #393c41; }
     `)
     const defs = el('defs', {}, s)
     // Soft backlight behind the gear disc: a radial gradient, not a blur,
@@ -199,17 +188,6 @@ export default class BacklitStyle extends GaugeStyle {
       }
       this.bars[k] = { ...b, g, halo, bar, w: -1, isHot: false }
     }
-
-    // ── Readouts in the top centre panel's corners ──
-    // Outside temperature, then the cabin's ("in 22°") dimmer beside it.
-    const tt = this.tempT = ctext(s, READ.left, READ.y, 'bl-read', '', 0.85)
-    this.outT = el('tspan', {}, tt)
-    this.inT = el('tspan', { class: 'dim' }, tt)
-    // Heading: the point lit, its degrees dimmer ("E 89°").
-    const ht = this.headT = ctext(s, READ.right, READ.y, 'bl-read end', '', 0.85)
-    this.ptT = el('tspan', {}, ht)
-    this.degT = el('tspan', { class: 'dim', dx: 7 }, ht)
-    this.shownTemp = this.shownHead = null
   }
 
   // The dark round well, behind ticks and sweep.
@@ -294,35 +272,6 @@ export default class BacklitStyle extends GaugeStyle {
     const on = !!i.running
     if (force || on !== this.gearOn) { this.gearOn = on; this.gearG.classList.toggle('off', !on) }
     for (const b of Object.values(this.bars)) this.paintBar(b, v[b.key], force)
-    this.paintReadouts(force)
-  }
-
-  // The temperatures and heading: touched only when what they show changes.
-  paintReadouts(force) {
-    const i = this.i
-    const deg = (c) => Number.isFinite(c) ? `${Math.round(c)}°` : ''
-    const out = deg(i.outsideC), inside = deg(i.insideC)
-    const temp = out + '|' + inside
-    if (force || temp !== this.shownTemp) {
-      this.shownTemp = temp
-      this.outT.textContent = out
-      this.inT.textContent = inside ? 'in ' + inside : ''
-      // A gap between the two only when both are shown.
-      if (out && inside) this.inT.setAttribute('dx', 9); else this.inT.removeAttribute('dx')
-      this.tempT.style.display = out || inside ? '' : 'none'
-    }
-    let head = ''
-    if (Number.isFinite(i.heading)) {
-      const h = ((Math.round(i.heading) % 360) + 360) % 360
-      head = POINTS[Math.round(h / 45) % 8] + '|' + h + '°'
-    }
-    if (force || head !== this.shownHead) {
-      this.shownHead = head
-      const [pt, d] = head ? head.split('|') : ['', '']
-      this.ptT.textContent = pt
-      this.degT.textContent = d
-      this.headT.style.display = head ? '' : 'none'
-    }
   }
 
   paintSweep(sw, d, a, force) {

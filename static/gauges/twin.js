@@ -6,11 +6,6 @@
 // trail on the rim that fades back into it (Trace in kit.js); at rest
 // there is none.
 //
-// From the car, when read: the outside temperature with the cabin's beside
-// it ("32° IN 22°") in the speedometer between E and F, and the compass
-// heading ("E 89°") in the tach's open lower right, between 0 and the top
-// of the scale. Each is gone when its value is null.
-//
 // The wide geometric digits are drawn here as stroked paths, not set in a
 // font: the car's browser has few fonts, and this keeps the look the same
 // everywhere.
@@ -38,12 +33,6 @@ const ORANGE = '#ff8a1a'
 const DAY_ORANGE = '#e8590c'
 // The trail behind a moving needle: how slowly its tail follows (s).
 const TRAIL_TAU = 0.45
-
-// The car's readouts: temperatures below KM/H, heading in the tach's gap.
-const TEMP_AT = { x: SPEED.cx, y: CY + 86 }
-const HEAD_AT = { x: TACH.cx + 46, y: CY + 94 }
-const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-const deg = (c) => (Number.isFinite(c) ? `${Math.round(c) || 0}°` : '')
 
 const f1 = (x) => x.toFixed(1)
 const rot = (a, cx, cy = CY) => `rotate(${a.toFixed(2)} ${cx} ${cy})`
@@ -125,10 +114,6 @@ export default class TwinStyle extends GaugeStyle {
       .gs-twin[data-zone=red] .tw-red { stroke: #ff3a24; }
       .gs-twin[data-zone=red] .tw-gear { stroke: #ff4a2a; }
       .gs-twin[data-zone=red] .tw-tach .tw-needle { stroke: #ff4a2a; }
-      .gs-twin .tw-read { font-size: 17px; font-weight: 600; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; pointer-events: none; }
-      .gs-twin .tw-read .tw-rl { font-size: 12px; letter-spacing: 0.14em; }
-      .gs-twin .tw-read .tw-pt { fill: ${ORANGE}; }
-      .gs-twin[data-theme=day] .tw-read .tw-pt { fill: ${DAY_ORANGE}; }
 
       .gs-twin[data-theme=day] text { fill: #1f2124; }
       .gs-twin[data-theme=day] .tw-dim { fill: #5c5e62; }
@@ -136,8 +121,10 @@ export default class TwinStyle extends GaugeStyle {
       .gs-twin[data-theme=day] .tw-tick.dim { stroke: #85888c; }
       .gs-twin[data-theme=day] .tw-icon { stroke: #5c5e62; }
       .gs-twin[data-theme=day] .tw-ink { stroke: #1f2124; }
-      .gs-twin[data-theme=day] .tw-sub { stroke: #393c41; }
+      .gs-twin[data-theme=day] .tw-sub { stroke: #8a8d91; }
       .gs-twin[data-theme=day] .tw-nb { stroke: #a4a7ab; }
+      .gs-twin[data-theme=day] .tw-nb2 { stroke: #d2d4d7; }
+      .gs-twin[data-theme=day] .tw-num { stroke: #6b6e72; }
       .gs-twin[data-theme=day] .tw-track { stroke: #cdd0d3; }
       .gs-twin[data-theme=day] .tw-accent { stroke: ${DAY_ORANGE}; }
       .gs-twin[data-theme=day] .tw-gdot { fill: ${DAY_ORANGE}; stroke: #fff; }
@@ -209,13 +196,11 @@ export default class TwinStyle extends GaugeStyle {
     this.tachNeedle = el('g', {}, g)
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 44, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.tachNeedle)
     text(g, cx + 42, CY + 140, 'tw-lab tw-dim', 'x1000r/min', { style: 'font-size:16px;letter-spacing:0.06em' })
-    // Gear strip: the gear large, its neighbours small and grey.
+    // Gear strip: the gear large, its neighbours small and grey, the ones
+    // two away fainter still.
     this.gear = this.glyphs(g, '', cx, CY, 72, 4.6, '#f4f4f4', 'tw-gear tw-ink')
     this.gearNb = el('path', { class: 'tw-glyph tw-nb', stroke: '#6c6c70', 'stroke-width': 2.6 }, g)
-    // Heading: the point in orange, the degrees grey.
-    const h = text(g, HEAD_AT.x, HEAD_AT.y, 'tw-read', '')
-    this.headPt = el('tspan', { class: 'tw-pt' }, h)
-    this.headDeg = el('tspan', { class: 'tw-dim', dx: 6 }, h)
+    this.gearNb2 = el('path', { class: 'tw-glyph tw-nb2', stroke: '#38383c', 'stroke-width': 2.2 }, g)
     this.finger = el('circle', { r: 24, class: 'rv-finger', style: 'display:none' }, g)
   }
 
@@ -228,7 +213,8 @@ export default class TwinStyle extends GaugeStyle {
       this.tick(g, cx, CY, a, r - 8, major ? r - 22 : r - 14, major ? 4 : 2, major ? 'tw-tick' : 'tw-tick dim')
       if (v % 20 === 0) {
         const [x, y] = polar(cx, CY, r - 52, a)
-        this.glyphs(g, String(v), x, y, 16, 2.2, '#9c9ca0', 'tw-sub')
+        // Thin and soft, so the big digital speed is what stands out.
+        this.glyphs(g, String(v), x, y, 16, 1.6, '#7c7c82', 'tw-sub')
       }
     }
     this.wedge(this.id('sclip'), cx, r + 4, SPEED.a0, SPEED.a1)
@@ -237,11 +223,6 @@ export default class TwinStyle extends GaugeStyle {
     el('line', { x1: cx + r - 2, y1: CY, x2: cx + r - 36, y2: CY, class: 'tw-needle', 'stroke-width': 4 }, this.speedNeedle)
     this.kmh = this.glyphs(g, '0', cx, CY - 8, 66, 4.2, '#f6f6f6', 'tw-ink')
     text(g, cx, CY + 50, 'tw-lab', 'KM/H')
-    // Outside temperature, then the cabin's after a small grey IN.
-    const t = text(g, TEMP_AT.x, TEMP_AT.y, 'tw-read', '')
-    this.tOut = el('tspan', {}, t)
-    this.tInLab = el('tspan', { class: 'tw-rl tw-dim' }, t)
-    this.tIn = el('tspan', { dx: 5 }, t)
     // Fuel, E to F along the foot: grey track, red reserve, orange level.
     const fr = FUEL.r
     el('path', { d: arcPath(cx, CY, fr, FUEL.a0, FUEL.a1), fill: 'none', stroke: '#3a3a40', 'stroke-width': 5, class: 'tw-track' }, g)
@@ -319,7 +300,8 @@ export default class TwinStyle extends GaugeStyle {
       if (v < scale.redFrom) this.tick(g, cx, CY, a, r - 8, major ? r - 24 : r - 15, major ? 4.5 : 2.2)
       if (!major) continue
       const [x, y] = polar(cx, CY, r - 62, a)
-      this.glyphs(g, String(v / 1000), x, y, 25, 4.2, '#f4f4f4', 'tw-ink')
+      // Thinner and greyer than the needle and gear, so they lead the eye.
+      this.glyphs(g, String(v / 1000), x, y, 25, 2.8, '#a6a6ac', 'tw-num')
     }
     this.last = {}
   }
@@ -354,11 +336,14 @@ export default class TwinStyle extends GaugeStyle {
       hi = [n + 1, n + 2].filter((x) => x <= Math.max(6, n))
     } else if (gear === 'N') hi = [1, 2]
     else if (gear === 'R') hi = ['N', 1]
-    let d = ''
+    // One away on one path, two away (smaller) on the fainter one.
+    const d = ['', '']
     const at = (k) => (k === 1 ? 50 : 74)
-    lo.slice().reverse().forEach((x, k) => { d += rowPath(String(x), cx - at(k + 1), CY, 22) })
-    hi.forEach((x, k) => { d += rowPath(String(x), cx + at(k + 1), CY, 22) })
-    this.gearNb.setAttribute('d', d)
+    const put = (x, k, side) => { d[k] += rowPath(String(x), cx + side * at(k + 1), CY, k ? 19 : 22) }
+    lo.slice().reverse().forEach((x, k) => put(x, k, -1))
+    hi.forEach((x, k) => put(x, k, 1))
+    this.gearNb.setAttribute('d', d[0])
+    this.gearNb2.setAttribute('d', d[1])
   }
 
   paint(force) {
@@ -390,27 +375,5 @@ export default class TwinStyle extends GaugeStyle {
     if (this.moved('gx', gx, force)) this.gDot.setAttribute('cx', f1(SIDE.g.cx + clamp(gx, -44, 44)))
     const gs = Math.abs(g).toFixed(1)
     setText(this.gInt, gs.slice(0, 2)); setText(this.gDec, gs.slice(2))
-    this.paintCar(force)
-  }
-
-  // The temperatures and heading: touched only when what they show changes.
-  paintCar(force) {
-    const i = this.i
-    const out = deg(i.outsideC), inside = deg(i.insideC)
-    if (this.moved('temps', out + '|' + inside, force)) {
-      this.tOut.textContent = out
-      this.tInLab.textContent = inside ? 'IN' : ''
-      this.tInLab.setAttribute('dx', out && inside ? 12 : 0)
-      this.tIn.textContent = inside
-    }
-    let pt = '', dg = ''
-    if (Number.isFinite(i.heading)) {
-      const h = ((Math.round(i.heading) % 360) + 360) % 360
-      pt = POINTS[Math.round(h / 45) % 8]; dg = `${h}°`
-    }
-    if (this.moved('heading', dg, force)) {
-      this.headPt.textContent = pt
-      this.headDeg.textContent = dg
-    }
   }
 }

@@ -1,6 +1,6 @@
 // Segment arc, S2000-style: a wide segmented tachometer arc, an old-school
-// seven-segment speed readout in an LCD window, a trip/odometer LCD under
-// it, and two segmented bars, water temperature and the battery's charge
+// seven-segment speed readout in an LCD window (the gear in its corner), a
+// trip/odometer LCD under it, and two segmented bars, water temperature and the battery's charge
 // (the car's own, read over Bluetooth, when there is one; else made up). The
 // geometry is in static/rev-gauge.js (tested); this file draws it. It is
 // the one style with a day palette as well as night (static/rev-gauge.css).
@@ -64,11 +64,16 @@ export default class SegmentStyle extends GaugeStyle {
     this.finger = el('circle', { r: 34, class: 'rv-finger', style: 'display:none' }, s)
 
     // Speed: three seven-segment digits in a dark red LCD window, the
-    // unlit segments faintly showing, as on the old cluster.
-    el('rect', { x: MID - 128, y: 198, width: 256, height: 116, rx: 26, class: 'rv-lcd', fill: this.url('lcd') }, s)
-    this.speed = sevenRow(s, { x: MID - 108, y: 214, n: 3, w: 52, h: 82, t: 12, gap: 16, skew: 0.1, cls: 'seg7 rv-speed7' })
-    text(s, MID + 98, 300, 'rv-lcd-unit', 'km/h')
-    this.simTag = text(s, MID - 100, 232, 'rv-sim-tag', 'SIM')
+    // unlit segments faintly showing, as on the old cluster. The gear has
+    // its own column in the window's top-left corner, and km/h sits in the
+    // bottom-right corner, both clear of the digits.
+    el('rect', { x: MID - 160, y: 198, width: 320, height: 116, rx: 26, class: 'rv-lcd', fill: this.url('lcd') }, s)
+    this.speed = sevenRow(s, { x: MID - 96, y: 214, n: 3, w: 52, h: 82, t: 12, gap: 16, skew: 0.1, cls: 'seg7 rv-speed7' })
+    text(s, MID + 148, 296, 'rv-lcd-unit', 'km/h')
+    text(s, MID - 146, 219, 'rv-lcd-label', 'GEAR')
+    // Slanted like the digits beside it.
+    this.gear = text(el('g', { transform: `translate(${MID - 131} 254) skewX(-5.7)` }, s), 0, 0, 'rv-lcd-gear', '')
+    this.simTag = text(s, MID - 131, 296, 'rv-sim-tag', 'SIM')
     this.simTag.style.display = 'none'
 
     // Trip and odometer LCD, under the speed.
@@ -78,18 +83,6 @@ export default class SegmentStyle extends GaugeStyle {
     text(s, MID + 20, 340, 'rv-lcd-label', 'TRIP A')
     this.trip = sevenRow(s, { x: MID + 20, y: 345, n: 5, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
     el('circle', { cx: MID + 84.2, cy: 362, r: 1.8, class: 'rv-lcd-dot' }, s)
-
-    // Where the reference has arrows: the gear on the left, the speed
-    // source on the right.
-    const chip = (x, cap, cls) => {
-      const g = el('g', { class: 'rv-chip' }, s)
-      el('circle', { cx: x, cy: 259, r: 26 }, g)
-      const t = text(g, x, 260, cls, '')
-      text(s, x, 302, 'rv-chip-cap', cap)
-      return t
-    }
-    this.gear = chip(MID - 184, 'GEAR', 'rv-chip-text')
-    this.src = chip(MID + 184, 'SPEED', 'rv-chip-text small')
 
     // Side bars, with the icons the reference has at their outer ends.
     this.bars = {}
@@ -227,7 +220,7 @@ export default class SegmentStyle extends GaugeStyle {
     this.speed.set(i.stale ? '--' : String(Math.min(999, Math.round(this.v.kmh))))
     this.odo.set(String(Math.floor(this.v.odo) % 1000000).padStart(6, '0'))
     this.trip.set(String(Math.floor(this.v.trip * 10) % 100000).padStart(2, '0'))
-    setText(this.gear, i.gear); setText(this.src, i.source)
+    setText(this.gear, i.gear)
 
     const w = (this.v.water - WATER.lo) / (WATER.hi - WATER.lo)
     this.paintBar(this.bars.water, i.running ? w : 0, force)
