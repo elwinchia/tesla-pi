@@ -270,6 +270,13 @@ export class Trace {
 //   rangeKm (null unless read), carReal  the car's own range, and whether
 //                                      fuel is its real battery charge
 //                                      (rev-car.js, over Bluetooth)
+//   outsideC, insideC (°C)             the car's outside and cabin
+//                                      temperatures (null unless read)
+//   tyres ([fl, fr, rl, rr] bar), tyreWarn  its tyre pressures (null
+//                                      unless read) and whether any wheel
+//                                      has a pressure warning
+//   heading (0..360°, 0 = north)       the direction of travel from GPS
+//                                      (null without a recent fix)
 export const EASE = { rpm: 0.08, kmh: 0.15, load: 0.12, water: 0.6, oilTemp: 0.6, oilPress: 0.25, volts: 0.4, fuel: 1.2, boost: 0.12, g: 0.2, trip: 0, odo: 0 }
 
 let UID = 0

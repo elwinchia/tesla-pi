@@ -107,7 +107,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
 | `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
-| `static/rev-car.js` | The car's real battery charge, range and odometer for the dash, read over Bluetooth through the Pi (`/telemetry/ble`): once when the engine sound starts, then every five minutes while it runs. |
+| `static/rev-car.js` | The car's real battery charge, range, odometer, outside and cabin temperatures and tyre pressures for the dash, read over Bluetooth through the Pi (`/telemetry/ble`): all once when the engine sound starts, then the charge and temperatures every five minutes while it runs and the tyres every fifteen. |
 | `static/rev-dash.js` | The dash: the chosen gauge style beside **ENGINE START/STOP** (with a settings button), on the passenger's side; holding the rev meter revs the engine ([The dash](#the-dash-buttons-and-gauge-styles)). Feeds the style the engine's state and the made-up side instruments. |
 | `static/gauges/kit.js` | What every gauge style shares: `GaugeStyle` (the base class, which eases every value and handles a finger on the tach), SVG and seven-segment helpers, and `Instruments`, the made-up water and oil temperatures, oil pressure, volts and fuel, with the real trip and odometer. |
 | `static/gauges/index.js`, `static/gauges/<style>.js` | The seven gauge styles, each loaded only when chosen: `segment`, `fivedial`, `backlit`, `twin`, `digital`, `tiles`, `crosshair`. |
@@ -365,13 +365,19 @@ browser). **From the car, over Bluetooth** (`static/rev-car.js`), when
 Settings → Network → Experimental → "Read telemetry from Bluetooth" is on:
 the battery's charge, shown on every battery and fuel gauge (the battery
 gauges of the S2000, Testarossa and 911 styles, the fuel gauges of the
-rest); its range (the DeLorean's range line); and its odometer, which the
-GPS count carries on from. The Pi reads them with its read-only car key
-(`/telemetry/ble`, [telemetry-options.md](telemetry-options.md)): charge and
-drive when the engine sound starts, then the charge alone every five
-minutes while it runs, and nothing while it is off. Each read is one short
-Bluetooth connection of about 3 s, and the car takes only three at a time,
-which phone keys also use, so it is never held open or read faster. A
+rest); its range (the DeLorean's range line; the car gives it in miles);
+its odometer, which the GPS count carries on from; the outside and cabin
+temperatures, shown on every style; and the four tyre pressures, red on a
+pressure warning, on the 911, C4, DeLorean and Integrale styles. The Pi
+reads them with its read-only car key (`/telemetry/ble`,
+[telemetry-options.md](telemetry-options.md)): charge, drive, climate and
+tyres when the engine sound starts, then the charge and climate every five
+minutes while it runs and the tyres every fifteen, and nothing while it is
+off. Each read is one short Bluetooth connection of about 3 s, and the car
+takes only three at a time, which phone keys also use, so it is never held
+open or read faster. **From the browser's GPS**: the heading, shown as a
+compass readout on every style (the car's browser keeps reporting it while
+parked). Every one of these readouts is hidden until there is a value. A
 failed read keeps the last good one; a reading older than 30 minutes is not
 shown. The gear stays the engine model's: a five-minute-old P or D would be
 wrong more often than right.

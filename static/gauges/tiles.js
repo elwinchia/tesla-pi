@@ -9,6 +9,10 @@
 //   4  the tachometer (in hundreds), a fuel arc and the range under it
 //   5  oil pressure; fuel
 //   6  the green time-circuit clock; a cassette labelled with the engine
+// The car's own readouts, each shown only while it is read: the outside and
+// cabin temperatures as two more time-circuit fields over the name, the
+// heading over the speedometer, the tyres in its open bottom (the car seen
+// from above), as the tach's open bottom holds the fuel.
 import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
 
 const VIEW = { w: 1200, h: 390 }
@@ -113,6 +117,13 @@ ${D} .tl-title { fill: #1f2124; }
 ${D} .tl-artist { fill: #5c5e62; }
 ${D} .tl-finger { fill: rgba(0, 0, 0, 0.07); stroke: #393c41; }
 ${D} .tl-sim { fill: #5c5e62; }
+${D} .tl-hdg { fill: #1f2124; }
+${D} .tl-hdg .dir { fill: #1f2124; }
+${D} .tl-tyre { fill: #1f2124; }
+${D} .tl-tyre.warn, ${D} .tl-car.warn .wh { fill: ${D_RED}; }
+${D} .tl-car .body { stroke: #5c5e62; }
+${D} .tl-car .wh { fill: #5c5e62; }
+${D} .tl-tunit { fill: #5c5e62; }
 `
 const CSS = `
 .gs-tiles { font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif; }
@@ -178,6 +189,15 @@ const CSS = `
 .gs-tiles .tl-artist { fill: #5e5e5e; font-size: 15px; font-weight: 700; text-anchor: middle; }
 .gs-tiles .tl-finger { fill: rgba(255, 255, 255, 0.14); stroke: #f0f0f0; stroke-width: 3; pointer-events: none; }
 .gs-tiles .tl-sim { fill: #c9c9c9; font-size: 14px; font-weight: 700; text-anchor: middle; letter-spacing: 0.12em; }
+.gs-tiles .tl-hdg { fill: #f2f2f2; font-size: 19px; font-weight: 700; text-anchor: middle; dominant-baseline: central; font-variant-numeric: tabular-nums; }
+.gs-tiles .tl-hdg .dir { fill: #f2f2f2; font-weight: 800; letter-spacing: 0.04em; }
+.gs-tiles .tl-tyre { fill: #e8e8e8; font-size: 16px; font-weight: 700; dominant-baseline: central; font-variant-numeric: tabular-nums; }
+.gs-tiles .tl-tyre.l { text-anchor: end; }
+.gs-tiles .tl-tyre.warn { fill: #ff3b2c; }
+.gs-tiles .tl-car .body { fill: none; stroke: #8a8a8a; stroke-width: 1.5; }
+.gs-tiles .tl-car .wh { fill: #8a8a8a; }
+.gs-tiles .tl-car.warn .wh { fill: #ff3b2c; }
+.gs-tiles .tl-tunit { fill: #8a8a8a; font-size: 13px; font-weight: 600; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; }
 .gs-tiles[data-zone=red] .tl-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 44, 0.8)); }
 ${DAY}`
 
@@ -233,8 +253,8 @@ function stopAngle(stops, v) {
 const ALNUM = {
   0: 'abcdef', 1: 'bc', 2: 'abgGed', 3: 'abgGcd', 4: 'fgGbc', 5: 'afgGcd', 6: 'afgGedc', 7: 'abc', 8: 'abcdefgG', 9: 'abcdfgG',
   A: 'abcefgG', B: 'abcdGil', C: 'adef', D: 'abcdil', E: 'adefg', F: 'aefg', G: 'acdefG', J: 'bcde', L: 'def',
-  M: 'bcefhj', N: 'bcefhm', O: 'abcdef', P: 'abefgG', R: 'abefgGm', S: 'afgGcd', T: 'ail', U: 'bcdef', V: 'efkj', Y: 'hjl',
-  '-': 'gG', ' ': '',
+  M: 'bcefhj', N: 'bcefhm', O: 'abcdef', P: 'abefgG', R: 'abefgGm', S: 'afgGcd', T: 'ail', U: 'bcdef', V: 'efkj', W: 'bcefkm', Y: 'hjl',
+  '-': 'gG', '°': 'abfgG', ' ': '',
 }
 // Unlit, only the seven-segment "8" shows faintly, as on the original.
 const GHOST = 'abcdefgG'
@@ -274,7 +294,9 @@ function alnumRow(parent, { x, y, n, w, h, t, gap }) {
         if (cell.ch === ch) return
         cell.ch = ch
         const on = ALNUM[ch] ?? ''
-        for (const k of Object.keys(cell.segs)) cell.segs[k].setAttribute('class', on.includes(k) ? 'on' : GHOST.includes(k) ? 'off' : 'x')
+        // A degree sign lights the top box alone, with no ghost under it.
+        const ghost = ch === '°' ? '' : GHOST
+        for (const k of Object.keys(cell.segs)) cell.segs[k].setAttribute('class', on.includes(k) ? 'on' : ghost.includes(k) ? 'off' : 'x')
       })
     },
   }
@@ -305,9 +327,11 @@ export default class TilesStyle extends GaugeStyle {
     for (const r of Object.values(T)) this.tile(s, r)
 
     this.buildName(s)
+    this.buildTemps(s)
     this.buildCal(s)
     this.small = Object.entries(SMALL).map(([key, d]) => this.smallDial(s, key, d))
     this.buildSpeed(s)
+    this.buildCarRead(s)
     this.buildTach(s)
     this.buildClock(s)
     this.buildTape(s)
@@ -357,9 +381,28 @@ export default class TilesStyle extends GaugeStyle {
   buildName(s) {
     const [x, y, w, h] = T.name
     const cx = x + w / 2, cy = y + h / 2
-    const etch = (dy, cls, size) => text(s, cx, cy + dy, 'tl-etch ' + cls, '', { 'font-size': size })
+    // In a group, so it can step down when the temperatures show over it.
+    this.nameG = el('g', {}, s)
+    const etch = (dy, cls, size) => text(this.nameG, cx, cy + dy, 'tl-etch ' + cls, '', { 'font-size': size })
     this.nameT = [etch(-11, 'lo', 34), etch(-9, 'hi', 34), etch(-10, 'face', 34)]
     this.subT = [0, 1].map((k) => [etch(26 + k * 19, 'lo sub', 14), etch(28 + k * 19, 'hi sub', 14), etch(27 + k * 19, 'face sub', 14)])
+  }
+
+  // ── Column 1, top: outside and cabin temperatures, two small time-circuit
+  // fields (a red plate over a green LCD) side by side ──
+  buildTemps(s) {
+    const cw = 14, ch = 21, ct = 2.7, cg = 2, n = 3
+    const W = n * cw + (n - 1) * cg, bw = W + 10
+    const field = (label) => {
+      const g = el('g', { style: 'display:none' }, s)
+      el('rect', { x: -21, y: 0, width: 42, height: 16, class: 'tl-plate' }, g)
+      text(g, 0, 8.5, 'tl-platet', label)
+      el('rect', { x: -bw / 2, y: 19, width: bw, height: ch + 10, rx: 2, class: 'tl-lcd' }, g)
+      el('rect', { x: -bw / 2 + 2, y: 21, width: bw - 4, height: ch + 6, class: 'tl-lcd-in' }, g)
+      return { g, row: alnumRow(g, { x: -W / 2, y: 24, n, w: cw, h: ch, t: ct, gap: cg }), on: false }
+    }
+    this.tOut = field('OUT'); this.tIn = field('IN')
+    this.tempsW = bw; this.tempsKey = null
   }
 
   // ── Column 1, bottom: two calendar-style entries ──
@@ -492,6 +535,27 @@ export default class TilesStyle extends GaugeStyle {
     this.bigTicks(el('g', {}, s), cx, SPEED.max, 10, 20, (v) => String(v))
     this.speedT = text(s, cx, cy + 22, 'tl-speed', '', { fill: this.url('chrome') })
     text(s, cx, cy + 45, 'tl-unit', 'KM/H')
+  }
+
+  // ── Column 3, more: the heading over the speedometer, and the tyres in its
+  // open bottom, the car seen from above with a pressure by each wheel ──
+  buildCarRead(s) {
+    const cx = SPEED.cx, cy = BIG.cy
+    this.hdgT = text(s, cx, T.speed[1] + 35, 'tl-hdg', '')
+    this.hdgDir = el('tspan', { class: 'dir' }, this.hdgT)
+    this.hdgDeg = el('tspan', {}, this.hdgT)
+    this.hdgT.style.display = 'none'
+    const g = this.tyreG = el('g', { style: 'display:none' }, s)
+    const car = this.carG = el('g', { class: 'tl-car' }, g)
+    const top = cy + 59, h = 44, w = 18
+    el('rect', { x: cx - w / 2, y: top, width: w, height: h, rx: 6, class: 'body' }, car)
+    for (const [dx, dy] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
+      el('rect', { x: cx + dx * (w / 2 + 2) - 2.5, y: top + 4 + dy * (h - 18), width: 5, height: 10, rx: 1.5, class: 'wh' }, car)
+    }
+    const row = (dy) => top + 9 + dy * (h - 18)
+    this.tyreT = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([dx, dy]) => text(g, cx + dx * 22, row(dy), 'tl-tyre' + (dx < 0 ? ' l' : ''), ''))
+    text(g, cx, top + h + 12, 'tl-tunit', 'bar')
+    this.tyreKey = null; this.hdgKey = null
   }
 
   // ── Column 4: the tachometer ──
@@ -675,6 +739,8 @@ export default class TilesStyle extends GaugeStyle {
       fit(t, this.calW)
     }
 
+    this.paintCar(force)
+
     // The engine's name, split at its dot: "V10" and "LFA-style".
     if (force || i.car !== this.car) {
       this.car = i.car
@@ -705,6 +771,56 @@ export default class TilesStyle extends GaugeStyle {
       for (const r of this.reels) r.g.setAttribute('transform', `translate(${r.rx} ${r.ry}) rotate(${this.reelA.toFixed(1)})`)
     }
     this.reelT = now
+  }
+
+  // The car's readouts: each hidden while its value is null.
+  paintCar(force) {
+    const i = this.i
+    const deg = (c) => {
+      if (!Number.isFinite(c)) return null
+      const r = Math.round(c), t = r + '°'
+      return t.length <= 3 ? t : String(clamp(r, -99, 999))
+    }
+    const out = deg(i.outsideC), inn = deg(i.insideC)
+    const tk = out + '|' + inn
+    if (force || tk !== this.tempsKey) {
+      this.tempsKey = tk
+      const [x, , w] = T.name, mid = x + w / 2, top = T.name[1] + 7
+      const both = out != null && inn != null, gap = this.tempsW / 2 + 3
+      for (const [f, v, dx] of [[this.tOut, out, both ? -gap : 0], [this.tIn, inn, both ? gap : 0]]) {
+        f.g.style.display = v == null ? 'none' : ''
+        if (v == null) continue
+        f.g.setAttribute('transform', `translate(${mid + dx} ${top})`)
+        f.row.set(v)
+      }
+      // The name steps down under them, and back when they go.
+      this.nameG.setAttribute('transform', out != null || inn != null ? 'translate(0 16)' : '')
+    }
+
+    const h = Number.isFinite(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
+    if (force || h !== this.hdgKey) {
+      this.hdgKey = h
+      this.hdgT.style.display = h == null ? 'none' : ''
+      if (h != null) {
+        this.hdgDir.textContent = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(h / 45) % 8]
+        this.hdgDeg.textContent = ' ' + h + '°'
+      }
+    }
+
+    const ty = Array.isArray(i.tyres) && i.tyres.length === 4 && i.tyres.some(Number.isFinite) ? i.tyres : null
+    const yk = ty ? ty.map((b) => (Number.isFinite(b) ? b.toFixed(2) : '–')).join(' ') + (i.tyreWarn ? '!' : '') : null
+    if (force || yk !== this.tyreKey) {
+      this.tyreKey = yk
+      this.tyreG.style.display = ty ? '' : 'none'
+      if (ty) {
+        const warn = !!i.tyreWarn
+        this.tyreT.forEach((t, k) => {
+          t.textContent = Number.isFinite(ty[k]) ? ty[k].toFixed(2) : '–'
+          t.classList.toggle('warn', warn)
+        })
+        this.carG.classList.toggle('warn', warn)
+      }
+    }
   }
 
   // Up to two lines of at most n characters, broken at spaces or hyphens.

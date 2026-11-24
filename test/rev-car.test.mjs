@@ -4,6 +4,9 @@ import { parseCar, CarReader } from '../static/rev-car.js'
 
 const charge = { chargeState: { batteryLevel: 81, usableBatteryLevel: 80, batteryRange: 200, chargingState: { Disconnected: {} } } }
 const drive = { driveState: { shiftState: { P: {} }, odometerInHundredthsOfAMile: 4598000, power: 0 } }
+const climate = { climateState: { insideTempCelsius: 22, outsideTempCelsius: 32, isClimateOn: true } }
+const tyres = { tirePressureState: { tpmsPressureFl: 2.98, tpmsPressureFr: 2.95, tpmsPressureRl: 3, tpmsPressureRr: 3.02 } }
+const DATA = { charge, drive, climate, 'tire-pressure': tyres }
 
 test('parseCar: usable charge, range and odometer in km', () => {
   const r = parseCar({ charge, drive })
@@ -33,19 +36,34 @@ function fakeFetch(answer) {
   return { f, calls }
 }
 
-test('CarReader: reads charge and drive on start, charge alone on the interval, nothing once stopped', async () => {
-  const { f, calls } = fakeFetch((cat) => [200, { ok: true, data: cat === 'charge' ? charge : drive }])
+test('parseCar: outside and cabin temperature, tyre pressures and their warning', () => {
+  const r = parseCar({ climate, 'tire-pressure': tyres })
+  assert.equal(r.outsideC, 32)
+  assert.equal(r.insideC, 22)
+  assert.deepEqual(r.tyres, [2.98, 2.95, 3, 3.02])
+  assert.equal(r.tyreWarn, false)
+  const soft = { tirePressureState: { ...tyres.tirePressureState, tpmsSoftWarningRl: true } }
+  assert.equal(parseCar({ 'tire-pressure': soft }).tyreWarn, true)
+  // A wheel missing: no tyres at all, rather than three of four.
+  assert.deepEqual(parseCar({ 'tire-pressure': { tirePressureState: { tpmsPressureFl: 2.9 } } }), {})
+  assert.deepEqual(parseCar({ climate: { climateState: { outsideTempCelsius: 300 } } }), {})
+})
+
+test('CarReader: reads everything on start, charge and climate on the interval, tyres every third, nothing once stopped', async () => {
+  const { f, calls } = fakeFetch((cat) => [200, { ok: true, data: DATA[cat] }])
   const got = []
   const r = new CarReader({ fetch: f, every: 20, onRead: (x) => got.push(x) })
   r.start()
-  await new Promise((ok) => setTimeout(ok, 55))
+  await new Promise((ok) => setTimeout(ok, 70))
   r.stop()
   const n = calls.length
   await new Promise((ok) => setTimeout(ok, 50))
   assert.equal(calls.length, n, 'no reads after stop')
-  assert.deepEqual(calls.slice(0, 3).map((u) => u.split('=')[1]), ['charge', 'drive', 'charge'])
-  assert.ok(got[0].odoKm > 0 && got[0].soc === 0.8)
-  assert.equal(got[1].odoKm, undefined, 'interval reads are charge only')
+  assert.deepEqual(calls.slice(0, 11).map((u) => u.split('=')[1]),
+    ['charge', 'drive', 'climate', 'tire-pressure', 'charge', 'climate', 'charge', 'climate', 'charge', 'climate', 'tire-pressure'])
+  assert.ok(got[0].odoKm > 0 && got[0].soc === 0.8 && got[0].outsideC === 32 && got[0].tyres.length === 4)
+  assert.equal(got[1].odoKm, undefined, 'interval reads have no odometer')
+  assert.equal(got[1].tyres, undefined, 'nor tyres, but every third')
 })
 
 test('CarReader: the setting off (403) stops it asking until the next start', async () => {

@@ -20,6 +20,13 @@ const BARS = {
   water: { x: 150, y: 322, w: 240, lo: 'C', hi: 'H', caption: 'WATER TEMP' },
   batt:  { x: 850, y: 322, w: 240, lo: 'E', hi: 'F', caption: 'BATTERY' },
 }
+// The car's readings, in two small LCDs tucked into the top corners, clear
+// of the arc and its glow: temperatures on the left, the heading on the
+// right. Each is hidden while its values are unknown.
+const CAR = { y: 16, h: 50, pad: 18 }
+const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+// Whole degrees, as an LCD would show them (no "-0").
+const deg = (c) => String(Math.max(-99, Math.min(999, Math.round(c) || 0)))
 
 export default class SegmentStyle extends GaugeStyle {
   static meta = {
@@ -107,6 +114,43 @@ export default class SegmentStyle extends GaugeStyle {
     // Battery: the usual box with + and − terminals.
     const bat = el('g', { class: 'rv-icon-line', transform: 'translate(1148 331)' }, s)
     el('path', { d: 'M-13 -7 H13 V11 H-13 Z M-8 -7 V-11 H-3 V-7 M3 -7 V-11 H8 V-7 M-8 2 H-3 M3 2 H8 M5.5 -0.5 V4.5' }, bat)
+    this.buildCar(s)
+  }
+
+  // Temperatures (OUT big, IN small) and the heading (a compass point and
+  // its degrees), in the trip LCD's look. Local coordinates; paint() sizes
+  // the window to what is shown and moves the parts into it.
+  buildCar(s) {
+    this.css(`
+      .gs-segment .rv-car { pointer-events: none; }
+      .gs-segment .rv-car-deg { fill: none; stroke: #ffb45a; stroke-width: 1.6; }
+      .gs-segment .rv-car-dir { fill: #ffb45a; font: 700 25px -apple-system, system-ui, sans-serif; text-anchor: middle; }
+    `)
+    const { y, h } = CAR
+    const big = { w: 14, h: 24, t: 3.5, gap: 5, skew: 0.1, cls: 'seg7 rv-odo7' }
+    const small = { w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' }
+    const part = (g) => el('g', {}, g)
+    // Left: OUT then IN.
+    const tg = el('g', { class: 'rv-car', style: 'display:none' }, s)
+    const tWin = el('rect', { x: CAR.pad, y, height: h, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, tg)
+    const outG = part(tg), inG = part(tg)
+    text(outG, 0, y + 14, 'rv-lcd-label', 'OUT')
+    const out = sevenRow(outG, { x: -1, y: y + 20, n: 3, ...big })
+    el('circle', { cx: 60, cy: y + 23, r: 2.8, class: 'rv-car-deg' }, outG)
+    text(inG, 0, y + 14, 'rv-lcd-label', 'IN')
+    const inn = sevenRow(inG, { x: -1, y: y + 26, n: 3, ...small })
+    el('circle', { cx: 46, cy: y + 28, r: 2.2, class: 'rv-car-deg' }, inG)
+    this.temps = { g: tg, win: tWin, outG, inG, out, inn, last: null }
+    // Right: the compass point, then its degrees.
+    const hg = el('g', { class: 'rv-car', style: 'display:none' }, s)
+    const hWin = el('rect', { y, height: h, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, hg)
+    const dirG = part(hg)
+    text(dirG, 0, y + 14, 'rv-lcd-label', 'HEADING')
+    // Slanted like the digits beside it.
+    const pt = text(el('g', { transform: `translate(24 ${y + 44}) skewX(-5.7)` }, dirG), 0, 0, 'rv-car-dir', '')
+    const hdg = sevenRow(dirG, { x: 52, y: y + 26, n: 3, ...small })
+    el('circle', { cx: 99, cy: y + 28, r: 2.2, class: 'rv-car-deg' }, dirG)
+    this.hdg = { g: hg, win: hWin, dirG, pt, deg: hdg, last: null }
   }
 
   onScale(scale) {
@@ -188,6 +232,40 @@ export default class SegmentStyle extends GaugeStyle {
     const w = (this.v.water - WATER.lo) / (WATER.hi - WATER.lo)
     this.paintBar(this.bars.water, i.running ? w : 0, force)
     this.paintBar(this.bars.batt, this.v.fuel, force)
+    this.paintCar(force)
+  }
+
+  paintCar(force) {
+    const i = this.i, T = this.temps, H = this.hdg
+    // Temperatures: lay the window out for what is known.
+    const o = i.outsideC == null ? null : deg(i.outsideC)
+    const n = i.insideC == null ? null : deg(i.insideC)
+    const tKey = `${o}|${n}`
+    if (force || tKey !== T.last) {
+      T.last = tKey
+      const x0 = CAR.pad, l = 12
+      T.g.style.display = o == null && n == null ? 'none' : ''
+      T.outG.style.display = o == null ? 'none' : ''
+      T.inG.style.display = n == null ? 'none' : ''
+      if (o != null) { T.out.set(o); T.outG.setAttribute('transform', `translate(${x0 + l} 0)`) }
+      const inX = x0 + l + (o == null ? 0 : 76)
+      if (n != null) { T.inn.set(n); T.inG.setAttribute('transform', `translate(${inX} 0)`) }
+      T.win.setAttribute('width', n != null ? inX + 50 + 10 - x0 : l + 63 + 10)
+    }
+    // Heading: an 8-point compass letter and whole degrees.
+    const h = i.heading == null || !Number.isFinite(i.heading) ? null : ((Math.round(i.heading) % 360) + 360) % 360
+    const hKey = h == null ? null : `${POINTS[Math.round(h / 45) % 8]}|${h}`
+    if (force || hKey !== H.last) {
+      H.last = hKey
+      H.g.style.display = h == null ? 'none' : ''
+      if (h != null) {
+        const w = 12 + 103 + 10, x0 = VIEW.w - CAR.pad - w
+        H.win.setAttribute('x', x0); H.win.setAttribute('width', w)
+        H.dirG.setAttribute('transform', `translate(${x0 + 12} 0)`)
+        setText(H.pt, POINTS[Math.round(h / 45) % 8])
+        H.deg.set(String(h))
+      }
+    }
   }
 
   paintBar(bar, f, force) {

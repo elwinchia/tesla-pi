@@ -478,6 +478,10 @@ export class RevSound {
         this.error = null
         this.rate.hit(t)
         this.engine.fix(t, pos.coords.speed)
+        // The direction of travel, for the dash's compass. The car's
+        // browser keeps reporting it while parked.
+        const h = pos.coords.heading
+        if (Number.isFinite(h)) this.heading = { deg: ((h % 360) + 360) % 360, at: Date.now() }
       },
       (err) => {
         this.error = err && err.code === 1

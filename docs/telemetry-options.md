@@ -3,9 +3,12 @@
 Status: **Tier 2 is working end to end. Tier 1 measured parked. The Drive run is
 the one thing still outstanding.** Two things use Tier 2: the "Your car" card
 (button-driven), and the engine sound's dash (`static/rev-car.js`), which reads
-`charge` and `drive` once when the engine sound starts and `charge` every five
-minutes while it runs, for its battery and fuel gauges. Both go through
-`/telemetry/ble` and its cache and queue.
+`charge`, `drive`, `climate` and `tire-pressure` once when the engine sound
+starts, then `charge` and `climate` every five minutes while it runs and
+`tire-pressure` every fifteen, for its battery and fuel gauges, range,
+odometer, temperatures and tyres. Both go through `/telemetry/ble` and its
+cache and queue. `batteryRange` is in miles, like the odometer, whatever the
+car's screen shows: 181 at 71 % on a Model 3 RWD is miles (about 291 km).
 
 Split out of [`llm-companion-options.md`](llm-companion-options.md) §6 when the
 companion was shelved (2026-08-27). Telemetry now has to justify itself on its

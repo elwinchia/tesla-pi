@@ -66,6 +66,11 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-trip tspan { fill: #5c5e62; }
   .gs-fivedial[data-theme=day] .fd-trip tspan.n { fill: #1f2124; }
   .gs-fivedial[data-theme=day] .fd-odo { fill: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-lcd tspan.u { fill: #6b6e72; }
+  .gs-fivedial[data-theme=day] .fd-lcd.dim { fill: #5c5e62; }
+  .gs-fivedial[data-theme=day] .fd-car.warn .fd-lcd { fill: ${DAY_RED}; }
+  .gs-fivedial[data-theme=day] .fd-carbody { stroke: #8e9195; }
+  .gs-fivedial[data-theme=day] .fd-carbody .w { fill: #8e9195; }
   .gs-fivedial[data-theme=day] .fd-gear { fill: #1f2124; filter: none; }
   .gs-fivedial[data-theme=day][data-zone=red] .fd-gear { fill: ${DAY_RED}; }
   .gs-fivedial[data-theme=day] .fd-tick { stroke: #1f2124; }
@@ -144,6 +149,13 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-kmh { font-size: 40px; font-weight: 200; text-anchor: middle; fill: #ececec; }
       .gs-fivedial .fd-unit { font-size: 15px; font-weight: 600; text-anchor: middle; fill: #a9a9ab; }
       .gs-fivedial .fd-odo { font-size: 14px; font-weight: 500; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; fill: #b9b9bb; font-variant-numeric: tabular-nums; }
+      .gs-fivedial .fd-lcd { font-size: 14px; font-weight: 500; dominant-baseline: central; letter-spacing: 0.06em; fill: #c9c9cb; font-variant-numeric: tabular-nums; }
+      .gs-fivedial .fd-lcd tspan.u { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; fill: #8a8a8d; }
+      .gs-fivedial .fd-lcd.sm { font-size: 12px; letter-spacing: 0.03em; }
+      .gs-fivedial .fd-lcd.dim { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; fill: #8a8a8d; }
+      .gs-fivedial .fd-car.warn .fd-lcd { fill: #ff5a3c; }
+      .gs-fivedial .fd-carbody { fill: none; stroke: #5c5c60; stroke-width: 1.2; }
+      .gs-fivedial .fd-carbody .w { fill: #5c5c60; stroke: none; }
       .gs-fivedial .fd-trip { font-size: 15px; font-weight: 500; fill: #f0f0f0; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-trip tspan { fill: #a9a9ab; font-weight: 400; }
       .gs-fivedial .fd-trip tspan.n { fill: #f0f0f0; }
@@ -172,6 +184,7 @@ ${DAY}
     this.buildTach()
     this.buildSpeed()
     this.buildClock()
+    this.buildCar()
     this.last = {}
   }
 
@@ -488,6 +501,76 @@ ${DAY}
     el('circle', { cx, cy: CY, r: R * 0.065, fill: this.url('knob'), stroke: '#3a3a3d', 'stroke-width': 1, class: 'fd-knob' }, g)
   }
 
+  // ── The car's own readouts ────────────────────────────────────────────
+  // Small LCD windows like the odometer's, set into the housing in the free
+  // space over and under the side dials: outside and cabin temperature over
+  // the water dial, the heading over the speedometer, and the tyre
+  // pressures under the oil-pressure (DRUCK) dial, front pair over rear
+  // pair beside a little car seen from above. Each is hidden while its value
+  // is null, so with nothing read the cluster looks as it always did.
+  buildCar() {
+    const g = el('g', { class: 'fd-cars' }, this.svg)
+    const chip = (parent, x, y, w, h) =>
+      el('rect', { x: f1(x), y: f1(y), width: f1(w), height: h, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1, class: 'fd-chip' }, parent)
+    const hidden = (cls = 'fd-car') => el('g', { class: cls, style: 'display:none' }, g)
+    // Temperatures: "32°  IN 22°", centred over the water dial.
+    const T = this.carTemp = { g: hidden(), cx: D.temp.cx, y: 31, h: 18 }
+    T.chip = chip(T.g, T.cx - 40, T.y, 80, T.h)
+    T.t = text(T.g, T.cx, T.y + T.h / 2 + 0.5, 'fd-lcd', '', { 'text-anchor': 'middle' })
+    T.out = el('tspan', {}, T.t)
+    T.inU = el('tspan', { class: 'u' }, T.t)
+    T.inN = el('tspan', {}, T.t)
+    // Heading: "E 89°", centred over the speedometer.
+    const H = this.carHead = { g: hidden(), cx: D.speed.cx, y: 31, h: 18 }
+    chip(H.g, H.cx - 31, H.y, 62, H.h)
+    H.t = text(H.g, H.cx, H.y + H.h / 2 + 0.5, 'fd-lcd', '', { 'text-anchor': 'middle' })
+    // Tyres: a 2×2 grid either side of a small car, "bar" at the right.
+    const cx = D.temp.cx - 10, y = 294, h = 30
+    const Y = this.carTyre = { g: hidden() }
+    chip(Y.g, cx - 45, y, 110, h)
+    const body = el('g', { class: 'fd-carbody' }, Y.g)
+    el('rect', { x: cx - 4, y: y + 5, width: 8, height: h - 10, rx: 3 }, body)
+    for (const [dx, dy] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
+      el('rect', { x: f1(cx + dx * 5.4 - 1.1), y: f1(y + 7.5 + dy * 10.5), width: 2.2, height: 4.5, rx: 0.8, class: 'w' }, body)
+    }
+    Y.n = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([sx, row]) =>
+      text(Y.g, f1(cx + sx * 10.5), f1(y + 8.5 + row * 13), 'fd-lcd sm', '', { 'text-anchor': sx < 0 ? 'end' : 'start' }))
+    text(Y.g, cx + 46, y + h / 2 + 0.5, 'fd-lcd dim', 'bar', { 'text-anchor': 'start' })
+  }
+
+  // The car's readouts (buildCar), redrawn only when what they show changes.
+  paintCar(force) {
+    const i = this.i, num = (x) => x != null && Number.isFinite(x)
+    const deg = (c) => (Math.round(c) < 0 ? '\u2212' : '') + Math.abs(Math.round(c)) + '°'
+    const show = (o, on) => { if (o.on !== on) { o.on = on; o.g.style.display = on ? '' : 'none' } }
+    // Temperatures.
+    const T = this.carTemp, out = num(i.outsideC) ? deg(i.outsideC) : '', inn = num(i.insideC) ? deg(i.insideC) : ''
+    if (this.moved('carTemp', out + '|' + inn, force)) {
+      show(T, !!(out || inn))
+      T.out.textContent = out
+      T.inU.textContent = inn ? (out ? '\u2002IN ' : 'IN ') : ''
+      T.inN.textContent = inn
+      // The window fits its text: measured when drawn, else estimated.
+      let w = 0
+      try { w = T.t.getComputedTextLength() } catch {}
+      if (!(w > 0)) w = (out.length + inn.length) * 9 + (inn ? 22 : 0)
+      const cw = Math.round(w + 16)
+      T.chip.setAttribute('x', f1(T.cx - cw / 2)); T.chip.setAttribute('width', cw)
+    }
+    // Heading: the nearest of eight points, then the degrees.
+    const H = this.carHead, hd = num(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
+    const hs = hd == null ? '' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(hd / 45) % 8] + '\u2002' + hd + '°'
+    if (this.moved('carHead', hs, force)) { show(H, !!hs); H.t.textContent = hs }
+    // Tyres, red on a warning.
+    const Y = this.carTyre, ty = Array.isArray(i.tyres) && i.tyres.some(num) ? i.tyres : null
+    const ys = ty ? ty.slice(0, 4).map((p) => (num(p) ? p.toFixed(2) : '')).join(' ') + (i.tyreWarn ? '!' : '') : ''
+    if (this.moved('carTyre', ys, force)) {
+      show(Y, !!ty)
+      if (ty) Y.n.forEach((t, k) => { t.textContent = num(ty[k]) ? ty[k].toFixed(2) : '' })
+      Y.g.classList.toggle('warn', !!(ty && i.tyreWarn))
+    }
+  }
+
   // True when key's value moved since the last paint (or force).
   moved(key, val, force) {
     if (!force && this.last[key] === val) return false
@@ -522,6 +605,7 @@ ${DAY}
     setText(this.kmh, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
     setText(this.odo, String(Math.floor(v.odo) % 1000000).padStart(6, '0'))
     setText(this.tripN, (Math.floor(v.trip * 10) / 10).toFixed(1))
+    this.paintCar(force)
     // The clock: the seconds trace moves every frame, smoothly; the hands
     // turn only when the second changes.
     const c = i.clock instanceof Date ? i.clock : new Date()

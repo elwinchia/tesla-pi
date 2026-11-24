@@ -10,6 +10,8 @@ import { Instruments, tachScale, hhmm } from './gauges/kit.js'
 import { STYLES, loadStyle, styleKey } from './gauges/index.js'
 import { clusterInput } from './rev-gauge.js'
 import { FRESH_MS } from './rev-car.js'
+// A heading older than this is not shown: GPS has gone quiet.
+const HEADING_FRESH_MS = 60 * 1000
 
 const SAVE_KEY = 'revInstruments'
 const SAVE_EVERY_MS = 5000
@@ -118,6 +120,14 @@ export class Dash {
     if (real && st.running && real.soc != null) read.fuel = real.soc
     read.rangeKm = real && real.rangeKm != null ? real.rangeKm : null
     read.carReal = !!(real && real.soc != null)
+    // The rest of the car's readings, null until read (or once stale):
+    // outside and cabin temperature, the tyres; and the heading from GPS.
+    read.outsideC = real && real.outsideC != null ? real.outsideC : null
+    read.insideC = real && real.insideC != null ? real.insideC : null
+    read.tyres = real && real.tyres ? real.tyres : null
+    read.tyreWarn = !!(real && real.tyres && real.tyreWarn)
+    const hd = this.rs.heading
+    read.heading = hd && Date.now() - hd.at < HEADING_FRESH_MS ? hd.deg : null
     if (this.style) {
       this.style.set({ ...read, clock: new Date() })
       this.style.frame(dt)

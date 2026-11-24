@@ -3863,7 +3863,9 @@
 
     // Battery
     if (cs.batteryLevel != null) {
-      const km = cs.batteryRange != null ? ' · about ' + Math.round(cs.batteryRange) + ' km' : '';
+      // The car gives its range in miles (as the odometer), whatever its
+      // screen shows: 181 at 71% is a Model 3's miles, not its km.
+      const km = cs.batteryRange != null ? ' · about ' + Math.round(cs.batteryRange * 1.609344) + ' km' : '';
       carSet('c-batt', cs.batteryLevel + '%' + km);
     }
 

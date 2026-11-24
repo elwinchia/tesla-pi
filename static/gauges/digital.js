@@ -39,6 +39,7 @@ const DX = 1196                 // the right panel is the left one, moved over
 const TACH_CX = SPEED_CX + DX
 const SPEED_MAX = 200
 const FUEL_BARS = 13
+const TY = { cx: 530, y0: 320, dy: 54 }   // the tyre block: the car's centre, front axle, axle gap
 const fanAngle = (f) => 180 + 90 * clamp(f, 0, 1)
 
 // The tach's colour along its scale: dark green, green, yellow near the
@@ -100,6 +101,11 @@ const CSS = `
 .gs-digital .dg-lab { fill: ${C.yellow}; font-size: 23px; font-weight: 500; }
 .gs-digital .dg-lab.dim { fill: ${C.dim}; }
 .gs-digital .dg-lab.mid { text-anchor: middle; }
+.gs-digital .dg-lab.end { text-anchor: end; }
+.gs-digital .dg-big.start { text-anchor: start; }
+.gs-digital .dg-in { font-size: 26px; font-weight: 500; }
+.gs-digital .dg-tyres.warn .dg-tyre { fill: ${C.red}; }
+.gs-digital .dg-tyres.warn .dg-icon { stroke: ${C.red}; }
 .gs-digital .dg-head { font-size: 26px; text-anchor: middle; }
 .gs-digital .dg-fuel-lab { fill: ${C.yellow}; font-size: 25px; font-weight: 500; }
 .gs-digital .dg-ftick { stroke: #3f5a37; stroke-width: 5; stroke-linecap: round; }
@@ -168,6 +174,8 @@ const CSS = `
 .gs-digital[data-theme=day] .dg-pdot { fill: #c4540a; }
 .gs-digital[data-theme=day] .dg-sim { fill: #1f2124; }
 .gs-digital[data-theme=day] .dg-finger { fill: rgba(0, 0, 0, 0.08); stroke: #393c41; }
+.gs-digital[data-theme=day] .dg-tyres.warn .dg-tyre { fill: ${D.red}; }
+.gs-digital[data-theme=day] .dg-tyres.warn .dg-icon { stroke: ${D.red}; }
 .gs-digital[data-theme=day][data-zone=red] .dg-tach-frame { stroke: ${D.red}; }
 .gs-digital[data-theme=day][data-zone=red] .dg-tach-num { fill: ${D.red}; }
 `
@@ -227,6 +235,7 @@ export default class DigitalStyle extends GaugeStyle {
     this.tachG = el('g', {}, s)
     this.tachScaleG = el('g', { filter: this.url('glow'), class: 'dg-scale' }, s)
     this.tachNum = this.readout(s, 350 + DX, 'RPM/100', 140, 'tach')
+    this.buildCar(s)
     this.simTag = text(s, 1336, 136, 'dg-sim', 'SIM')
     this.simTag.style.display = 'none'
     this.finger = el('circle', { r: 40, class: 'dg-finger', style: 'display:none' }, s)
@@ -336,6 +345,37 @@ export default class DigitalStyle extends GaugeStyle {
     this.prog = el('rect', { x: 793, y: 602, width: 0, height: 9, rx: 4.5, fill: this.url('pfill') }, s)
     this.progDot = el('circle', { cx: 793, cy: 606.5, r: 6.5, class: 'dg-pdot' }, s)
     this.progW = -1
+  }
+
+  // The car's own readings, in the free space inside each fan above its
+  // readout: tyre pressures in the speed panel, the heading and the outside
+  // and cabin temperatures in the rev panel. Each is hidden until read.
+  buildCar(s) {
+    // Tyres: the car from above, each wheel's pressure beside it.
+    const ty = this.tyreG = el('g', { class: 'dg-tyres', style: 'display:none' }, s)
+    text(ty, 622, TY.y0 - 46, 'dg-lab end', 'TYRE PRESS')
+    el('rect', { x: TY.cx - 14, y: TY.y0 - 22, width: 28, height: TY.dy + 44, rx: 11, class: 'dg-icon' }, ty)
+    for (const [dx, dy] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
+      el('rect', { x: TY.cx + dx * 17 - 4, y: TY.y0 - 9 + dy * TY.dy, width: 8, height: 18, rx: 3, class: 'dg-icon-fill dg-tyre' }, ty)
+    }
+    this.tyreNums = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([dx, dy]) =>
+      text(ty, TY.cx + dx * 30, TY.y0 + dy * TY.dy, `dg-big dg-tyre ${dx < 0 ? 'end' : 'start'}`, '', { 'font-size': 32, 'dominant-baseline': 'central' }))
+    text(ty, 622, TY.y0 + TY.dy + 46, 'dg-lab end', 'BAR')
+    this.tyreLast = null
+
+    // Heading and temperatures, right-aligned inside the rev fan.
+    const R = 618 + DX
+    const hg = this.headG = el('g', { style: 'display:none' }, s)
+    text(hg, R, 284, 'dg-lab end', 'HEADING')
+    this.headNum = text(hg, R, 330, 'dg-big end', '', { 'font-size': 46 })
+    this.headLast = null
+    const tg = this.tempG = el('g', { style: 'display:none' }, s)
+    this.tempLab = text(tg, R, 366, 'dg-lab end', 'OUTSIDE')
+    // The outside temperature big, the cabin's small after it, as one line.
+    const tl = text(tg, R, 412, 'dg-big end', '', { 'font-size': 46 })
+    this.tempNum = el('tspan', {}, tl)
+    this.inNum = el('tspan', { class: 'dg-in' }, tl)
+    this.tempLast = null
   }
 
   // Squeeze a label into `max` units if the car's font sets it wider.
@@ -454,6 +494,39 @@ export default class DigitalStyle extends GaugeStyle {
       this.progW = pw
       this.prog.setAttribute('width', pw)
       this.progDot.setAttribute('cx', 793 + pw)
+    }
+    this.paintCar(force)
+  }
+
+  // The car's readings: only touch the DOM when what is shown changes.
+  paintCar(force) {
+    const i = this.i
+    const deg = (c) => Math.round(c) + '°'
+    const t = Array.isArray(i.tyres) && i.tyres.length === 4 && i.tyres.every(Number.isFinite) ? i.tyres : null
+    const tKey = t ? t.map((b) => b.toFixed(2)).join(' ') + (i.tyreWarn ? '!' : '') : ''
+    if (force || tKey !== this.tyreLast) {
+      this.tyreLast = tKey
+      this.tyreG.style.display = t ? '' : 'none'
+      if (t) t.forEach((b, k) => setText(this.tyreNums[k], b.toFixed(2)))
+      this.tyreG.classList.toggle('warn', !!(t && i.tyreWarn))
+    }
+    const h = Number.isFinite(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
+    const hKey = h == null ? '' : ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(h / 45) % 8] + ' ' + h + '°'
+    if (force || hKey !== this.headLast) {
+      this.headLast = hKey
+      this.headG.style.display = hKey ? '' : 'none'
+      setText(this.headNum, hKey)
+    }
+    const out = Number.isFinite(i.outsideC) ? i.outsideC : null, ins = Number.isFinite(i.insideC) ? i.insideC : null
+    const big = out ?? ins, small = out != null && ins != null ? '  IN ' + deg(ins) : ''
+    const tKey2 = big == null ? '' : (out != null ? 'OUTSIDE' : 'INSIDE') + '|' + deg(big) + '|' + small
+    if (force || tKey2 !== this.tempLast) {
+      this.tempLast = tKey2
+      this.tempG.style.display = tKey2 ? '' : 'none'
+      if (tKey2) {
+        const [lab, num] = tKey2.split('|')
+        setText(this.tempLab, lab); setText(this.tempNum, num); setText(this.inNum, small)
+      }
     }
   }
 

@@ -20,6 +20,7 @@ const R = { bezel: RB - 3.5, rim: RB - 8.5, band: 148, dots: 133, tickIn: 123, t
 const N = 30
 const YELLOW = '#f5c814'
 const CARDINAL = [0, 90, 180, 270]
+const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 // The centre grid: four tiles in a grey frame.
 const GRID = { x: 370, y: 96, w: 360, h: 178, pad: 6 }
 const TILES = [
@@ -38,6 +39,8 @@ function eighths(f) {
   return n + '/' + d
 }
 const fx = (n) => n.toFixed(1)
+// Whole degrees with a true minus sign (and no "-0").
+const degC = (c) => { const n = Math.round(c); return (n < 0 ? '\u2212' + -n : String(n)) + '°' }
 // Angles a and c within w degrees of each other, round the circle.
 const near = (a, c, w) => Math.abs((((a - c) % 360) + 540) % 360 - 180) < w
 // Narrowed text: the tiles' numerals are a condensed face, and the car's
@@ -96,6 +99,16 @@ export default class CrosshairStyle extends GaugeStyle {
       .gs-crosshair .cx-arrow path { fill: #1a160a; }
       .gs-crosshair .cx-lamp { fill: #3a1310; opacity: 0.8; }
       .gs-crosshair .cx-finger { fill: rgba(245, 200, 20, 0.18); stroke: #ffe680; stroke-width: 3; pointer-events: none; }
+      .gs-crosshair .cx-temp { fill: #f4eed4; font: 700 24px "Helvetica Neue", -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+      .gs-crosshair .cx-temp .in { fill: #aca688; font-size: 16px; font-weight: 600; }
+      .gs-crosshair .cx-head { font-size: 16px; font-weight: 600; }
+      .gs-crosshair .cx-bug { fill: ${YELLOW}; }
+      .gs-crosshair .cx-tyre { fill: #f4eed4; font: 700 18px "Helvetica Neue", -apple-system, system-ui, sans-serif; dominant-baseline: central; }
+      .gs-crosshair .cx-tyreu { fill: #a39e84; font: 600 12px "Helvetica Neue", -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+      .gs-crosshair .cx-carbody { fill: none; stroke: #8a761c; stroke-width: 1.6; }
+      .gs-crosshair .cx-wheel { fill: ${YELLOW}; }
+      .gs-crosshair .cx-tyres.warn .cx-tyre { fill: #ff5a3c; }
+      .gs-crosshair .cx-tyres.warn .cx-wheel { fill: #ff5a3c; }
 
       /* Day: the same instrument in Tesla's light UI, on the #d6d7d6 floor.
          Light faces in pale metal bezels, the sweeps in solid darker amber
@@ -154,6 +167,15 @@ export default class CrosshairStyle extends GaugeStyle {
       .gs-crosshair[data-theme=day] .cx-arrow path { fill: rgba(0, 0, 0, 0.28); }
       .gs-crosshair[data-theme=day] .cx-lamp { fill: rgba(190, 40, 20, 0.14); opacity: 1; }
       .gs-crosshair[data-theme=day] .cx-finger { fill: rgba(217, 163, 0, 0.18); stroke: #c78f00; }
+      .gs-crosshair[data-theme=day] .cx-temp,
+      .gs-crosshair[data-theme=day] .cx-tyre { fill: #1f2124; }
+      .gs-crosshair[data-theme=day] .cx-temp .in,
+      .gs-crosshair[data-theme=day] .cx-tyreu { fill: #5c5e62; }
+      .gs-crosshair[data-theme=day] .cx-bug { fill: #c99700; }
+      .gs-crosshair[data-theme=day] .cx-carbody { stroke: #8d9094; }
+      .gs-crosshair[data-theme=day] .cx-wheel { fill: #d9a300; }
+      .gs-crosshair[data-theme=day] .cx-tyres.warn .cx-tyre,
+      .gs-crosshair[data-theme=day] .cx-tyres.warn .cx-wheel { fill: #d8401a; }
     `)
     const defs = el('defs', {}, s)
     // Brushed grey metal: lighter on top, as if lit from above.
@@ -180,6 +202,9 @@ export default class CrosshairStyle extends GaugeStyle {
     el('stop', { offset: '1', 'stop-color': '#9c7d22' }, gold)
     // "RPM × 1000" follows the tach's ring in its empty upper right.
     el('path', { id: this.id('rpmlabel'), d: arcPath(TACH.cx, TACH.cy, R.dots + 2, 296, 352) }, defs)
+    // The heading follows the speedo's ring in its empty lower left, run
+    // anticlockwise so it reads upright, tops toward the centre.
+    el('path', { id: this.id('headlabel'), d: arcPath(SPEEDO.cx, SPEEDO.cy, R.dots + 12, 166, 104) }, defs)
 
     // ── Speedometer: no numerals, as on the original ──
     const sp = el('g', { class: 'cx-speedo' }, s)
@@ -242,6 +267,42 @@ export default class CrosshairStyle extends GaugeStyle {
       el('text', { class: 'cx-tlabel', 'text-anchor': 'end', transform: narrow(x1 + 2, ly) }, g).textContent = p.labels[2]
       return { ...p, g, val, fill, x0, x1, x: NaN, isHot: false, shown: '' }
     })
+    this.carReadouts(s, sp)
+  }
+
+  // The car's own readouts, each hidden until it is read: the outside and
+  // cabin temperatures over the tiles, level with the turn arrows; the
+  // heading on the speedo's empty lower left, with a bug on its gunsight;
+  // the tyre pressures under the tiles, round a little car seen from above.
+  carReadouts(s, sp) {
+    const t = this.temp = el('text', { class: 'cx-temp', transform: narrow(GRID.x + GRID.w / 2, 54, 0.82), style: 'display:none' }, s)
+    this.tempOut = el('tspan', {}, t)
+    this.tempIn = el('tspan', { class: 'in' }, t)
+    this.tempShown = null
+
+    const hg = this.headG = el('g', { style: 'display:none' }, sp)
+    const lab = text(hg, 0, 0, 'cx-arc-label cx-head', '')
+    lab.removeAttribute('x'); lab.removeAttribute('y')
+    this.headText = el('textPath', { href: '#' + this.id('headlabel'), startOffset: '50%', 'text-anchor': 'middle' }, lab)
+    // A small bug just outside the gunsight's outer circle, pointing in;
+    // north is up.
+    const { cx, cy } = SPEEDO, r = R.c1 + 2
+    this.bug = el('path', { class: 'cx-bug', d: `M${cx} ${cy - r}L${cx - 5} ${cy - r - 10}H${cx + 5}Z` }, hg)
+    this.headShown = null
+
+    const cx2 = GRID.x + GRID.w / 2, y0 = GRID.y + GRID.h + 12
+    const tg = this.tyreG = el('g', { class: 'cx-tyres', style: 'display:none' }, s)
+    // The car: a body outline and four wheels, front up.
+    el('rect', { x: cx2 - 11, y: y0, width: 22, height: 50, rx: 8, class: 'cx-carbody' }, tg)
+    el('path', { d: `M${cx2 - 8} ${y0 + 15}Q${cx2} ${y0 + 11} ${cx2 + 8} ${y0 + 15}M${cx2 - 8} ${y0 + 38}Q${cx2} ${y0 + 41} ${cx2 + 8} ${y0 + 38}`, class: 'cx-carbody' }, tg)
+    const wy = [y0 + 6, y0 + 33]
+    for (const y of wy) for (const x of [cx2 - 15, cx2 + 11]) el('rect', { x, y, width: 4, height: 11, rx: 1.5, class: 'cx-wheel' }, tg)
+    this.tyreVals = [0, 1, 2, 3].map((k) => {
+      const left = k % 2 === 0, y = wy[k >> 1] + 5.5
+      return el('text', { class: 'cx-tyre', 'text-anchor': left ? 'end' : 'start', transform: narrow(cx2 + (left ? -24 : 24), y, 0.8) }, tg)
+    })
+    text(tg, cx2, y0 + 62, 'cx-tyreu', 'bar')
+    this.tyreShown = null
   }
 
   // Grey bezel, black face, and the dim inner ring of dots along the band.
@@ -378,6 +439,46 @@ export default class CrosshairStyle extends GaugeStyle {
     const on = !!i.running
     if (force || on !== this.gearOn) { this.gearOn = on; this.gearG.classList.toggle('off', !on) }
     for (const p of this.tiles) this.paintTile(p, v[p.key], force)
+    this.paintCar(force)
+  }
+
+  // The car's readouts: touch the DOM only when the shown text changes.
+  paintCar(force) {
+    const i = this.i
+    const out = Number.isFinite(i.outsideC) ? degC(i.outsideC) : ''
+    const inn = Number.isFinite(i.insideC) ? 'in ' + degC(i.insideC) : ''
+    const tk = out + '|' + inn
+    if (force || tk !== this.tempShown) {
+      this.tempShown = tk
+      this.tempOut.textContent = out
+      this.tempIn.textContent = inn
+      if (out && inn) this.tempIn.setAttribute('dx', 12); else this.tempIn.removeAttribute('dx')
+      this.temp.style.display = out || inn ? '' : 'none'
+    }
+
+    const h = Number.isFinite(i.heading) ? ((Math.round(i.heading) % 360) + 360) % 360 : null
+    if (force || h !== this.headShown) {
+      this.headShown = h
+      if (h == null) this.headG.style.display = 'none'
+      else {
+        this.headText.textContent = POINTS[Math.round(h / 45) % 8] + ' ' + h + '°'
+        this.bug.setAttribute('transform', `rotate(${h} ${SPEEDO.cx} ${SPEEDO.cy})`)
+        this.headG.style.display = ''
+      }
+    }
+
+    const ty = Array.isArray(i.tyres) && i.tyres.length === 4 ? i.tyres : null
+    const vals = ty ? ty.map((b) => (Number.isFinite(b) ? b.toFixed(2) : '–')) : null
+    const yk = vals ? vals.join(' ') + (i.tyreWarn ? ' !' : '') : ''
+    if (force || yk !== this.tyreShown) {
+      this.tyreShown = yk
+      if (!vals) this.tyreG.style.display = 'none'
+      else {
+        vals.forEach((s, k) => { this.tyreVals[k].textContent = s })
+        this.tyreG.classList.toggle('warn', !!i.tyreWarn)
+        this.tyreG.style.display = ''
+      }
+    }
   }
 
   paintDial(b, f, force) {

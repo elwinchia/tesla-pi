@@ -11,7 +11,9 @@
        ?style=<key>|all  &rpm=4500 &kmh=92 &gear=3 &water=90 &running=1
        &theme=night|day  &w=1280 &h=357 (the dock's size)  &redline=9000 &idle=900
        &hand=1|0  &anim=1 (sweep the revs)
-       &soc=0.62 &range=320 (a reading from the car, as over Bluetooth) -->
+       &soc=0.62 &range=320 (a reading from the car, as over Bluetooth)
+       &out=32 &in=22 &tyres=2.98,2.95,3.00,3.02 &tyrewarn=1 (more of it)
+       &heading=89 (from GPS) -->
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0; padding: 12px; font: 14px -apple-system, system-ui, sans-serif; background: #eee; }
@@ -35,7 +37,7 @@
   const profile = { name: 'V10', style: 'LFA-style', redline, idle }
   // A stand-in for RevSound: just enough for the dash.
   // setRev is recorded, for checking that holding the rev meter revs.
-  const rs = { engine: { profile, sim: false }, running, revs: [], start() {}, stop() {}, setRev(x) { this.revs.push(x) }, blip() {}, setSim() {} }
+  const rs = { engine: { profile, sim: false }, running, revs: [], heading: q.has('heading') ? { deg: num('heading', 0), at: Date.now() + 864e5 } : null, start() {}, stop() {}, setRev(x) { this.revs.push(x) }, blip() {}, setSim() {} }
   const keys = q.get('style') === 'all' || !q.get('style') ? Object.keys(STYLES) : [styleKey(q.get('style'))]
   const dashes = []
   for (const k of keys) {
@@ -47,6 +49,8 @@
     const d = new Dash(dock, { rs, hand: () => num('hand', 1), onSettings: () => {}, storage: { getItem: () => null, setItem() {} },
       theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day') })
     if (q.has('soc')) d.onCar({ soc: num('soc', 0.5), rangeKm: q.has('range') ? num('range', 0) : null, at: Date.now() })
+    if (q.has('out') || q.has('in')) d.onCar({ outsideC: q.has('out') ? num('out', 0) : undefined, insideC: q.has('in') ? num('in', 0) : undefined, at: Date.now() })
+    if (q.has('tyres')) d.onCar({ tyres: q.get('tyres').split(',').map(Number), tyreWarn: q.get('tyrewarn') === '1', at: Date.now() })
     d.inst.water = num('water', 90); d.inst.oil = num('oil', 98); d.inst.trip = num('trip', 641.9); d.inst.odo = num('odo', 73998)
     dashes.push(d)
     await d.setStyle(k)
