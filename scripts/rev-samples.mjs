@@ -182,9 +182,15 @@ function credits() {
     'rendered with `scripts/engine-sim/`, then cut, made to loop by crossfading',
     'each end into its start, equalised and given a low-passed dry sub layer where',
     '`static/rev-samples.js` says so, filtered below 25 Hz, levelled and encoded as',
-    'Ogg Opus by `scripts/rev-samples.mjs`.', '')
+    'Ogg Opus by `scripts/rev-samples.mjs`. The `*-start` and `*-stop` clips are',
+    'renders of the engine starting and stopping (`render-oneshots.sh`); the',
+    "start's cranking is mixed with a starter motor we synthesise",
+    '(`--oneshots`).', '')
   for (const [id, c] of Object.entries(CREDITS)) {
-    const used = [...new Set(Object.entries(SAMPLE_SETS).flatMap(([car, set]) => set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm${l.layer && l.layer !== 'any' ? ', ' + l.layer : ''})`)))]
+    const used = [...new Set(Object.entries(SAMPLE_SETS).flatMap(([car, set]) => [
+      ...set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm${l.layer && l.layer !== 'any' ? ', ' + l.layer : ''})`),
+      ...(c.kind === 'render' && set.oneshots ? ['start', 'stop'].flatMap((k) => ['engine', 'exhaust'].map((g) => `\`${set.oneshots[k][g]}\` (${car}, ${k})`)) : []),
+    ]))]
     if (c.kind === 'render') {
       lines.push(`## ${c.title} by ${c.author}`, '',
         `- What: ${c.recording}`,
@@ -284,7 +290,199 @@ function printLevels(car) {
   }
 }
 
+// ── Start and stop ───────────────────────────────────────────────────────
+// --oneshots [car]: each car's engine start and stop, from the renders of
+// scripts/engine-sim/render-oneshots.sh, heard the same two ways as its
+// loops (engine, exhaust) with the same EQ and dry sub layer, levelled so
+// the clip's idle is exactly as loud as the car's idle loop: the player
+// hands over from one to the other.
+//
+// The start: engine-sim models combustion and the exhaust, not the starter
+// motor, and its cranking is 35-40 dB under its idle. So the cranking is
+// taken from the render made 33x louder (start-hi.wav, the same run), set
+// to CHUFF x the idle, and a starter motor is synthesised over it: the
+// solenoid's clunk, the motor's whine labouring at each compression, a
+// little gear grind, and the clunk as it lets go when the engine catches.
+// The flare after the catch is held to FLARE_CAP x the idle: the loops'
+// own levels are square-rooted (rev-samples.js), and an unsquashed flare
+// would be ten times louder than anything else the engine does. And as the
+// revs fall back from the flare, closed throttle, engine-sim goes as quiet
+// as its overrun; that is lifted to FALL_FLOOR x the idle, as the loops'
+// overrun is (their levels are square-rooted too).
+const CHUFF = 0.3, STARTER = 0.55, FLARE_CAP = 2.6, FALL_FLOOR = 0.6
+const HI_GAIN = 0.2 / 0.006 // render-oneshots.sh's two gains
+
+function rmsOf(x, a = 0, b = x.length) {
+  let s = 0
+  for (let i = a; i < b; i++) s += x[i] * x[i]
+  return Math.sqrt(s / Math.max(1, b - a))
+}
+// The same rumble filter as level(), from cold: these clips start silent.
+function derumble(x) {
+  let lp = 0
+  const a = 1 - Math.exp(-2 * Math.PI * 25 / SR)
+  for (let i = 0; i < x.length; i++) { lp += (x[i] - lp) * a; x[i] -= lp }
+  return x
+}
+function decodeAll(file) { return decode(file, 0, 100) }
+function eqd(file, eq) { const x = decodeAll(file); for (const f of eq || []) shelf(x, SR, f); return x }
+// The main render with its EQ and the dry sub layer, the sub's share
+// measured where the engine idles (from a to b).
+function oneshotMix(set, group, name, a, b) {
+  const main = eqd(path.join(ROOT, '.cache', 'engine-sim', 'out', set.renders[group], name + '.wav'), set.eq)
+  if (!set.sub) return main
+  const sub = decodeAll(path.join(ROOT, '.cache', 'engine-sim', 'out', set.sub.renders, name + '.wav'))
+  lowpass(sub, SR, set.sub.lowpass); lowpass(sub, SR, set.sub.lowpass)
+  const g = set.sub.level * rmsOf(main, a, b) / (rmsOf(sub, a, b) || 1)
+  for (let i = 0; i < main.length; i++) main[i] += g * (sub[i] || 0)
+  return main
+}
+
+// A small deterministic noise source, so a rebuild gives the same file.
+function noise(seed = 1) {
+  let s = seed >>> 0
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 31 - 1 }
+}
+// The starter motor, from `from` to `to` seconds: its whine (gear mesh,
+// ~380 Hz, spinning up as it engages) wobbles and labours `fc` times a
+// second, once per compression; the solenoid clunks in and out. RMS of the
+// whine part = `level`.
+export function starterMotor(n, sr, { from, to, fc, level }) {
+  const out = new Float32Array(n), rnd = noise(7)
+  const i0 = Math.round(from * sr), i1 = Math.min(n, Math.round(to * sr))
+  let ph = 0, bp1 = 0, bp2 = 0
+  // Band-pass for the grind: RBJ, 2.4 kHz, Q 1.5.
+  const w = 2 * Math.PI * 2400 / sr, al = Math.sin(w) / 3, a0 = 1 + al
+  const b0 = al / a0, b2 = -al / a0, a1 = -2 * Math.cos(w) / a0, a2 = (1 - al) / a0
+  let x1 = 0, x2 = 0
+  for (let i = i0; i < i1; i++) {
+    const t = (i - i0) / sr, left = (i1 - i) / sr
+    const spin = 1 - 0.7 * Math.exp(-t / 0.06)
+    const wob = Math.sin(2 * Math.PI * fc * t)
+    const f = 380 * spin * (1 + 0.04 * wob)
+    ph += 2 * Math.PI * f / sr
+    const labour = 0.6 + 0.4 * (0.5 - 0.5 * Math.cos(2 * Math.PI * fc * t))
+    const env = Math.min(1, t / 0.03) * Math.min(1, left / 0.04)
+    const whine = Math.sin(ph) + 0.45 * Math.sin(2 * ph) + 0.2 * Math.sin(3 * ph) + 0.1 * Math.sin(5 * ph)
+    const r = rnd()
+    const g = b0 * r + b2 * x2 - a1 * bp1 - a2 * bp2
+    x2 = x1; x1 = r; bp2 = bp1; bp1 = g
+    out[i] = env * labour * (whine + 0.6 * g)
+  }
+  const k = level / (rmsOf(out, i0, i1) || 1)
+  for (let i = i0; i < i1; i++) out[i] *= k
+  // The solenoid: a low knock and a click, in as it engages and (softer)
+  // out as it lets go.
+  const clunk = (at, amp) => {
+    const j0 = Math.round(at * sr)
+    for (let j = 0; j < 0.15 * sr && j0 + j < n; j++) {
+      const t = j / sr
+      out[j0 + j] += amp * level * (2.2 * Math.sin(2 * Math.PI * 70 * t) * Math.exp(-t / 0.035) + 1.6 * rnd() * Math.exp(-t / 0.004))
+    }
+  }
+  clunk(from, 1); clunk(to, 0.5)
+  return out
+}
+
+// Hold the level between `floor` and `cap` from sample `from` on: a gain
+// that follows a smoothed envelope (fast attack, slow release; lifting at
+// most 4x), so the idle, already between the two, passes untouched.
+function squeeze(x, { from = 0, floor = 0, cap = Infinity }) {
+  const att = 1 - Math.exp(-1 / (0.005 * SR)), rel = 1 - Math.exp(-1 / (0.15 * SR))
+  const envK = 1 - Math.exp(-1 / (0.03 * SR))
+  let env = 0, g = 1
+  for (let i = 0; i < x.length; i++) {
+    const v = Math.abs(x[i]) * 1.41 // ~RMS for a busy waveform
+    env += (v - env) * (v > env ? att : envK)
+    if (i < from) continue
+    const want = env > cap ? cap / env : env < floor ? Math.min(4, floor / (env || 1e-9)) : 1
+    g += (want - g) * (want < g ? att : rel)
+    x[i] *= g
+  }
+  return x
+}
+
+// Where the engine fires: the first 50 ms window louder than `frac` x the
+// idle at the end. Cranking reaches 0.5 x at most (the flat-6, whose starter
+// spins it fast); the first firings jump to 1-20 x.
+function catchTime(x, idle, frac = 1) {
+  const w = Math.round(0.05 * SR)
+  for (let i = Math.round(0.3 * SR); i + w < x.length; i += w) if (rmsOf(x, i, i + w) > frac * idle) return i / SR
+  return 1
+}
+
+export function buildOneshots(car) {
+  const set = SAMPLE_SETS[car], os = set.oneshots
+  const p = PROFILES[car]
+  const out = []
+  for (const group of ['engine', 'exhaust']) {
+    const idleLoop = set.loops.find((l) => l.render === 'idle' && (l.group || 'engine') === group)
+    const target = 0.25 * idleLoop.level // level()'s RMS for the idle loop
+    // ── start ──
+    {
+      let x = oneshotMix(set, group, 'start', Math.round((os.start.seconds - 1.5) * SR), Math.round(os.start.seconds * SR))
+      x = x.slice(0, Math.round(os.start.seconds * SR))
+      derumble(x)
+      const tail = [x.length - Math.round(1.5 * SR), x.length]
+      const idle = rmsOf(x, ...tail)
+      // The catch, found in the main render alone: the dry sub layer has
+      // the cranking's pressure pulses at full strength, the impulse
+      // response does not.
+      const hi = eqd(path.join(ROOT, '.cache', 'engine-sim', 'out', set.renders[group], 'start-hi.wav'), set.eq)
+      derumble(hi)
+      const fire = catchTime(hi, rmsOf(hi, ...tail))
+      // Cranking from the loud render, up to just before the catch.
+      const cut = Math.round((fire - 0.02) * SR), xf = Math.round(0.03 * SR)
+      const crank = rmsOf(hi, Math.round(0.2 * SR), cut) / HI_GAIN
+      const boost = crank > 0 ? (CHUFF * idle) / crank : 0
+      for (let i = 0; i < cut + xf && i < x.length; i++) {
+        const v = (hi[i] / HI_GAIN) * boost
+        const t = i < cut ? 0 : (i - cut) / xf
+        x[i] = v * (1 - t) + x[i] * t
+      }
+      const fc = (os.crankRpm / 60) * (p.cylinders.length / 2)
+      const st = starterMotor(x.length, SR, { from: 0.15, to: fire + 0.05, fc, level: STARTER * idle })
+      for (let i = 0; i < x.length; i++) x[i] += st[i]
+      squeeze(x, { from: Math.round(fire * SR), floor: FALL_FLOOR * idle, cap: FLARE_CAP * idle })
+      const g = Math.min(target / idle, 0.95 / (x.reduce((m, v) => Math.max(m, Math.abs(v)), 0) || 1))
+      for (let i = 0; i < x.length; i++) x[i] *= g
+      out.push({ file: os.start[group], x, note: `catch ${fire.toFixed(2)} s, idle x${(g * idle / target).toFixed(2)} of the loop's` })
+    }
+    // ── stop ──
+    {
+      let x = oneshotMix(set, group, 'stop', 0, Math.round(0.35 * SR))
+      x = x.slice(0, Math.round(os.stop.seconds * SR))
+      derumble(x)
+      const idle = rmsOf(x, 0, Math.round(0.35 * SR))
+      const g = Math.min(target / idle, 0.95 / (x.reduce((m, v) => Math.max(m, Math.abs(v)), 0) || 1))
+      const fade = Math.round(0.08 * SR)
+      for (let i = 0; i < x.length; i++) x[i] *= g * Math.min(1, (x.length - i) / fade)
+      out.push({ file: os.stop[group], x, note: `idle x${(g * idle / target).toFixed(2)} of the loop's` })
+    }
+  }
+  return out
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  if (args.includes('--oneshots')) {
+    fs.mkdirSync(CACHE, { recursive: true })
+    const car1 = args[args.indexOf('--oneshots') + 1]
+    let total = 0
+    for (const car of Object.keys(SAMPLE_SETS)) {
+      if (car1 && !car1.startsWith('--') && car !== car1) continue
+      for (const c of buildOneshots(car)) {
+        const tmp = path.join(CACHE, c.file + '.wav'), dest = path.join(OUT, c.file)
+        wav(tmp, c.x)
+        execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-c:a', 'libopus', '-b:a', '48k', '-ac', '1', '-ar', String(SR),
+          '-map_metadata', '-1', '-metadata', `comment=${CREDITS.enginesim.title} by ${CREDITS.enginesim.author}, ${CREDITS.enginesim.licence}, ${CREDITS.enginesim.url}`, dest])
+        const size = fs.statSync(dest).size
+        total += size
+        console.log(`${c.file}: ${(c.x.length / SR).toFixed(2)} s, ${c.note}, ${(size / 1024).toFixed(1)} kB`)
+      }
+    }
+    console.log(`total ${(total / 1024).toFixed(1)} kB`)
+    process.exit(0)
+  }
   if (args.includes('--fit-idle')) { fitIdle(args[args.indexOf('--fit-idle') + 1], args.includes('--around') ? { seconds: Number(args[args.indexOf('--around') + 1]), range: 1.5 } : {}); process.exit(0) }
   if (args.includes('--print-levels')) { printLevels(args[args.indexOf('--print-levels') + 1]); process.exit(0) }
   fs.mkdirSync(OUT, { recursive: true })

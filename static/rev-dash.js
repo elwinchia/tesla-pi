@@ -150,8 +150,9 @@ export class Dash {
     } else {
       await rs.start()
       if (!rs.running) return
-      // The flare of a cold start: a quick rise past idle that settles.
-      rs.blip(rs.engine.profile.idle * 1.7)
+      // The engine's own start clip has its flare; without one (still
+      // loading, or a car with none), a quick rise past idle that settles.
+      if (!rs.cranking) rs.blip(rs.engine.profile.idle * 1.7)
       this.onEngine(true)
     }
   }

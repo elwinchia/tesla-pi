@@ -34,7 +34,7 @@ export const CREDITS = {
       'assets/engines/atg-video-2/07_gm_ls.mr', 'assets/engines/atg-video-2/10_lfa_v10.mr',
       'assets/engines/atg-video-2/08_ferrari_f136_v8.mr', 'scripts/engine-sim/flat6_gt3.mr (ours)',
     ],
-    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from engine scripts: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; heard through engine-sim\'s own "real engine" impulse response (the engine group) and its "minimal muffling" one (the exhaust group), with a dry render of the same runs as a low sub layer. scripts/engine-sim/ rebuilds them.',
+    recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from engine scripts: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; heard through engine-sim\'s own "real engine" impulse response (the engine group) and its "minimal muffling" one (the exhaust group), with a dry render of the same runs as a low sub layer; and each engine started from rest and stopped from idle, its cranking mixed with a starter motor we synthesise. scripts/engine-sim/ rebuilds them.',
   },
 }
 
@@ -72,7 +72,16 @@ const EQ = [{ type: 'lowshelf', hz: 90, db: 10 }, { type: 'highshelf', hz: 3500,
 // length where its waveform repeats, so the seam falls between firings. Idle
 // loops play at exactly that length (exact), and the car's profile idles at
 // the same rpm, so the idle plays at its own pitch.
-function engineSim({ car, renders, script, idle, engine, exhaust }) {
+//
+// oneshots: the engine starting and stopping, played once when the engine
+// sound starts and stops (`--oneshots` in scripts/rev-samples.mjs, from
+// scripts/engine-sim/render-oneshots.sh). Their idle is as loud as the idle
+// loop's, and the player hands over to the loops at the start's end.
+// crank: the rpm its starter turns it at (for the synthesised starter's
+// rhythm, one labour per compression); start: when in the start clip it
+// catches (s) and how high it flares (rpm), from the render's log, so the
+// rev meter can follow the clip.
+function engineSim({ car, renders, script, idle, engine, exhaust, crank, start }) {
   const loop = (group, rpm, layer, level, render) => ({
     file: `${car}-${group === 'exhaust' ? 'ex' : 'es'}-${render}.ogg`, src: 'enginesim', group, render,
     start: 0.4, seconds: 1.5, rpm, layer, level,
@@ -88,13 +97,18 @@ function engineSim({ car, renders, script, idle, engine, exhaust }) {
     ir: IR, eq: EQ,
     sub: { renders: `${renders}-dry`, lowpass: 100, level: 0.7 },
     loops: [...group('engine', engine), ...group('exhaust', exhaust)],
+    oneshots: {
+      crankRpm: crank,
+      start: { seconds: 5.5, catch: start.catch, flare: start.flare, engine: `${car}-es-start.ogg`, exhaust: `${car}-ex-start.ogg` },
+      stop: { seconds: 1.6, engine: `${car}-es-stop.ogg`, exhaust: `${car}-ex-stop.ogg` },
+    },
   }
 }
 
 export const SAMPLE_SETS = {
   // GM LS V8, bundled with engine-sim.
   v8: engineSim({
-    car: 'v8', renders: 'ls-v8', script: 'scripts/engine-sim/ls_v8.mr', idle: { rpm: 690, start: 1, seconds: { engine: 6.36871, exhaust: 6.36933 } },
+    car: 'v8', renders: 'ls-v8', script: 'scripts/engine-sim/ls_v8.mr', idle: { rpm: 690, start: 1, seconds: { engine: 6.36871, exhaust: 6.36933 } }, crank: 205, start: { catch: 1.25, flare: 1800 },
     engine: [0.378, [[1200, 0.631, 0.15], [1800, 0.771, 0.203], [2500, 0.89, 0.268], [3200, 0.964, 0.336],
       [4000, 0.938, 0.368], [4800, 1, 0.44], [5600, 0.992, 0.426], [6300, 0.966, 0.402]]],
     exhaust: [0.364, [[1200, 0.607, 0.13], [1800, 0.7, 0.172], [2500, 0.815, 0.236], [3200, 0.837, 0.274],
@@ -102,7 +116,7 @@ export const SAMPLE_SETS = {
   }),
   // LFA-style V10, bundled with engine-sim.
   lfa: engineSim({
-    car: 'lfa', renders: 'lfa-v10', script: 'scripts/engine-sim/lfa_v10.mr', idle: { rpm: 901, start: 1, seconds: { engine: 5.57081, exhaust: 5.55715 } },
+    car: 'lfa', renders: 'lfa-v10', script: 'scripts/engine-sim/lfa_v10.mr', idle: { rpm: 901, start: 1, seconds: { engine: 5.57081, exhaust: 5.55715 } }, crank: 200, start: { catch: 1.2, flare: 1950 },
     engine: [0.26, [[1300, 0.433, 0.076], [2000, 0.425, 0.082], [2800, 0.459, 0.102], [3700, 0.417, 0.106], [4600, 0.547, 0.141],
       [5600, 0.763, 0.203], [6700, 0.925, 0.263], [7800, 1, 0.327], [8800, 0.925, 0.33]]],
     exhaust: [0.251, [[1300, 0.418, 0.075], [2000, 0.6, 0.103], [2800, 0.887, 0.145], [3700, 0.925, 0.16], [4600, 1, 0.199],
@@ -112,7 +126,7 @@ export const SAMPLE_SETS = {
   // a fully closed throttle, so its idle is rendered with ES_IDLE_THROTTLE=0.02
   // (about 1,058 rpm).
   f136: engineSim({
-    car: 'f136', renders: 'f136-v8', script: 'scripts/engine-sim/f136_v8.mr', idle: { rpm: 1058, start: 1, seconds: { engine: 5.69869, exhaust: 5.61335 } },
+    car: 'f136', renders: 'f136-v8', script: 'scripts/engine-sim/f136_v8.mr', idle: { rpm: 1058, start: 1, seconds: { engine: 5.69869, exhaust: 5.61335 } }, crank: 200, start: { catch: 2.15, flare: 1580 },
     engine: [0.276, [[1300, 0.461, 0.078], [2000, 0.541, 0.116], [2800, 0.59, 0.149], [3700, 0.539, 0.182], [4600, 0.567, 0.185],
       [5600, 0.628, 0.213], [6700, 0.692, 0.225], [7800, 0.822, 0.277], [8800, 1, 0.353]]],
     exhaust: [0.303, [[1300, 0.506, 0.081], [2000, 0.601, 0.108], [2800, 0.75, 0.17], [3700, 0.817, 0.241], [4600, 0.919, 0.312],
@@ -120,7 +134,7 @@ export const SAMPLE_SETS = {
   }),
   // GT3-style flat-6: our own engine script (engine-sim has no flat-6).
   gt3: engineSim({
-    car: 'gt3', renders: 'flat6-gt3', script: 'scripts/engine-sim/flat6_gt3.mr', idle: { rpm: 923, start: 1, seconds: { engine: 4.76515, exhaust: 6.59335 } },
+    car: 'gt3', renders: 'flat6-gt3', script: 'scripts/engine-sim/flat6_gt3.mr', idle: { rpm: 923, start: 1, seconds: { engine: 4.76515, exhaust: 6.59335 } }, crank: 575, start: { catch: 1.2, flare: 3390 },
     engine: [0.488, [[1400, 0.813, 0.084], [2100, 0.991, 0.144], [2900, 0.934, 0.211], [3800, 0.887, 0.305], [4800, 0.92, 0.399],
       [5800, 0.974, 0.537], [6800, 1, 0.673], [7800, 0.856, 0.718], [8800, 0.928, 0.861]]],
     exhaust: [0.35, [[1400, 0.584, 0.089], [2100, 0.644, 0.136], [2900, 0.785, 0.232], [3800, 0.877, 0.332], [4800, 1, 0.439],
@@ -143,6 +157,13 @@ export function loopSeconds(loop) {
   if (loop.exact) return loop.seconds
   const cycle = 120 / loop.rpm // one 720° cycle
   return Math.max(1, Math.round(loop.seconds / cycle)) * cycle
+}
+
+// Every file a set uses: its loops, and its start and stop.
+export function filesOf(set) {
+  const os = set.oneshots
+  return [...new Set([...set.loops.map((l) => l.file),
+    ...(os ? [os.start.engine, os.start.exhaust, os.stop.engine, os.stop.exhaust] : [])])]
 }
 
 export const hasRecording = (car) => Object.hasOwn(SAMPLE_SETS, car)

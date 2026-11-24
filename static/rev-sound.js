@@ -6,6 +6,7 @@
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
 import { SAMPLE_SETS, hasRecording, loopSlice } from './rev-samples.js'
+import { onLoadMix } from './rev-sampler.js'
 import { DEFAULT_STYLE, styleKey } from './gauges/index.js'
 import {
   CARS, DEFAULT_CAR, MODES, DEFAULT_MODE,
@@ -28,6 +29,20 @@ export const DEFAULTS = Object.freeze({
 // revving engine, and the Rev control is allowed. ~4 km/h.
 export const STOPPED_MS = 1.0
 const TICK_MS = 20
+// The engine's start and stop (rev-samples.js `oneshots`). The start plays
+// with the loops silent under it, and hands over to them over its last
+// HANDOVER_MS, by which time it has settled to idle. It is waited for at
+// most START_WAIT_MS on the first start (the clip still loading); after
+// that the engine just starts. The stop plays only if already loaded:
+// stopping is never delayed.
+const HANDOVER_MS = 600
+const START_WAIT_MS = 1500
+// Revving once it has caught cuts the start short, handing over this fast.
+const QUICK_MS = 250
+// The clips are levelled to the idle loop's file, but the loops play both
+// idle layers at once (on and off, weighted sqrt(on) and sqrt(1 - on), the
+// same audio): at idle that sums to this.
+const IDLE_SUM = Math.sqrt(onLoadMix(0)) + Math.sqrt(1 - onLoadMix(0))
 
 // Settings live in the car browser's localStorage, shared by every page on
 // this origin. They are the browser's business only — the Pi neither needs
@@ -172,6 +187,10 @@ export class RevSound {
     this.sound = 'synth'
     this.soundNote = null
     this.sampleCache = new Map() // car -> Promise of its decoded loops
+    this.clipCache = new Map()   // 'car:start' | 'car:stop' -> Promise of its decoded clip
+    this.clipReady = new Map()   // the same, once decoded
+    this.clips = []              // the clip sources playing now
+    this.crank = null            // the start clip under way: { t0, end, ... }
     this.onVisibility = () => (document.hidden ? this.pause() : this.resume())
   }
 
@@ -206,11 +225,17 @@ export class RevSound {
   setPedal(x) { this.sim.pedal = clamp(x, 0, 1) }
   setBrake(x) { this.sim.brake = clamp(x, 0, 1) }
   setSimFixMs(ms) { this.sim.fixMs = clamp(ms, 50, 5000) }
-  setRev(x) { this.engine.setRev(x) }
+  // Not while the engine is still starting; once it has caught, revving
+  // cuts the start short instead.
+  setRev(x) {
+    if (this.crank && !(x > 0 && this.finishStart())) return
+    this.engine.setRev(x)
+  }
   setSim(on) { const r = this.engine.setSim(on, performance.now()); this.emit(performance.now()); return r }
   touch(rpm) { return this.engine.touch(rpm) }
   untouch(blip) { this.engine.untouch(blip) }
-  blip(rpm) { return this.engine.blip(rpm, performance.now()) }
+  blip(rpm) { return this.crank ? false : this.engine.blip(rpm, performance.now()) }
+  get cranking() { return !!this.crank }
 
   get running() { return this.timer != null }
 
@@ -226,21 +251,132 @@ export class RevSound {
       this.emit(performance.now())
       return
     }
+    // The engine's start, if it loads in time.
+    const clip = await Promise.race([this.clip('start'), new Promise((ok) => setTimeout(() => ok(null), START_WAIT_MS))])
+    if (this.timer) return // started meanwhile (a second tap)
     if (this.source === 'gps') this.startGps()
     this.last = performance.now()
+    this.stopClips()
+    if (clip) this.playStart(clip)
     this.timer = setInterval(() => this.tick(), TICK_MS)
     document.addEventListener('visibilitychange', this.onVisibility)
+    this.clip('stop') // ready for when it stops
+  }
+
+  // ── Start and stop ──
+  // One car's clip, both groups, fetched and decoded once.
+  clip(kind, car = this.settings.profile) {
+    const os = SAMPLE_SETS[car] && SAMPLE_SETS[car].oneshots
+    if (!os || !this.ctx) return Promise.resolve(null)
+    const key = car + ':' + kind
+    if (!this.clipCache.has(key)) {
+      const get = (f) => fetch(new URL('./sounds/' + f, import.meta.url)).then((r) => {
+        if (!r.ok) throw new Error(f + ': HTTP ' + r.status)
+        return r.arrayBuffer()
+      }).then((ab) => this.ctx.decodeAudioData(ab))
+      this.clipCache.set(key, Promise.all([get(os[kind].engine), get(os[kind].exhaust)])
+        .then(([engine, exhaust]) => {
+          const c = { ...os[kind], crankRpm: os.crankRpm, engine, exhaust }
+          this.clipReady.set(key, c)
+          return c
+        })
+        // No clip is no reason to stop the engine: it just starts or stops
+        // without one, and the next start tries again.
+        .catch(() => { this.clipCache.delete(key); return null }))
+    }
+    return this.clipCache.get(key)
+  }
+  // Play a clip now, its two groups mixed by the Exhaust setting, as loud as
+  // the loops play the idle. Returns the sources and their gains.
+  playClip(c, at = this.ctx.currentTime) {
+    const ctx = this.ctx, m = this.settings.exhaust, v = this.settings.volume
+    return [[c.engine, Math.sqrt(1 - m)], [c.exhaust, Math.sqrt(m)]].map(([buf, g]) => {
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      const gain = ctx.createGain()
+      gain.gain.value = g * v * v * IDLE_SUM
+      src.connect(gain).connect(ctx.destination)
+      src.start(at)
+      return { src, gain, level: gain.gain.value }
+    })
+  }
+  stopClips(fade = 0.04) {
+    if (!this.ctx) return
+    const now = this.ctx.currentTime
+    for (const c of this.clips) {
+      try { c.gain.gain.cancelScheduledValues(now); c.gain.gain.setTargetAtTime(0, now, fade / 3); c.src.stop(now + fade * 2) } catch {}
+    }
+    this.clips = []
+  }
+  playStart(c) {
+    this.clips = this.playClip(c)
+    // The clip fades out over the handover as the loops fade in (equal
+    // power: the clip on a cosine, the loops on a sine, in tick()).
+    const h = this.ctx.currentTime + c.seconds - HANDOVER_MS / 1000
+    const curve = (g) => Float32Array.from({ length: 32 }, (_, i) => g * Math.cos((Math.PI / 2) * (i / 31)))
+    for (const k of this.clips) { try { k.gain.gain.setValueCurveAtTime(curve(k.level), h, HANDOVER_MS / 1000) } catch {} }
+    const t0 = performance.now()
+    this.crank = { t0, end: t0 + c.seconds * 1000, fade: HANDOVER_MS, c }
+  }
+  // Hand over to the loops now (over QUICK_MS), if the engine has caught
+  // and is past its flare. True if it did, or had already.
+  finishStart() {
+    const k = this.crank
+    if (!k) return true
+    const now = performance.now()
+    if ((now - k.t0) / 1000 < k.c.catch + 0.6) return false
+    if (now >= k.end - k.fade) return true // handing over already
+    const at = this.ctx.currentTime
+    for (const s of this.clips) {
+      try {
+        const g = s.gain.gain
+        g.cancelScheduledValues(at)
+        g.setValueCurveAtTime(Float32Array.from({ length: 16 }, (_, i) => g.value * Math.cos((Math.PI / 2) * (i / 15))), at, QUICK_MS / 1000)
+        s.src.stop(at + QUICK_MS / 1000 + 0.05)
+      } catch {}
+    }
+    k.end = now + QUICK_MS; k.fade = QUICK_MS
+    return true
+  }
+  // How much of the loops to play: 0 under the start clip, rising over its
+  // handover, then 1.
+  loopsIn(t) {
+    const k = this.crank
+    if (!k) return 1
+    const u = (t - (k.end - k.fade)) / k.fade
+    if (u >= 1) { this.crank = null; return 1 }
+    return u <= 0 ? 0 : Math.sin((Math.PI / 2) * u)
+  }
+  // What the rev meter shows while the start clip plays: nothing until the
+  // starter engages, the starter's speed, then the catch, the flare and the
+  // fall back to idle, as in the clip (rev-samples.js: catch, flare).
+  crankRpm(t) {
+    const { c, t0 } = this.crank
+    const u = (t - t0) / 1000, idle = this.engine.profile.idle
+    if (u < 0.15) return 0
+    if (u < c.catch) return c.crankRpm
+    if (u < c.catch + 0.25) return c.crankRpm + (c.flare - c.crankRpm) * ((u - c.catch) / 0.25)
+    return idle + (c.flare - idle) * Math.exp(-(u - c.catch - 0.25) / 0.7)
   }
 
   stop() {
+    const wasRunning = this.timer != null, starting = !!this.crank
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    this.crank = null
     this.stopGps()
     document.removeEventListener('visibilitychange', this.onVisibility)
     if (this.node) this.node.port.postMessage({ params: { gain: 0 } })
-    // Let the gain glide to zero before suspending, so it ends without a click.
     const ctx = this.ctx
-    if (ctx) setTimeout(() => { if (!this.timer) ctx.suspend().catch(() => {}) }, 250)
+    let tail = 250 // let the gain glide to zero before suspending: no click
+    if (ctx) {
+      this.stopClips()
+      // The engine's stop, if it is loaded (stopping is never delayed), and
+      // not when it is stopped while still starting.
+      const c = wasRunning && !starting ? this.clipReady.get(this.settings.profile + ':stop') : null
+      if (c) { this.clips = this.playClip(c); tail = c.seconds * 1000 + 200 }
+      setTimeout(() => { if (!this.timer) ctx.suspend().catch(() => {}) }, tail)
+    }
     this.emit(performance.now())
   }
 
@@ -281,6 +417,8 @@ export class RevSound {
   async syncSound() {
     if (!this.node) return
     const car = this.settings.profile
+    // Its start and stop, so they are ready when wanted.
+    this.clip('start', car); this.clip('stop', car)
     this.soundFor = car
     this.soundNote = null
     if (!hasRecording(car)) {
@@ -371,13 +509,14 @@ export class RevSound {
     const s = this.engine.step(t, dt)
     if (this.node) {
       const v = this.settings.volume
-      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v, exhaust: this.settings.exhaust } })
+      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v * this.loopsIn(t), exhaust: this.settings.exhaust } })
     }
     this.emit(t)
   }
 
   emit(t) {
-    this.onState({ ...this.engine.state, source: this.source, fixRate: this.rate.get(t),
+    const st = this.crank ? { ...this.engine.state, rpm: this.crankRpm(t), cranking: true } : this.engine.state
+    this.onState({ ...st, source: this.source, fixRate: this.rate.get(t),
       simSpeed: this.sim.car.v, running: this.running, error: this.error,
       sound: this.sound, soundNote: this.soundNote,
       redline: this.engine.profile.redline, idle: this.engine.profile.idle })

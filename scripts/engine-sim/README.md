@@ -35,6 +35,17 @@ node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the su
 # ES_IDLE_THROTTLE=0.02 (es-render ... idle 10 4).
 ```
 
+The engine starting and stopping, the same three ways (`ES_IR` as above for the
+engine and exhaust groups, `ES_CONV=0` for the sub; the F136 with
+`ES_IDLE_THROTTLE=0.02`), then the clips:
+
+```bash
+ES_IR=es/sound-library/archive/test_engine_14_eq_adjusted_16.wav scripts/engine-sim/render-oneshots.sh scripts/engine-sim/ls_v8.mr ls-v8
+ES_IR=es/sound-library/new/minimal_muffling_01.wav scripts/engine-sim/render-oneshots.sh scripts/engine-sim/ls_v8.mr ls-v8-exhaust
+ES_CONV=0 scripts/engine-sim/render-oneshots.sh scripts/engine-sim/ls_v8.mr ls-v8-dry
+node scripts/rev-samples.mjs --oneshots v8      # static/sounds/v8-e[sx]-{start,stop}.ogg
+```
+
 Everything lands in the git-ignored `.cache/engine-sim/`:
 
 | Path | What |
@@ -59,6 +70,37 @@ build and render.
 - **`idle <s> [warmup]`**: free-running, closed throttle, no dyno. Rendered
   10 s long: the idle loop is cut from it by `--fit-idle` (below).
 - **`rev <s>`**: idle, two blips and a sweep into the limiter, for listening.
+- **`start <s>`**: from rest: a moment of silence, the starter cranking with the
+  ignition off (`ES_CRANK`, 0.5 s), then the ignition on with the throttle
+  cracked open until it catches (revs well past the starter's own speed), a
+  0.3 s flare (`ES_FLARE`, 0.25) and idle. Recorded from the start.
+- **`stop <s> [warmup]`**: idle, then the ignition cut at 0.4 s and the run
+  down to rest.
+
+## The start and stop clips
+
+engine-sim models combustion and the exhaust, not the starter motor: its
+cranking is 35-40 dB under its idle, below what 16 bits hold at the loops'
+gain. `render-oneshots.sh` renders the start twice, at 10x and at 330x the
+loops' gain. The simulation does not depend on the gain, so the two runs are
+the same and can be spliced. `--oneshots` then:
+
+1. Takes the cranking from the loud run, up to the catch (the first 50 ms
+   louder than the idle), set to 0.3x the idle, so engine-sim's own
+   compression chuffs are heard.
+2. Synthesises a starter motor over it: the solenoid's clunk in and out, a
+   ~380 Hz whine that spins up and labours once per compression, and a little
+   gear grind.
+3. Holds the flare under 2.6x the idle and lifts the fall after it to at least
+   0.6x. The loops' levels are square-rooted, so an untouched flare would be
+   ten times louder than anything else the engine does, and the
+   closed-throttle fall as quiet as its overrun.
+4. Levels the clip so its idle is exactly the idle loop's level, with the same
+   EQ and sub layer as the loops. The player hands over to the loops in the
+   clip's last 0.6 s.
+
+The stop needs none of this: the ignition cuts, the last firings gasp, and
+it is silent within half a second, as a real one is.
 
 It drives engine-sim's synthesizer thread the way the app does: one block
 of simulation per frame, then wait until the synthesizer has turned it into

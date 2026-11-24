@@ -305,8 +305,12 @@ buttons.
   nothing. Parked only: while the car moves a press does nothing, and the
   model ignores it anyway. With the engine off it nudges the start button
   instead.
-- **ENGINE START/STOP**: starts the engine sound, with a
-  cold-start flare past idle, or stops it, and the rev meter falls to 0 and
+- **ENGINE START/STOP**: starts the engine sound or stops it, each with
+  the engine's own sound. **Start:** the starter cranks, the engine
+  catches, flares and settles to idle (about 5.5 s, the rev meter following
+  it), and the loops take over as it settles. Holding the rev meter once
+  it has caught hands over at once. **Stop:** the ignition cuts and the
+  engine dies, the rev meter falls to 0 and
   every side gauge rests, as with the ignition off. On the CarPlay page that
   holds for the session (`sessionStorage`), through the reloads a format
   change makes, so a later tap on CarPlay does not start it again. The

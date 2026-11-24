@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, creditLine, hasRecording } from '../static/rev-samples.js'
+import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, creditLine, hasRecording, filesOf } from '../static/rev-samples.js'
 import { PROFILES } from '../static/rev-profiles.js'
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
@@ -45,7 +45,7 @@ test('each idle is fitted: long enough not to repeat audibly, played at its own 
 })
 
 test('every file is in the folder, is Ogg Opus, and the folder holds nothing else', () => {
-  const listed = new Set(Object.values(SAMPLE_SETS).flatMap((s) => s.loops.map((l) => l.file)))
+  const listed = new Set(Object.values(SAMPLE_SETS).flatMap(filesOf))
   const present = fs.existsSync(DIR) ? fs.readdirSync(DIR) : []
   for (const f of listed) {
     assert.ok(present.includes(f), `${f} missing`)
@@ -55,6 +55,17 @@ test('every file is in the folder, is Ogg Opus, and the folder holds nothing els
   for (const f of present) assert.ok(listed.has(f) || f === 'CREDITS.md', `${f} is not credited or not used`)
   const total = [...listed].reduce((s, f) => s + fs.statSync(path.join(DIR, f)).size, 0)
   assert.ok(total <= BUDGET, `${(total / 1024).toFixed(0)} kB of loops, budget ${BUDGET / 1024} kB`)
+})
+
+test('every car starts and stops: both clips, both groups, a catch inside the start and a flare above idle', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const os = set.oneshots, p = PROFILES[car]
+    assert.ok(os, `${car}: no start or stop`)
+    for (const k of ['start', 'stop']) for (const g of ['engine', 'exhaust']) assert.match(os[k][g], new RegExp(`^${car}-e[sx]-${k}\\.ogg$`))
+    assert.ok(os.start.catch > 0.3 && os.start.catch < os.start.seconds - 2, `${car}: catch at ${os.start.catch} s leaves no idle to hand over from`)
+    assert.ok(os.start.flare > p.idle && os.start.flare < p.redline, `${car}: flare ${os.start.flare} rpm`)
+    assert.ok(os.crankRpm > 50 && os.crankRpm < p.idle, `${car}: crank ${os.crankRpm} rpm`)
+  }
 })
 
 test('every credit is an allowed licence, points at its own Freesound page (or the official engine-sim repo), and is used', () => {

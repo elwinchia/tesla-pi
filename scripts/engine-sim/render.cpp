@@ -9,6 +9,17 @@
 //       Free-running idle, no dyno: closed throttle, or ES_IDLE_THROTTLE.
 //   es-render <script.mr> <out.wav> rev <seconds>
 //       Free revving in neutral: idle, blips, a sweep to the limiter.
+//   es-render <script.mr> <out.wav> start <seconds>
+//       The engine starting, recorded from rest: a moment of silence, the
+//       starter cranking it with the ignition off (ES_CRANK s, default 0.5),
+//       then the ignition on, with the throttle cracked open as a start
+//       would, until it catches (revs well past the starter's own speed),
+//       a flare of throttle (ES_FLARE, default 0.25, for 0.3 s) and idle to
+//       the end.
+//   es-render <script.mr> <out.wav> stop <seconds> [warmup s]
+//       The engine stopping: started and idled unrecorded for warmup s,
+//       then recorded idling for 0.4 s, the ignition cut, and it running
+//       down to rest.
 #include "scripting/include/compiler.h"
 #include "include/engine.h"
 #include "include/simulator.h"
@@ -17,6 +28,7 @@
 #include "include/exhaust_system.h"
 #include "include/impulse_response.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -112,20 +124,50 @@ int main(int argc, char **argv) {
         seconds = std::atof(argv[4]); if (argc > 5) warmup = std::atof(argv[5]);
     } else if (mode == "rev") {
         seconds = std::atof(argv[4]); warmup = 0;
+    } else if (mode == "start") {
+        seconds = std::atof(argv[4]); warmup = 0;
+    } else if (mode == "stop") {
+        seconds = std::atof(argv[4]); if (argc > 5) warmup = std::atof(argv[5]);
     } else { std::fprintf(stderr, "unknown mode\n"); return 2; }
+    const double idleThrottle = getenv("ES_IDLE_THROTTLE") ? std::atof(getenv("ES_IDLE_THROTTLE")) : 0.0;
 
-    engine->getIgnitionModule()->m_enabled = true;
+    // Every mode but start: 1.5 s on the starter with the ignition on, then
+    // warmup s unrecorded. start records from rest instead.
+    const bool startMode = mode == "start";
+    const double recordFrom = startMode ? 0 : 1.5 + warmup;
+    const double crank = getenv("ES_CRANK") ? std::atof(getenv("ES_CRANK")) : 0.5;
+    const double flare = getenv("ES_FLARE") ? std::atof(getenv("ES_FLARE")) : 0.25;
+    const double crankFrom = 0.15, fireFrom = crankFrom + crank;
+    double caughtAt = -1, crankRpm = 0;
+    engine->getIgnitionModule()->m_enabled = !startMode;
     transmission->changeGear(-1);
     const double freq = sim->getSimulationFrequency();
-    const double total = warmup + seconds + 1.5; // 1.5 s of starter first
+    const double total = startMode ? seconds : warmup + seconds + 1.5;
     std::vector<int16_t> out, buf(8192);
     double t = 0, speed = 0, lastLog = -1;
     while (t < total) {
         // Controls for this frame.
-        const bool starting = t < 1.5;
-        sim->m_starterMotor.m_enabled = starting;
+        bool starting = t < 1.5;
         double target = 0;
-        if (mode == "hold") {
+        if (startMode) {
+            // Crank, fire, and let go of the starter once it has caught (or
+            // after 1.2 s of firing, whatever happens).
+            const double rpm = engine->getRpm();
+            engine->getIgnitionModule()->m_enabled = t >= fireFrom;
+            if (t < fireFrom) crankRpm = rpm;
+            // Caught: running on its own, well past what the starter spins.
+            if (caughtAt < 0 && t >= fireFrom && rpm > std::max(450.0, 1.5 * crankRpm)) caughtAt = t;
+            starting = t >= crankFrom && caughtAt < 0 && t < fireFrom + 2.0;
+            target = caughtAt >= 0 ? (t - caughtAt < 0.3 ? flare : idleThrottle)
+                   : t >= fireFrom ? std::max(idleThrottle, 0.1) : 0.0;
+        }
+        sim->m_starterMotor.m_enabled = starting;
+        if (startMode) {
+        } else if (mode == "stop") {
+            const double u = t - recordFrom;
+            engine->getIgnitionModule()->m_enabled = u < 0.4;
+            target = u < 0.4 ? idleThrottle : 0.0;
+        } else if (mode == "hold") {
             const bool hold = t >= 1.5;
             sim->m_dyno.m_enabled = hold;
             sim->m_dyno.m_hold = hold;
@@ -155,7 +197,7 @@ int main(int argc, char **argv) {
         for (;;) {
             const int n = sim->readAudioOutput((int)buf.size(), buf.data());
             if (n <= 0) break;
-            if (t >= 1.5 + warmup) out.insert(out.end(), buf.begin(), buf.begin() + n);
+            if (t >= recordFrom) out.insert(out.end(), buf.begin(), buf.begin() + n);
             if (n < (int)buf.size()) break;
         }
         if (t - lastLog >= 0.5) {
