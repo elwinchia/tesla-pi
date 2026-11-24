@@ -23,6 +23,7 @@ export const DEFAULTS = Object.freeze({
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
   exhaust: 0.5,        // 0 = heard from the engine, 1 = from the exhaust
+  cabin: true,         // heard through the car's body (rev-cabin.js), as the driver hears it
   gauge: DEFAULT_STYLE, // the dash's gauge style (static/gauges/index.js)
 })
 // Below this the car counts as stopped: the gearbox hands over to the free
@@ -67,6 +68,7 @@ export function sanitise(raw) {
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
   if (Number.isFinite(raw.exhaust)) s.exhaust = clamp(raw.exhaust, 0, 1)
+  if (typeof raw.cabin === 'boolean') s.cabin = raw.cabin
   if (typeof raw.gauge === 'string') s.gauge = styleKey(raw.gauge)
   return s
 }
@@ -296,7 +298,8 @@ export class RevSound {
       src.buffer = buf
       const gain = ctx.createGain()
       gain.gain.value = g * v * v * IDLE_SUM
-      src.connect(gain).connect(ctx.destination)
+      // Through the worklet, so the cabin hears it as it hears the loops.
+      src.connect(gain).connect(this.node)
       src.start(at)
       return { src, gain, level: gain.gain.value }
     })
@@ -405,9 +408,10 @@ export class RevSound {
     const ctx = new AC({ latencyHint: 'interactive' })
     if (!ctx.audioWorklet) throw new Error('this browser has no AudioWorklet')
     await ctx.audioWorklet.addModule(new URL('./rev-worklet.js', import.meta.url).href)
-    const node = new AudioWorkletNode(ctx, 'rev-engine', { numberOfInputs: 0, outputChannelCount: [2] })
+    // One input: the start and stop clips, mixed in before the cabin.
+    const node = new AudioWorkletNode(ctx, 'rev-engine', { numberOfInputs: 1, outputChannelCount: [2] })
     node.connect(ctx.destination)
-    node.port.postMessage({ profile: this.engine.profile, params: { gain: 0 } })
+    node.port.postMessage({ profile: this.engine.profile, params: { gain: 0, cabin: this.settings.cabin } })
     this.ctx = ctx; this.node = node
     if (ctx.state === 'suspended') ctx.resume().catch(() => {})
     this.syncSound()
@@ -514,7 +518,7 @@ export class RevSound {
     const s = this.engine.step(t, dt)
     if (this.node) {
       const v = this.settings.volume
-      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v * this.loopsIn(t), exhaust: this.settings.exhaust } })
+      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v * this.loopsIn(t), exhaust: this.settings.exhaust, cabin: this.settings.cabin } })
     }
     this.emit(t)
   }

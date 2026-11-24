@@ -19,12 +19,13 @@ test('engine sound is off by default', () => {
 
 test('settings survive a round trip and garbage is replaced by defaults', () => {
   const st = memStorage()
-  saveSettings({ enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, gauge: 'twin' }, st)
-  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, gauge: 'twin' })
-  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null, exhaust: 3, gauge: 'toString' }),
+  saveSettings({ enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, cabin: false, gauge: 'twin' }, st)
+  assert.deepEqual(loadSettings(st), { enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, cabin: false, gauge: 'twin' })
+  assert.deepEqual(sanitise({ enabled: 'yes', volume: 7, profile: 'toString', mode: 'warp', car: null, exhaust: 3, cabin: 'no', gauge: 'toString' }),
     { ...DEFAULTS, volume: 1, exhaust: 1 })
   assert.equal(DEFAULTS.gauge, 'segment', 'the segment arc unless another style is picked')
   assert.equal(DEFAULTS.exhaust, 0.5, 'engine and exhaust half and half by default')
+  assert.equal(DEFAULTS.cabin, true, 'heard from the driver\'s seat by default')
   // A car that was removed (the owner had picked one) falls back to the V8.
   assert.equal(sanitise({ profile: 'flat6' }).profile, 'v8')
   assert.deepEqual(loadSettings(memStorage({ revSound: '{not json' })), DEFAULTS)

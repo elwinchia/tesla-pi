@@ -205,6 +205,14 @@
         <input id="exhaust" type="range" min="0" max="100" step="5">
       </div>
       <p class="hint">Left: the engine. Right: the exhaust, a near straight pipe, raspier. In between mixes both.</p>
+      <div class="row">
+        <label>Heard from</label>
+        <div class="seg" id="cabin">
+          <button type="button" data-cabin="1">The driver's seat</button>
+          <button type="button" data-cabin="0">Outside</button>
+        </div>
+      </div>
+      <p class="hint">The driver's seat: through the car's body, the engine's note full and its rasp and hiss muffled, opening up as you pull. Outside: as a microphone at the engine and the tailpipe hears it.</p>
       <p class="hint">Keep it low enough to hear horns, sirens and other road users.</p>
       <div class="row">
         <label>Gearbox</label>
@@ -355,6 +363,7 @@
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
     $('exhaust').value = Math.round(s.exhaust * 100)
+    for (const b of $('cabin').querySelectorAll('button')) b.setAttribute('aria-pressed', String((b.dataset.cabin === '1') === s.cabin))
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
     for (const [k, b] of Object.entries(gcards)) b.setAttribute('aria-pressed', String(k === s.gauge))
     if (thumbsFor !== s.profile) {
@@ -379,6 +388,7 @@
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
   $('exhaust').oninput = (e) => rs.update({ exhaust: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
+  $('cabin').onclick = (e) => { const b = e.target.closest('[data-cabin]'); if (b) { rs.update({ cabin: b.dataset.cabin === '1' }); syncSettings() } }
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
   $('start').onclick = async () => {

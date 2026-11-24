@@ -9,6 +9,9 @@
 //   node scripts/rev-render.mjs --all --scene demo --out-dir rev-demos
 //   node scripts/rev-render.mjs --all --scene demo --recorded --out-dir rev-demos
 //                                 # the recorded loops (needs ffmpeg to decode them)
+//   node scripts/rev-render.mjs --recorded --outside   # without the cabin
+//                                 # (static/rev-cabin.js): as a microphone
+//                                 # at the engine hears it
 //
 // It runs the same code the car's browser runs (static/rev-*.js): a simulated
 // car reports its speed once a second like the car's GPS, the Engine turns
@@ -27,6 +30,7 @@ import { SimCar, CARS } from '../static/rev-model.js'
 import { PROFILES } from '../static/rev-profiles.js'
 import { EngineVoice } from '../static/rev-worklet.js'
 import { SampleVoice } from '../static/rev-sampler.js'
+import { Cabin } from '../static/rev-cabin.js'
 import { SAMPLE_SETS, hasRecording, loopSlice } from '../static/rev-samples.js'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -39,12 +43,13 @@ const opt = (name, def) => {
 if (args.includes('--help') || args.includes('-h')) {
   console.log('usage: rev-render.mjs [--profile ' + Object.keys(PROFILES).join('|') + ' | --all] [--mode comfort|normal|sport]\n' +
     '                     [--car ' + Object.keys(CARS).join('|') + '] [--scene drive|rev|demo]\n' +
-    '                     [--recorded [--exhaust 0..1]] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
+    '                     [--recorded [--exhaust 0..1]] [--outside] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
   process.exit(0)
 }
 const fixMs = Number(opt('fix-ms', 1000))
 const sceneName = opt('scene', 'drive')
 const recorded = args.includes('--recorded')
+const outside = args.includes('--outside')
 
 const SR = 48000, TICK = 0.02, BLOCK = SR * TICK // 960 frames per 20 ms tick
 const drive = (t) => {
@@ -91,8 +96,8 @@ if (recorded) {
 }
 for (const name of names) {
   if (!Object.hasOwn(PROFILES, name)) { console.error('unknown profile ' + name); process.exit(2) }
-  const settings = sanitise({ ...DEFAULTS, profile: name, mode: opt('mode', DEFAULTS.mode), car: opt('car', DEFAULTS.car) })
-  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}${recorded ? '-recorded' : ''}.wav`
+  const settings = sanitise({ ...DEFAULTS, profile: name, mode: opt('mode', DEFAULTS.mode), car: opt('car', DEFAULTS.car), cabin: !outside })
+  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}${recorded ? '-recorded' : ''}${outside ? '-outside' : ''}.wav`
   const out = names.length === 1 && opt('out') ? opt('out') : path.join(opt('out-dir', '.'), file)
   render(settings, out)
 }
@@ -118,6 +123,9 @@ if (recorded) {
   voice.setProfile(PROFILES[settings.profile])
 }
 voice.set({ gain: 0.5, exhaust: Number(opt('exhaust', DEFAULTS.exhaust)) })
+const cabin = new Cabin(SR)
+cabin.set({ cabin: settings.cabin })
+cabin.mix = settings.cabin ? 1 : 0
 
 const frames = Math.round(seconds / TICK) * BLOCK
 const pcm = Buffer.alloc(frames * 4)
@@ -135,11 +143,14 @@ for (let i = 0; i < seconds / TICK; i++) {
   const s = engine.step(ms, TICK)
   maxKmh = Math.max(maxKmh, v * 3.6); maxGear = Math.max(maxGear, s.gear)
   voice.set({ rpm: s.rpm, load: s.load })
+  cabin.set({ load: s.load })
   // The browser renders in 128-frame quanta; do the same so filter updates
   // happen at the same rate.
   for (let o = 0; o < BLOCK; o += 128) {
     const n = Math.min(128, BLOCK - o)
-    voice.render([L.subarray(o, o + n), R.subarray(o, o + n)], n)
+    const outs = [L.subarray(o, o + n), R.subarray(o, o + n)]
+    voice.render(outs, n)
+    cabin.process(outs, n)
   }
   for (let k = 0; k < BLOCK; k++) {
     pcm.writeInt16LE(Math.round(L[k] * 32767), w); w += 2
@@ -155,5 +166,5 @@ head.write('data', 36); head.writeUInt32LE(pcm.length, 40)
 fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true })
 fs.writeFileSync(out, Buffer.concat([head, pcm]))
 console.log(`${out}: ${seconds} s ${sceneName}${recorded ? ' (recorded)' : ''}, ${p.name} (${p.style}), ${settings.mode}, ${CARS[settings.car].name}; ` +
-  `top ${maxKmh.toFixed(0)} km/h in gear ${maxGear}, speed fix every ${fixMs} ms`)
+  `top ${maxKmh.toFixed(0)} km/h in gear ${maxGear}, speed fix every ${fixMs} ms, heard ${settings.cabin ? 'in the cabin' : 'outside'}`)
 }

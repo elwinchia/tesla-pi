@@ -104,6 +104,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
 | `static/rev-profiles.js` | The four cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
+| `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A high shelf from 650 Hz (−11 dB on overrun and at idle, opening to −6 dB under full load) and a low-pass at 3.2 kHz, run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
 | `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
@@ -119,7 +120,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev.html` | The page for the dashboard, the Simulator, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
-| `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser. |
+| `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
 ### Safety rails
@@ -239,6 +240,37 @@ lope repeated audibly. The owner heard it as "weird".
   gearbox and rev range. They also synthesise it, but only while the loops
   load or if they cannot be loaded; the dash then says "synthesised
   (fallback)".
+
+**Heard from the driver's seat** (2026-11-25, `static/rev-cabin.js`). The
+loops are heard where engine-sim's impulse responses put the microphone: at
+the engine and at the tailpipe. A driver hears the engine through the car's
+body instead. The firewall, floor and glass pass the firing note and its
+first harmonics almost whole. They lose more of every octave above about
+500 Hz, since a panel's transmission loss rises about 6 dB an octave and the
+sound deadening takes more on top. So the cabin keeps the hum and muffles
+the rasp, the valve tick and the hiss. Under load the intake roars through
+the bulkhead and more of the top gets in; on overrun the cabin hears little
+but the burble. The player models that with a high shelf from 650 Hz, at
+−11 dB on overrun and idle and −6 dB at full load (it follows the load
+over 150 ms), then a low-pass at 3.2 kHz. Make-up gain of +1 dB keeps the
+loudness where it was. It adds no echo or cabin boom: the speakers play
+inside the real cabin, which supplies both. The start and stop clips go
+through it too (the worklet now has one input, which they feed).
+The "Heard from" setting on `rev.html` picks "The driver's seat" (the
+default) or "Outside", and crossfades between them over 50 ms.
+
+Measured on the 22 s demo (each band's share of the total, the cabin
+against outside; loudness within 0.6 dB, nothing clips):
+
+| Car, pulling (cabin / outside) | 80–160 Hz | 320–640 Hz | 640 Hz–1.3 kHz | 2.6–5.1 kHz | 5.1–12 kHz |
+|---|---|---|---|---|---|
+| V8 | −7.4 / −8.0 | −5.5 / −5.1 | −25.3 / −21.0 | −27.7 / −15.6 | −38.2 / −18.6 |
+| V10 | −10.8 / −12.2 | −1.4 / −1.0 | −23.8 / −20.7 | −43.9 / −32.7 | −53.6 / −34.8 |
+| F136 | −11.0 / −11.9 | −2.9 / −2.6 | −15.8 / −11.6 | −37.4 / −26.0 | −48.2 / −29.0 |
+| Flat-6 | −1.0 / −1.6 | −10.8 / −8.8 | −16.8 / −13.2 | −29.7 / −17.6 | −40.5 / −20.8 |
+
+The V8's straight-pipe rasp (2.6–5.1 kHz) was the loudest top end of the
+four, and the cabin takes 12 dB off it.
 
 **The bass.** The owner found the first render thin. It was: the LS script's
 exhaust impulse response, `smooth_39`, is centred on 320–640 Hz, and left

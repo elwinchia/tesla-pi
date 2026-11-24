@@ -16,6 +16,7 @@
 // processor registers itself only inside an AudioWorkletGlobalScope.
 
 import { SampleVoice } from './rev-sampler.js'
+import { Cabin } from './rev-cabin.js'
 
 // Deterministic noise, so a test render is repeatable.
 function rng(seed) {
@@ -240,16 +241,29 @@ if (typeof AudioWorkletProcessor !== 'undefined' && typeof registerProcessor ===
       // Recorded loops, when the chosen car has them (static/rev-sampler.js).
       // `samples: null` goes back to the synthesiser.
       this.sampler = new SampleVoice(sampleRate)
+      // Everything is heard through the car's body (static/rev-cabin.js),
+      // the start and stop clips too: they come in on the input.
+      this.cabin = new Cabin(sampleRate)
       this.port.onmessage = (e) => {
         const m = e.data || {}
         if (m.profile) this.voice.setProfile(m.profile)
         if ('samples' in m) this.sampler.setSet(m.samples)
-        if (m.params) { this.voice.set(m.params); this.sampler.set(m.params) }
+        if (m.params) { this.voice.set(m.params); this.sampler.set(m.params); this.cabin.set(m.params) }
       }
     }
-    process(_inputs, outputs) {
+    process(inputs, outputs) {
       const out = outputs[0]
-      if (out && out.length) (this.sampler.ready ? this.sampler : this.voice).render(out, out[0].length)
+      if (!out || !out.length) return true
+      const n = out[0].length
+      ;(this.sampler.ready ? this.sampler : this.voice).render(out, n)
+      const inp = inputs[0]
+      if (inp && inp.length) {
+        for (let ch = 0; ch < out.length; ch++) {
+          const x = inp[Math.min(ch, inp.length - 1)], o = out[ch]
+          for (let i = 0; i < n; i++) o[i] += x[i]
+        }
+      }
+      this.cabin.process(out, n)
       return true
     }
   }
