@@ -23,7 +23,7 @@ Read from tesrev.com (home, `/about/`, `/guides/`, `/legal/`) on 2026-11-23.
 | Where it plays | **Inside the car only.** Either the phone plays it over Bluetooth into the car, or the Tesla's own browser plays it. Its Boombox guide draws the line: "The Boombox plays sounds outside the car, when parked. TesRev plays an engine inside the car, while you drive." |
 | What drives it | **Sensors only, "never through the car's systems".** It does not use the Fleet API, BLE, CAN or OBD. The phone's accelerometer gives acceleration and its GPS gives speed. With no phone, "the Tesla screen follows the Tesla's own GPS speed, a little later and less finely." It turns acceleration into engine load with "your Tesla model's mass, power and drag". |
 | Latency | Phone over Bluetooth adds about 0.2 s. A phone relaying to the Tesla screen adds "a few hundredths of a second". Tesla GPS alone has no figure, only "a little later". There is a "Delay compensation" setting. |
-| Gearbox | Comfort, Normal and Sport set where it shifts. A Rev button plays the engine while parked. |
+| Gearbox | Comfort, Normal and Sport set where it shifts: Comfort shifts earliest and most often, Sport holds gears. Every car's gearing is short at the bottom (1st about 70 % of a real car's, closing up to the original top gear), so town driving runs through the gears. Hold the rev meter to rev while parked. |
 | Legal | The driver stays responsible. Keep the volume low enough to "hear horns, sirens and other road users". The sound "does not reflect the car's real state or speed". Not affiliated with Tesla. |
 
 TesRev's best mode needs a phone in a holder, sending its accelerometer to the
