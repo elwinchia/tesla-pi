@@ -24,6 +24,10 @@ const BARS = {
 // of the arc and its glow: temperatures on the left, the heading on the
 // right. Each is hidden while its values are unknown.
 const CAR = { y: 16, h: 50, pad: 18 }
+// The trip LCD's digits, and the width of the odometer's six and the
+// trip's five.
+const SMALL = { w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' }
+const ODO_W = 6 * 15 - 4, TRIP_W = 5 * 15 - 4
 const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 // Whole degrees, as an LCD would show them (no "-0").
 const deg = (c) => String(Math.max(-99, Math.min(999, Math.round(c) || 0)))
@@ -71,18 +75,22 @@ export default class SegmentStyle extends GaugeStyle {
     this.speed = sevenRow(s, { x: MID - 96, y: 214, n: 3, w: 52, h: 82, t: 12, gap: 16, skew: 0.1, cls: 'seg7 rv-speed7' })
     text(s, MID + 148, 296, 'rv-lcd-unit', 'km/h')
     text(s, MID - 146, 219, 'rv-lcd-label', 'GEAR')
-    // Slanted like the digits beside it.
-    this.gear = text(el('g', { transform: `translate(${MID - 131} 254) skewX(-5.7)` }, s), 0, 0, 'rv-lcd-gear', '')
+    // One seven-segment cell in the speed's slant and stroke, scaled down
+    // (kit.js has the gear letters).
+    this.gear = sevenRow(s, { x: MID - 146, y: 230, n: 1, w: 28, h: 46, t: 7, gap: 0, skew: 0.1, cls: 'seg7 rv-gear7' })
     this.simTag = text(s, MID - 131, 296, 'rv-sim-tag', 'SIM')
     this.simTag.style.display = 'none'
 
-    // Trip and odometer LCD, under the speed.
-    el('rect', { x: MID - 114, y: 324, width: 228, height: 44, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, s)
-    text(s, MID - 102, 340, 'rv-lcd-label', 'ODO')
-    this.odo = sevenRow(s, { x: MID - 103, y: 345, n: 6, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
-    text(s, MID + 20, 340, 'rv-lcd-label', 'TRIP A')
-    this.trip = sevenRow(s, { x: MID + 20, y: 345, n: 5, w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' })
-    el('circle', { cx: MID + 84.2, cy: 362, r: 1.8, class: 'rv-lcd-dot' }, s)
+    // Trip and odometer LCD under the speed, as wide as its window: the
+    // odometer centred in the left half, the trip in the right.
+    el('rect', { x: MID - 160, y: 324, width: 320, height: 44, rx: 10, class: 'rv-lcd small', fill: this.url('lcd') }, s)
+    const odoX = MID - 80 - ODO_W / 2, tripX = MID + 80 - TRIP_W / 2
+    text(s, odoX + 1, 340, 'rv-lcd-label', 'ODO')
+    this.odo = sevenRow(s, { x: odoX, y: 345, n: 6, ...SMALL })
+    text(s, tripX, 340, 'rv-lcd-label', 'TRIP A')
+    this.trip = sevenRow(s, { x: tripX, y: 345, n: 5, ...SMALL })
+    // The decimal point, between the trip's last two digits.
+    el('circle', { cx: tripX + 64.2, cy: 362, r: 1.8, class: 'rv-lcd-dot' }, s)
 
     // Side bars, with the icons the reference has at their outer ends.
     this.bars = {}
@@ -121,7 +129,7 @@ export default class SegmentStyle extends GaugeStyle {
     `)
     const { y, h } = CAR
     const big = { w: 14, h: 24, t: 3.5, gap: 5, skew: 0.1, cls: 'seg7 rv-odo7' }
-    const small = { w: 11, h: 18, t: 3, gap: 4, skew: 0.1, cls: 'seg7 rv-odo7' }
+    const small = SMALL
     const part = (g) => el('g', {}, g)
     // Left: OUT then IN.
     const tg = el('g', { class: 'rv-car', style: 'display:none' }, s)
@@ -220,7 +228,7 @@ export default class SegmentStyle extends GaugeStyle {
     this.speed.set(i.stale ? '--' : String(Math.min(999, Math.round(this.v.kmh))))
     this.odo.set(String(Math.floor(this.v.odo) % 1000000).padStart(6, '0'))
     this.trip.set(String(Math.floor(this.v.trip * 10) % 100000).padStart(2, '0'))
-    setText(this.gear, i.gear)
+    this.gear.set(i.gear ?? '–')
 
     const w = (this.v.water - WATER.lo) / (WATER.hi - WATER.lo)
     this.paintBar(this.bars.water, i.running ? w : 0, force)

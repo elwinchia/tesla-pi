@@ -4,7 +4,7 @@
    carry their own CSS inside their SVG (GaugeStyle.css), with a day look
    keyed off the svg's data-theme. In day every style sits on the floor
    grey of Tesla's own screen (#d6d7d6, its light theme's floor under the
-   car); at night on the night gradient. */
+   car); at night on plain black. */
 :root {
   --dash-a: #d6d7d6; --dash-b: #d6d7d6; --dash-line: rgba(0,0,0,0.06);
   --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
@@ -13,7 +13,7 @@
   --rv-hit: rgba(240, 140, 0, 0.045);
 }
 :root.night {
-  --dash-a: #121a26; --dash-b: #070a10; --dash-line: rgba(255,255,255,0.06);
+  --dash-a: #000000; --dash-b: #000000; --dash-line: rgba(255,255,255,0.06);
   --rv-num: #cfc7bc; --rv-dot: #7c7468; --rv-red: #ff3b30; --rv-glow-op: 0.38;
   --rv-chip-bg: #141c28; --rv-chip-line: rgba(255,170,80,0.28); --rv-chip-text: #ffb347;
   --rv-bar-off: #2a2f37; --rv-cap: #8a8f97; --rv-pill-line: #ffdb8f; --rv-bloom-op: 1;
@@ -46,9 +46,9 @@
 .rv-lcd-unit { fill: #ff9a5a; font: 700 15px -apple-system, system-ui, sans-serif; text-anchor: end; letter-spacing: 0.04em; }
 .rv-lcd-label { fill: #ff9a5a; font: 700 9px -apple-system, system-ui, sans-serif; letter-spacing: 0.12em; opacity: 0.85; }
 .rv-lcd-dot { fill: #ffb45a; }
-/* The gear, in the speed LCD's top-left corner; red at the redline. */
-.rv-lcd-gear { fill: #ffd98a; font: 700 30px -apple-system, system-ui, sans-serif; text-anchor: middle; filter: drop-shadow(0 0 4px rgba(255, 170, 60, 0.6)); }
-.cluster-svg[data-zone=red] .rv-lcd-gear { fill: var(--rv-red); filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
+/* The gear, a seven-segment cell in the speed LCD's top-left corner; red
+   at the redline. */
+.cluster-svg[data-zone=red] .rv-gear7 .on { fill: var(--rv-red); filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
 .rv-icon-line path, .rv-icon-line circle { fill: none; stroke: var(--rv-num); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.85; }
 .rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
 .rv-bar rect { fill: var(--rv-bar-off); }

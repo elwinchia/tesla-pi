@@ -47,6 +47,9 @@ export function mix(a, b, t) {
 export const SEVEN = {
   0: 'abcdef', 1: 'bc', 2: 'abdeg', 3: 'abcdg', 4: 'bcfg', 5: 'acdfg', 6: 'acdefg',
   7: 'abc', 8: 'abcdefg', 9: 'abcdfg', '-': 'g', '–': 'g', ' ': '', '': '',
+  // Gear letters, as gear readouts draw them: N the tall arch, r and d
+  // lower case, P with its bowl at the top.
+  N: 'abcef', R: 'eg', P: 'abefg', D: 'bcdeg',
 }
 export function segmentsOf(ch) { return SEVEN[ch] ?? '' }
 
@@ -285,7 +288,7 @@ export class GaugeStyle {
   // has a day and a night look: the svg carries data-theme="day" | "night"
   // (the page's theme), and a style's CSS keys its day colours off
   // .gs-<key>[data-theme=day]. In day it sits on the Tesla screen's floor
-  // grey (--dash-a in rev-gauge.css), at night on the night gradient.
+  // grey (--dash-a in rev-gauge.css), at night on black.
   static meta = { key: 'base', name: 'Base', blurb: '', view: { w: 1000, h: 400 } }
 
   constructor(host, { scale, theme = () => 'night' } = {}) {

@@ -12,7 +12,7 @@
 //   5  a classic analogue clock; the battery (fuel)
 //   6  the green time-circuit clock; a cassette labelled with the engine
 // The car's own readouts (temperatures, tyres) show dashes until read.
-import { GaugeStyle, el, text, setText, polar, arcPath, dialAngle, clamp } from './kit.js'
+import { GaugeStyle, el, text, setText, polar, dialAngle, clamp } from './kit.js'
 
 const VIEW = { w: 1200, h: 390 }
 // Tiles: [x, y, w, h]. Narrower than the original's (its grid is ~3.7:1),
@@ -81,7 +81,6 @@ ${D} .tl-st-hub1 { stop-color: #26282b; }
 ${D} .tl-hub { stroke: #1f2124; }
 ${D} .tl-hubsh { opacity: 0.14; }
 ${D} .tl-unit { fill: #393c41; }
-${D} .tl-cap { fill: #5c5e62; }
 ${D} .tl-icon { stroke: #393c41; }
 ${D} .tl-icon .fill { fill: #393c41; }
 ${D} .tl-utag { fill: #5c5e62; }
@@ -131,7 +130,6 @@ const CSS = `
 .gs-tiles .tl-band { fill: #ffffff; opacity: 0.09; }
 .gs-tiles .tl-speed { font-size: 64px; font-weight: 800; text-anchor: middle; letter-spacing: -2px; font-variant-numeric: tabular-nums; }
 .gs-tiles .tl-unit { fill: #e8e8e8; font-size: 15px; font-weight: 700; text-anchor: middle; letter-spacing: 0.04em; }
-.gs-tiles .tl-cap { fill: #8a8a8a; font-size: 14px; font-weight: 600; text-anchor: middle; letter-spacing: 0.1em; }
 .gs-tiles .tl-hub { stroke: #050505; stroke-width: 1; }
 .gs-tiles .tl-icon { fill: none; stroke: #ececec; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .gs-tiles .tl-icon .fill { fill: #ececec; stroke: none; }
@@ -332,8 +330,6 @@ export default class TilesStyle extends GaugeStyle {
     el('path', { d: light, fill: '#ffffff', opacity: 0.045, class: 'tl-gr-l' }, p)
     el('path', { d: dark, fill: '#000000', opacity: 0.22, class: 'tl-gr-d' }, p)
     el('path', { d: 'M8 30 l34 9 M60 70 l22 -14', stroke: '#ffffff', 'stroke-width': 0.6, opacity: 0.05, class: 'tl-gr-s' }, p)
-    // The rev meter's caption follows the rim on the right.
-    el('path', { id: this.id('rpmarc'), d: arcPath(TACH.cx, BIG.cy, 126, -13, 25) }, defs)
   }
 
   tile(s, [x, y, w, h]) {
@@ -542,12 +538,12 @@ export default class TilesStyle extends GaugeStyle {
     const cx = TACH.cx, cy = BIG.cy
     this.turn(s, T.tach[0] + T.tach[2] - 28, T.tach[1] + 28, -1)
     el('circle', { cx, cy, r: BIG.R, fill: 'rgba(0,0,0,0.14)', class: 'tl-face' }, s)
-    // The rim, broken where its caption runs.
-    el('path', { d: arcPath(cx, cy, BIG.R, 29, 345), class: 'tl-ring line' }, s)
+    el('circle', { cx, cy, r: BIG.R, class: 'tl-ring line' }, s)
     this.tachBand = el('path', { class: 'tl-band' }, s)
     this.tachG = el('g', {}, s)
-    const cap = el('text', { class: 'tl-cap' }, s)
-    el('textPath', { href: '#' + this.id('rpmarc'), startOffset: '50%' }, cap).textContent = 'RPM × 100'
+    // The unit sits where the speedometer prints KM/H: under the centre,
+    // level with the 0 and the top of the scale, clear of the hub.
+    text(s, cx, cy + 45, 'tl-unit', 'RPM × 100')
 
     // The needle points along +x and turns about the hub; it runs out to
     // the rim, past the numerals, as on the original.

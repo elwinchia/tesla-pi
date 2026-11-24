@@ -341,7 +341,7 @@ V8, 10,000 for the others), red from the redline. No style draws a panel
 behind itself; it sits on the dock's own background.
 
 **Day and night.** Every style has both, following the car's theme like
-the rest of the page. At night they sit on a dark blue-black gradient with
+the rest of the page. At night they sit on plain black with
 their backlighting and glows; in day on the floor grey of Tesla's own
 light-theme screen (`#d6d7d6`, the floor under the car in the
 [Tesla Dashboard UI Component Library](https://www.figma.com/community/file/1382192547846546595/tesla-dashboard-ui-component-library)),
@@ -351,8 +351,8 @@ colours off it.
 
 | Style | After | What it shows |
 |---|---|---|
-| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with the gear in its corner, trip and odometer; water temperature and battery bars; outside/cabin temperature and heading LCDs. |
-| Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): the four tyre pressures around a car seen from above, a water temperature/battery split dial, the tach with a big gear and a boost bar, the speedometer with a digital speed, odometer and trip, a chronograph clock. |
+| Segment arc (default) | S2000 | The segmented arc; a seven-segment speed LCD with a seven-segment gear in its corner, a trip and odometer LCD as wide as it; water temperature and battery bars; outside/cabin temperature and heading LCDs. |
+| Five dials | 911 | Five round dials in an oval housing (a moving needle leaves a glowing trace on the rim; the clock's seconds sweep as one): the four tyre pressures around a car seen from above, a battery/boost split dial, the tach with a big gear, the speedometer with a digital speed, a chronograph clock. |
 | Backlit pair | Testarossa | Orange-backlit speedometer with a seven-segment speed, tach ×100 with the gear as a seven-segment digit in a glowing disc, battery and water bars between, marked by their icons. |
 | Twin dials | NSX | Big tach with a gear strip (fading away from the current gear) and big speedometer with a digital speed, their scales printed light so the readings stand out; small water/oil and G/volts dials at the edges. A moving needle leaves an orange trail that fades back into it. |
 | Digital bars | Corvette C4 | Curved bar fans for speed and revs (×100) with framed digital readouts; tyre pressure and coolant boxes, a state-of-charge stack, trip and average speed, the engine's name and the time. |
@@ -388,7 +388,8 @@ wrong more often than right.
 **What is made up** (`Instruments` in `gauges/kit.js`): water temperature
 warms from cold to ~90 °C over a few minutes of running and creeps toward
 ~104 °C when worked hard; oil temperature follows more slowly; oil pressure
-follows the revs; volts (the 12 V gauges) read ~14; and without the car's
+follows the revs; boost (the 911 and Integrale) follows the throttle and revs;
+volts (the 12 V gauges) read ~14; and without the car's
 reading, the charge drains with the odometer, a full battery every 500 km.
 They cool with the engine off, across page reloads too.
 

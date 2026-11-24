@@ -3,18 +3,35 @@
 // up from the bottom left and flattens out at the top right, speed on the
 // left and revs on the right, each with a framed readout; in the middle, the
 // tyre-pressure and coolant boxes either side of a stacked fuel bar, trip and average
-// speed readouts, two turn arrows and a "now playing" pill that shows the
-// engine, the time and the throttle. Our own drawing: no logos, no CarPlay
-// tiles, and no plate behind it all (the page's own background shows).
+// speed readouts, and a "now playing" pill that shows the engine, the time and
+// the throttle. The original's turn arrows are left out: we cannot see the
+// indicators. Our own drawing: no logos, no CarPlay tiles, and no plate behind
+// it all (the page's own background shows).
 //
 // The picture is laid out in the reference image's own pixels (1920 x 722),
 // cropped to the panels by a translate on the root group, so every shape
 // can be checked against it directly.
 import { GaugeStyle, el, text, setText, polar, clamp, mix, hhmm } from './kit.js'
 
-// The crop of the reference: the panels span x 92..1838, y 83..632.
-const OX = 85, OY = 75
-const VIEW = { w: 1760, h: 568 }
+// The two big panels, and one gap used between every pair of neighbouring
+// boxes, across and down, so the spacing reads as one grid.
+const PANEL = { x: 94, y: 85, w: 548, h: 546 }
+const DX = 1196                 // the right panel is the left one, moved over
+const GAP = 16
+// The middle column between the panels holds three rows: the tyre and
+// coolant tiles (the fuel bars between them), the trip panel, the pill.
+const MID = { x: PANEL.x + PANEL.w + GAP, w: DX - PANEL.w - 2 * GAP }
+const TILE = { w: 200, h: 236 }
+const TRIP_H = 176
+const PILL_H = PANEL.h - TILE.h - TRIP_H - 2 * GAP
+const ROW = { tile: PANEL.y, trip: PANEL.y + TILE.h + GAP, pill: PANEL.y + TILE.h + TRIP_H + 2 * GAP }
+// The framed readout sits this far in from its panel's right and bottom edges.
+const READ = { w: 223, h: 138, inset: 60 }
+// The crop: the panels' outer edges (their 4-unit rims included) with the
+// same margin on all four sides.
+const MARGIN = 8
+const OX = PANEL.x - 2 - MARGIN, OY = PANEL.y - 2 - MARGIN
+const VIEW = { w: DX + PANEL.w + 4 + 2 * MARGIN, h: PANEL.h + 4 + 2 * MARGIN }
 
 const C = {
   yellow: '#f6e22c', tip: '#ece832', lime: '#c6dc2c', green: '#7ec832', olive: '#5a661c', oliveDark: '#3a4612',
@@ -35,7 +52,6 @@ const D = {
 // of the fan) to 270° (up, its right-hand end). Bars are radial pills.
 const FAN = { cy: 578, ro: 410, ri: 335, barIn: 345, barOut: 400, n: 56 }
 const SPEED_CX = 580
-const DX = 1196                 // the right panel is the left one, moved over
 const TACH_CX = SPEED_CX + DX
 const SPEED_MAX = 200
 const FUEL_BARS = 13
@@ -118,8 +134,6 @@ const CSS = `
 .gs-digital .dg-bfill { fill: ${C.orange}; }
 .gs-digital .dg-bfill.hot { fill: ${C.red}; }
 .gs-digital .dg-btick { stroke: #94440f; stroke-width: 4; stroke-linecap: round; }
-.gs-digital .dg-arrow-well { fill: #0c0d09; stroke: #1d2019; stroke-width: 3; }
-.gs-digital .dg-arrow { fill: #2f5020; stroke: #2f5020; stroke-width: 6; stroke-linejoin: round; }
 .gs-digital .dg-pill { fill: #13110c; stroke: #2d2b26; stroke-width: 4; }
 .gs-digital .dg-song { fill: ${C.yellow}; font-size: 23px; font-weight: 600; text-anchor: middle; }
 .gs-digital .dg-time { fill: #85742a; font-size: 25px; text-anchor: middle; font-variant-numeric: tabular-nums; }
@@ -174,8 +188,6 @@ const CSS = `
 .gs-digital[data-theme=day] .dg-bfill { fill: ${D.orange}; }
 .gs-digital[data-theme=day] .dg-bfill.hot { fill: ${D.red}; }
 .gs-digital[data-theme=day] .dg-btick { stroke: #a6a9ac; }
-.gs-digital[data-theme=day] .dg-arrow-well { fill: #f4f4f4; stroke: #cfd1d3; }
-.gs-digital[data-theme=day] .dg-arrow { fill: #c3d4bb; stroke: #c3d4bb; }
 .gs-digital[data-theme=day] .dg-pill { fill: #fafafa; stroke: #cfd1d3; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.12)); }
 .gs-digital[data-theme=day] .dg-song { fill: #1f2124; }
 .gs-digital[data-theme=day] .dg-time { fill: #5c5e62; }
@@ -220,8 +232,8 @@ export default class DigitalStyle extends GaugeStyle {
     const s = this.root = el('g', { transform: `translate(${-OX} ${-OY})` }, this.svg)
 
     // ── The two big panels ──
-    const panel = (x) => el('rect', { x, y: 85, width: 548, height: 546, rx: 36, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
-    panel(94); panel(94 + DX)
+    const panel = (x) => el('rect', { x, y: PANEL.y, width: PANEL.w, height: PANEL.h, rx: 36, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
+    panel(PANEL.x); panel(PANEL.x + DX)
 
     // Speed: drawn once, km/h does not change with the engine.
     const sg = el('g', {}, s)
@@ -234,14 +246,14 @@ export default class DigitalStyle extends GaugeStyle {
       this.tick(sScale, SPEED_CX, v / SPEED_MAX, lab ? 'dg-tick' : 'dg-tick minor')
       if (lab) this.label(sScale, SPEED_CX, v / SPEED_MAX, String(v), 'dg-num')
     }
-    this.speedNum = this.readout(s, 350, 'KM/H', 92, 'speed')
+    this.speedNum = this.readout(s, 0, 'KM/H', 92, 'speed')
 
     // Revs: the track is fixed, the bars and scale follow the engine.
     el('path', { d: ringPath(TACH_CX, FAN.cy, FAN.ri + 6, FAN.ro - 6, 180, 270), class: 'dg-track' }, s)
     this.tachTip = el('circle', { r: 64, fill: this.url('tip'), class: 'dg-glowonly', style: 'display:none' }, s)
     this.tachG = el('g', {}, s)
     this.tachScaleG = el('g', { filter: this.url('glow'), class: 'dg-scale' }, s)
-    this.tachNum = this.readout(s, 350 + DX, 'RPM/100', 140, 'tach')
+    this.tachNum = this.readout(s, DX, 'RPM/100', 140, 'tach')
     this.simTag = text(s, 1336, 136, 'dg-sim', 'SIM')
     this.simTag.style.display = 'none'
     this.finger = el('circle', { r: 40, class: 'dg-finger', style: 'display:none' }, s)
@@ -272,37 +284,55 @@ export default class DigitalStyle extends GaugeStyle {
     const [x, y] = polar(cx, FAN.cy, r, a)
     text(g, f1(x), f1(y), cls, s)
   }
-  // The framed readout bottom right of a panel: a big number, the unit
-  // breaking the frame's bottom edge.
-  readout(s, x, unit, gap, key) {
-    el('ellipse', { cx: x + 112, cy: 500, rx: 120, ry: 70, fill: this.url('boxglow'), class: 'dg-glowonly' }, s)
-    el('rect', { x, y: 433, width: 223, height: 138, rx: 22, class: 'dg-box' }, s)
-    el('path', { d: gapBox(x, 433, 223, 138, 22, gap), class: `dg-frame dg-${key}-frame` }, s)
-    text(s, x + 111.5, 571, 'dg-unit', unit)
-    const halo = text(s, x + 111.5, 537, `dg-big dg-halo dg-${key}-halo`, '', { 'font-size': 104 })
-    const num = text(s, x + 111.5, 537, `dg-big dg-${key}-num`, '', { 'font-size': 104 })
+  // The framed readout bottom right of the panel `dx` along: a big number,
+  // the unit breaking the frame's bottom edge. It sits as far in from the
+  // panel's right edge as from its bottom.
+  readout(s, dx, unit, gap, key) {
+    const x = PANEL.x + PANEL.w - READ.inset - READ.w + dx, y = PANEL.y + PANEL.h - READ.inset - READ.h
+    const cx = x + READ.w / 2
+    el('ellipse', { cx, cy: y + 67, rx: 120, ry: 70, fill: this.url('boxglow'), class: 'dg-glowonly' }, s)
+    el('rect', { x, y, width: READ.w, height: READ.h, rx: 22, class: 'dg-box' }, s)
+    el('path', { d: gapBox(x, y, READ.w, READ.h, 22, gap), class: `dg-frame dg-${key}-frame` }, s)
+    text(s, cx, y + READ.h, 'dg-unit', unit)
+    const halo = text(s, cx, y + 104, `dg-big dg-halo dg-${key}-halo`, '', { 'font-size': 104 })
+    const num = text(s, cx, y + 104, `dg-big dg-${key}-num`, '', { 'font-size': 104 })
     return [halo, num]
   }
 
   buildCentre(s) {
-    // Each box: the lit label over the dim one and an icon along the bottom.
+    // The top row: the tyre tile against the left panel, the coolant tile
+    // against the right one, both a GAP away, and the fuel bars centred in
+    // the space between. Labels and icons hang from the tiles' bottom edge.
+    const top = ROW.tile, bot = ROW.tile + TILE.h
+    const labY = bot - 39
+    const tyreX = MID.x, waterX = MID.x + MID.w - TILE.w
+
+    // Each box: the lit label over the dim one (if any) and an icon along
+    // the bottom.
     const frame = (g, x, lit, dimLab, icon) => {
-      el('rect', { x, y: 85, width: 200, height: 216, rx: 22, class: 'dg-tile' }, g)
-      this.fit(text(g, x + 16, 262, 'dg-lab', lit), 124)
-      this.fit(text(g, x + 16, 290, 'dg-lab dim', dimLab), 124)
-      icon(el('g', { transform: `translate(${x + 170} 266) scale(0.8)` }, g))
+      el('rect', { x, y: top, width: TILE.w, height: TILE.h, rx: 22, class: 'dg-tile' }, g)
+      this.fit(text(g, x + 16, labY, 'dg-lab', lit), 124)
+      if (dimLab) this.fit(text(g, x + 16, labY + 28, 'dg-lab dim', dimLab), 124)
+      icon(el('g', { transform: `translate(${x + 170} ${bot - 35}) scale(0.8)` }, g))
     }
     // Tyres: the four pressures as the wheels sit seen from above, the
-    // front pair over the rear, round a little car. Dashes until read.
+    // front pair beside the front wheels and the rear pair beside the rear
+    // ones, round a little car. The unit (bar) goes unsaid, as on the car's
+    // own screen. Dashes until read.
     {
-      const x = 663, tg = this.tyreG = el('g', { class: 'dg-tyres' }, s)
-      frame(tg, x, 'TYRE PRESS', 'BAR', (g) => this.tpmsIcon(g, 0, 0))
-      const cx = x + 100
-      el('rect', { x: cx - 13, y: 112, width: 26, height: 104, rx: 10, class: 'dg-car' }, tg)
-      for (const [dx, y] of [[-1, 128], [1, 128], [-1, 184], [1, 184]]) el('rect', { x: cx + dx * 15 - 3, y, width: 6, height: 18, rx: 2, class: 'dg-wheel' }, tg)
-      this.tyreVals = [[-1, 151], [1, 151], [-1, 220], [1, 220]].map(([dx, y]) => {
-        const side = dx < 0 ? ' end' : ' start', at = { 'font-size': 46 }
-        return [text(tg, cx + dx * 24, y, 'dg-big dg-halo' + side, '', at), text(tg, cx + dx * 24, y, 'dg-big dg-tyre' + side, '', at)]
+      const x = tyreX, tg = this.tyreG = el('g', { class: 'dg-tyres' }, s)
+      frame(tg, x, 'TYRE PRESS', '', (g) => this.tpmsIcon(g, 0, 0))
+      // The car fills the height above the label, a third as wide as long.
+      const cx = x + TILE.w / 2, len = 136, w = 42
+      const cy = (top + 14 + labY - 24) / 2, y0 = cy - len / 2
+      el('rect', { x: cx - w / 2, y: y0, width: w, height: len, rx: 15, class: 'dg-car' }, tg)
+      el('rect', { x: cx - w / 2 + 6, y: y0 + 42, width: w - 12, height: 58, rx: 8, class: 'dg-car' }, tg)
+      const axles = [y0 + 32, y0 + len - 32]
+      for (const y of axles) for (const dx of [-1, 1]) el('rect', { x: cx + dx * w / 2 - 4, y: y - 12, width: 8, height: 24, rx: 3, class: 'dg-wheel' }, tg)
+      this.tyreVals = [[-1, 0], [1, 0], [-1, 1], [1, 1]].map(([dx, a]) => {
+        const side = dx < 0 ? ' end' : ' start', at = { 'font-size': 34 }
+        const tx = cx + dx * (w / 2 + 14), ty = axles[a] + 12
+        return [text(tg, tx, ty, 'dg-big dg-halo' + side, '', at), text(tg, tx, ty, 'dg-big dg-tyre' + side, '', at)]
       })
       this.tyreShown = null
     }
@@ -310,63 +340,68 @@ export default class DigitalStyle extends GaugeStyle {
     // dim one, and an icon. The temperature is the lit one.
     const tile = (x, lit, dimLab, icon) => {
       frame(s, x, lit, dimLab, icon)
-      const halo = text(s, x + 100, 170, 'dg-big dg-halo', '', { 'font-size': 76 })
-      const num = text(s, x + 100, 170, 'dg-big', '', { 'font-size': 76 })
-      for (const k of [0, 1, 2]) el('line', { x1: x + 28 + k * 72, y1: 197, x2: x + 28 + k * 72, y2: 206, class: 'dg-btick' }, s)
-      el('rect', { x: x + 26, y: 211, width: 148, height: 10, rx: 5, class: 'dg-btrack' }, s)
-      const fill = el('rect', { x: x + 26, y: 211, width: 0, height: 10, rx: 5, class: 'dg-bfill' }, s)
+      const barY = labY - 51, tickY = barY - 14
+      const ny = (top + tickY) / 2 + 28
+      const halo = text(s, x + 100, ny, 'dg-big dg-halo', '', { 'font-size': 80 })
+      const num = text(s, x + 100, ny, 'dg-big', '', { 'font-size': 80 })
+      for (const k of [0, 1, 2]) el('line', { x1: x + 28 + k * 72, y1: tickY, x2: x + 28 + k * 72, y2: tickY + 9, class: 'dg-btick' }, s)
+      el('rect', { x: x + 26, y: barY, width: 148, height: 10, rx: 5, class: 'dg-btrack' }, s)
+      const fill = el('rect', { x: x + 26, y: barY, width: 0, height: 10, rx: 5, class: 'dg-bfill' }, s)
       return { halo, num, fill, w: -1 }
     }
-    this.water = tile(1082, 'COOLANT TEMP', 'VOLTS', (g) => this.batteryIcon(g, 0, 0))
+    this.water = tile(waterX, 'COOLANT TEMP', 'VOLTS', (g) => this.batteryIcon(g, 0, 0))
 
     // Fuel: thirteen bars, E at the bottom, red to orange to yellow to
-    // green going up, as a gauge that warns low.
+    // green going up, as a gauge that warns low. The block (bars, ticks,
+    // F and E) is 152 wide, centred between the tiles; its bars run from
+    // near the tiles' top down to just above the labels, which line up
+    // with the tiles' own.
+    const fx = MID.x + MID.w / 2 - 76
+    const fTop = top + 14, fBot = labY - 26 - 7
+    const pitch = (fBot - fTop) / (FUEL_BARS - 1)
     this.fuelBars = []
     for (let k = 0; k < FUEL_BARS; k++) {
-      const y = 233 - k * 11.25
-      this.fuelBars.push({ e: el('rect', { x: 900, y: f1(y), width: 104, height: 7, rx: 3.5, fill: C.fuelOff }, s), col: fuelColor(k), day: fuelColor(k, D) })
+      const y = fBot - k * pitch
+      this.fuelBars.push({ e: el('rect', { x: fx + 2, y: f1(y), width: 104, height: 7, rx: 3.5, fill: C.fuelOff }, s), col: fuelColor(k), day: fuelColor(k, D) })
     }
     for (let k = 0; k <= 4; k++) {
-      const y = 236.5 - k * 33.75
-      el('line', { x1: 1014, y1: y, x2: k % 2 ? 1020 : 1027, y2: y, class: 'dg-ftick' }, s)
+      const y = f1(fBot + 3.5 - k * 3 * pitch)
+      el('line', { x1: fx + 116, y1: y, x2: k % 2 ? fx + 122 : fx + 129, y2: y, class: 'dg-ftick' }, s)
     }
-    text(s, 1040, 106, 'dg-fuel-lab', 'F', { 'dominant-baseline': 'central' })
-    text(s, 1040, 240, 'dg-fuel-lab', 'E', { 'dominant-baseline': 'central' })
-    this.fit(text(s, 898, 268, 'dg-fuel-lab', 'STATE OF'), 116)
-    this.fit(text(s, 898, 293, 'dg-fuel-lab', 'CHARGE'), 116)
-    this.battery(s, 1038, 262)
+    text(s, fx + 142, fTop + 7, 'dg-fuel-lab', 'F', { 'dominant-baseline': 'central' })
+    text(s, fx + 142, fBot + 7, 'dg-fuel-lab', 'E', { 'dominant-baseline': 'central' })
+    this.fit(text(s, fx, labY, 'dg-fuel-lab', 'STATE OF'), 116)
+    this.fit(text(s, fx, labY + 28, 'dg-fuel-lab', 'CHARGE'), 116)
+    this.battery(s, fx + 140, labY - 10)
 
-    // Trip and average speed, each under a lit header beside a dim one,
-    // as on the original's mode buttons.
-    el('rect', { x: 655, y: 316, width: 620, height: 160, rx: 28, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
-    text(s, 778, 362, 'dg-lab dim dg-head', 'RANGE')
-    text(s, 920, 362, 'dg-lab dg-head', 'TRIP')
-    text(s, 1033, 362, 'dg-lab dg-head', 'AVERAGE')
-    text(s, 1153, 362, 'dg-lab dim dg-head', 'INSTANT')
-    el('rect', { x: 670, y: 375, width: 278, height: 72, rx: 14, class: 'dg-inset' }, s)
-    el('rect', { x: 982, y: 375, width: 278, height: 72, rx: 14, class: 'dg-inset' }, s)
-    text(s, 686, 420, 'dg-lab', 'KM')
-    this.tripNum = text(s, 932, 433, 'dg-big end', '', { 'font-size': 58 })
-    this.avgNum = text(s, 1102, 433, 'dg-big', '', { 'font-size': 58 })
-    text(s, 1246, 420, 'dg-lab', 'KM/H', { 'text-anchor': 'end' })
+    // Trip and average speed, each in an inset under a lit header beside a
+    // dim one, as on the original's mode buttons. The insets sit a GAP in
+    // from the panel's sides and bottom and a GAP apart.
+    const ty = ROW.trip
+    el('rect', { x: MID.x, y: ty, width: MID.w, height: TRIP_H, rx: 28, class: 'dg-panel', fill: this.url('panel'), stroke: this.url('rim') }, s)
+    const iw = (MID.w - 3 * GAP) / 2, ih = 84, iy = ty + TRIP_H - GAP - ih
+    const ix = [MID.x + GAP, MID.x + 2 * GAP + iw]
+    const head = (x, cls, t) => text(s, x, ty + 50, 'dg-lab dg-head' + cls, t)
+    head(ix[0] + iw * 0.25, ' dim', 'RANGE'); head(ix[0] + iw * 0.75, '', 'TRIP')
+    head(ix[1] + iw * 0.25, '', 'AVERAGE'); head(ix[1] + iw * 0.75, ' dim', 'INSTANT')
+    for (const x of ix) el('rect', { x, y: iy, width: iw, height: ih, rx: 14, class: 'dg-inset' }, s)
+    const numY = iy + ih / 2 + 22, labelY = iy + ih / 2 + 8
+    text(s, ix[0] + 16, labelY, 'dg-lab', 'KM')
+    this.tripNum = text(s, ix[0] + iw - 18, numY, 'dg-big end', '', { 'font-size': 62 })
+    this.avgNum = text(s, ix[1] + 18, numY, 'dg-big start', '', { 'font-size': 62 })
+    text(s, ix[1] + iw - 16, labelY, 'dg-lab', 'KM/H', { 'text-anchor': 'end' })
     this.avg = { km: 0, s: 0, t: 0 }
 
-    // Turn arrows, never lit: we cannot see the indicators.
-    const arrow = (cx, dir) => {
-      el('circle', { cx, cy: 588, r: 34, class: 'dg-arrow-well' }, s)
-      const p = [[-15, 0], [-1, -14], [-1, -6], [14, -6], [14, 6], [-1, 6], [-1, 14]]
-      el('polygon', { points: p.map(([x, y]) => f1(cx + dir * x) + ',' + f1(588 + y)).join(' '), class: 'dg-arrow' }, s)
-    }
-    arrow(701, 1); arrow(1230, -1)
-
-    // The "now playing" pill: the engine's name, the time, and the
-    // throttle as the progress bar.
-    el('rect', { x: 758, y: 542, width: 414, height: 90, rx: 34, class: 'dg-pill' }, s)
-    this.song = text(s, 965, 572, 'dg-song', '')
-    this.time = text(s, 965, 598, 'dg-time', '')
-    el('rect', { x: 793, y: 602, width: 344, height: 9, rx: 4.5, class: 'dg-ptrack' }, s)
-    this.prog = el('rect', { x: 793, y: 602, width: 0, height: 9, rx: 4.5, fill: this.url('pfill') }, s)
-    this.progDot = el('circle', { cx: 793, cy: 606.5, r: 6.5, class: 'dg-pdot' }, s)
+    // The "now playing" pill, the full width of the column: the engine's
+    // name, the time, and the throttle as the progress bar.
+    const py = ROW.pill, pcx = MID.x + MID.w / 2
+    el('rect', { x: MID.x, y: py, width: MID.w, height: PILL_H, rx: 34, class: 'dg-pill' }, s)
+    this.song = text(s, pcx, py + 38, 'dg-song', '')
+    this.time = text(s, pcx, py + 67, 'dg-time', '')
+    this.progX = MID.x + 40; this.progMax = MID.w - 80
+    el('rect', { x: this.progX, y: py + 72, width: this.progMax, height: 9, rx: 4.5, class: 'dg-ptrack' }, s)
+    this.prog = el('rect', { x: this.progX, y: py + 72, width: 0, height: 9, rx: 4.5, fill: this.url('pfill') }, s)
+    this.progDot = el('circle', { cx: this.progX, cy: py + 76.5, r: 6.5, class: 'dg-pdot' }, s)
     this.progW = -1
   }
 
@@ -425,7 +460,7 @@ export default class DigitalStyle extends GaugeStyle {
   // A finger anywhere on the rev panel revs the engine.
   tachHit(x, y) {
     const px = x + OX, py = y + OY
-    return px >= 94 + DX && px <= 642 + DX && py >= 85 && py <= 631
+    return px >= PANEL.x + DX && px <= PANEL.x + PANEL.w + DX && py >= PANEL.y && py <= PANEL.y + PANEL.h
   }
   onFinger(x, y, rpm) {
     const [cx, cy] = polar(TACH_CX, FAN.cy, (FAN.barIn + FAN.barOut) / 2, fanAngle(rpm / this.scale.max))
@@ -483,11 +518,11 @@ export default class DigitalStyle extends GaugeStyle {
     const car = String(i.car || '').toUpperCase().slice(0, 28)
     if (car !== this.carLast) { this.carLast = car; setText(this.song, car) }
     setText(this.time, hhmm(i.clock instanceof Date ? i.clock : new Date()))
-    const pw = Math.round(clamp(v.load, 0, 1) * 344)
+    const pw = Math.round(clamp(v.load, 0, 1) * this.progMax)
     if (force || pw !== this.progW) {
       this.progW = pw
       this.prog.setAttribute('width', pw)
-      this.progDot.setAttribute('cx', 793 + pw)
+      this.progDot.setAttribute('cx', this.progX + pw)
     }
   }
 

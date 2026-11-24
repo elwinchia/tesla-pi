@@ -27,9 +27,6 @@ const BAR = { x: MID - 150, w: 300, h: 14 }
 // The gear: one seven-segment cell in the speed's italic, centred in the
 // disc. The speed's cells are 40 x 70 with 10-unit segments.
 const GEAR = { w: 27, h: 46, t: 7, skew: 0.14 }
-// Letters the speed never needs: N as the tall arch gear readouts use, and
-// R and P for completeness.
-const GEAR_SEGS = { N: 'abcef', R: 'eg', P: 'abefg' }
 const BARS = {
   batt:  { top: 4, lo: 0, hi: 1, labels: ['0', '50', '100'], key: 'fuel', low: 0.15 },
   water: { top: 204, lo: 50, hi: 130, labels: ['50', '90', '130'], key: 'water', hot: 115 },
@@ -212,7 +209,7 @@ export default class BacklitStyle extends GaugeStyle {
       set(ch) {
         if (ch === shown) return
         shown = ch
-        const on = GEAR_SEGS[ch] ?? segmentsOf(ch)
+        const on = segmentsOf(ch)
         for (const k of 'abcdefg') segs[k].setAttribute('class', on.includes(k) ? 'on' : 'off')
       },
     }

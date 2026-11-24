@@ -18,6 +18,7 @@ test('seven-segment digits light the usual segments', () => {
   assert.equal(segmentsOf('1'), 'bc')
   assert.equal(segmentsOf(' '), '')
   assert.equal(segmentsOf('x'), '', 'anything else is blank')
+  assert.equal(segmentsOf('N'), 'abcef', 'gear letters: N is the arch')
   for (let d = 0; d <= 9; d++) assert.ok(SEVEN[d].length >= 2)
   // Every digit lights a different pattern.
   assert.equal(new Set([...Array(10).keys()].map((d) => SEVEN[d])).size, 10)

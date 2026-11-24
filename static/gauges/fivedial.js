@@ -1,17 +1,17 @@
 // Five dials, 911-style: five round dials in a dark oval housing, as on the
 // concept this copies. Left to right: the car's tyre pressures (a little
-// car seen from above, a pressure at each wheel), water temperature and the
-// battery's charge (a split dial; the charge is where the original has the
-// tank: the car's own over Bluetooth, else made up), the big tachometer with
-// the gear and a boost bar, the speedometer with a digital readout, and a
-// clock with three small chronograph dials.
+// car seen from above, a pressure at each wheel), the battery's charge and
+// the engine's boost (a split dial; the charge is the car's own over
+// Bluetooth, else made up), the big tachometer with the gear, the
+// speedometer with a digital readout, and a clock with three small
+// chronograph dials.
 //
 // Every needle is drawn the same way: a glowing orange arc along the rim
 // from the start of the scale, brightest at the needle, and the needle
 // itself, a glowing stroke from the rim inwards. Numerals are a wide,
 // medium-weight sans (stretched sideways, since no system font is
 // reliably extended); the big gear and speed digits are thin.
-import { GaugeStyle, Trace, el, text, setText, polar, arcPath, dialAngle, clamp, hhmm } from './kit.js'
+import { GaugeStyle, Trace, el, text, setText, polar, dialAngle, hhmm } from './kit.js'
 
 // About 3.2:1, the gauge area's shape. The reference is wider (3.9:1), so
 // the side dials are a little smaller next to the tach than on it.
@@ -29,7 +29,8 @@ const D = {
 // a thin grey line round the face, ticks inside that.
 const RING = { channel: 0.972, arc: 0.94, face: 0.905, tick: 0.8, major: 0.11, minor: 0.045, num: 0.6 }
 // Tach: 0 rpm at lower left, round over the top, the scale's end at lower
-// right; the gap at the bottom holds the boost bar and "RPM×1000".
+// right; the gap at the bottom holds "RPM ×1000", as km/h sits under the
+// speed.
 const TACH = { a0: 125, a1: 395 }
 // Speedometer: 0–200 km/h over the same sweep as the reference's 0–250.
 const SPEED = { a0: 133, a1: 413, max: 200 }
@@ -62,11 +63,7 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-stack,
   .gs-fivedial[data-theme=day] .fd-small { fill: #393c41; }
   .gs-fivedial[data-theme=day] .fd-cap,
-  .gs-fivedial[data-theme=day] .fd-rpmx,
-  .gs-fivedial[data-theme=day] .fd-unit,
-  .gs-fivedial[data-theme=day] .fd-trip tspan { fill: #5c5e62; }
-  .gs-fivedial[data-theme=day] .fd-trip tspan.n { fill: #1f2124; }
-  .gs-fivedial[data-theme=day] .fd-odo { fill: #1f2124; }
+  .gs-fivedial[data-theme=day] .fd-unit { fill: #5c5e62; }
   .gs-fivedial[data-theme=day] .fd-tyres.none .fd-tyre { fill: #a3a6aa; }
   .gs-fivedial[data-theme=day] .fd-tyres.warn .fd-tyre,
   .gs-fivedial[data-theme=day] .fd-half.low .fd-stack,
@@ -91,7 +88,6 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-housing { fill: #e4e5e6; filter: drop-shadow(0 1.5px 2.5px rgba(0,0,0,0.16)); }
   .gs-fivedial[data-theme=day] .fd-lip { stroke: #b9bcbf; stroke-opacity: 0.45; }
   .gs-fivedial[data-theme=day] .fd-channel { fill: #c9cbce; }
-  .gs-fivedial[data-theme=day] .fd-chip { fill: #e7e8e9; stroke: #b5b8bb; }
   .gs-fivedial[data-theme=day] .fd-sub { fill: #ebeced; stroke: #b5b8bb; }
   .gs-fivedial[data-theme=day] .fd-subtick { stroke: #9a9da1; }
   .gs-fivedial[data-theme=day] .fd-subtick.hr { stroke: #393c41; }
@@ -100,7 +96,6 @@ const DAY = `
   .gs-fivedial[data-theme=day] .fd-knob { stroke: #8e9195; }
   .gs-fivedial[data-theme=day] .fd-hand { stroke: ${DAY_ORANGE}; }
   .gs-fivedial[data-theme=day] .fd-glow { opacity: 0.07; }
-  .gs-fivedial[data-theme=day] .fd-bglow { opacity: 0.3; }
   .gs-fivedial[data-theme=day] .fd-trace stop { stop-color: ${DAY_ORANGE}; }
   .gs-fivedial[data-theme=day] .fd-tr use:nth-child(1) { opacity: 0.03; }
   .gs-fivedial[data-theme=day] .fd-tr use:nth-child(2) { opacity: 0.12; }
@@ -113,8 +108,6 @@ const DAY = `
   ${stops('knob', '#ffffff', '#d4d6d8', '#a9acb0')}
   ${stops('shade', ['#000', 0.05], ['#000', 0])}
   ${stops('ndl', [DAY_ORANGE, 0.2], [DAY_ORANGE, 0.9], DAY_ORANGE)}
-  ${stops('btrack', '#ecd9d1', '#e8d6cf')}
-  ${stops('bfill', '#f0b59c', DAY_ORANGE, '#d9480f')}
 `
 
 const f1 = (x) => x.toFixed(1)
@@ -136,7 +129,7 @@ function rng(seed) { let s = seed; return () => ((s = (s * 1103515245 + 12345) %
 export default class FiveDialStyle extends GaugeStyle {
   static meta = {
     key: 'fivedial', name: 'Five dials', era: '911-style', view: VIEW,
-    blurb: 'Five round dials in an oval: tyre pressures, water and battery, the tach with the gear, speed, and a clock.',
+    blurb: 'Five round dials in an oval: tyre pressures, battery and boost, the tach with the gear, speed, and a clock.',
   }
 
   build() {
@@ -150,12 +143,10 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-stack { font-size: 14px; font-weight: 600; text-anchor: middle; dominant-baseline: central; fill: #e8e8e8; }
       .gs-fivedial .fd-cap { font-size: 15px; font-weight: 600; text-anchor: middle; letter-spacing: 0.42em; fill: #a9a9ab; }
       .gs-fivedial .fd-small { font-size: 14px; font-weight: 500; text-anchor: middle; fill: #cfcfcf; }
-      .gs-fivedial .fd-rpmx { font-size: 14px; font-weight: 500; letter-spacing: 0.2em; fill: #9a9a9c; }
       .gs-fivedial .fd-gear { font-size: 74px; font-weight: 200; text-anchor: middle; fill: #ededed; filter: drop-shadow(0 0 5px rgba(255,255,255,0.22)); }
       .gs-fivedial[data-zone=red] .fd-gear { fill: #ff7a50; }
       .gs-fivedial .fd-kmh { font-size: 40px; font-weight: 200; text-anchor: middle; fill: #ececec; }
       .gs-fivedial .fd-unit { font-size: 15px; font-weight: 600; text-anchor: middle; fill: #a9a9ab; }
-      .gs-fivedial .fd-odo { font-size: 14px; font-weight: 500; text-anchor: middle; dominant-baseline: central; letter-spacing: 0.06em; fill: #b9b9bb; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-tyre { font-size: 16px; font-weight: 600; dominant-baseline: central; font-variant-numeric: tabular-nums; }
       .gs-fivedial .fd-tyre.l { text-anchor: end; }
       .gs-fivedial .fd-tyre.r { text-anchor: start; }
@@ -171,9 +162,6 @@ export default class FiveDialStyle extends GaugeStyle {
       .gs-fivedial .fd-auto .w { fill: #e6e6e6; stroke: none; }
       .gs-fivedial .fd-tyres.none .fd-auto .w { fill: #4a4a4e; }
       .gs-fivedial .fd-tyres.warn .fd-auto .w { fill: #ff5a3c; }
-      .gs-fivedial .fd-trip { font-size: 15px; font-weight: 500; fill: #f0f0f0; font-variant-numeric: tabular-nums; }
-      .gs-fivedial .fd-trip tspan { fill: #a9a9ab; font-weight: 400; }
-      .gs-fivedial .fd-trip tspan.n { fill: #f0f0f0; }
       .gs-fivedial .fd-tick { stroke: #f2f2f2; stroke-linecap: butt; }
       .gs-fivedial .fd-tick.min { stroke: #77777a; }
       .gs-fivedial .fd-tick.dim { stroke: #5a2219; }
@@ -190,10 +178,11 @@ ${DAY}
     this.halves = []
     this.buildTyres()
     this.buildSplit('temp', D.temp, {
-      left: { word: 'TEMP', key: 'water', lo: 50, hi: 130, ends: ['L', 'H'], icon: 'water' },
       // The charge goes red below 15%: its first ticks, and the half's
       // name, ends and icon while it is that low.
-      right: { word: 'BATT', key: 'fuel', lo: 0, hi: 1, ends: ['E', 'F'], icon: 'batt', reserve: 0.15 },
+      left: { word: 'BATT', key: 'fuel', lo: 0, hi: 1, ends: ['E', 'F'], icon: 'batt', reserve: 0.15 },
+      // Boost, 0 to 1.2 bar (below 0, off the throttle, it rests at 0).
+      right: { word: 'BOOST', key: 'boost', lo: 0, hi: 1.2, ends: ['0', '1.2'], icon: 'boost' },
     })
     this.buildTach()
     this.buildSpeed()
@@ -314,9 +303,10 @@ ${DAY}
       el('path', { d: 'M-6 6.5V9M-2 6.5V9M2 6.5V9M6 6.5V9M0 -5V0.5' }, g)
       el('circle', { class: 'fill', cx: 0, cy: 3.4, r: 1.1 }, g)
     } else {
-      el('path', { d: 'M0 -11V2M0 -8H3M0 -5H3' }, g)
-      el('circle', { cx: 0, cy: 4, r: 2.6 }, g)
-      el('path', { d: 'M-10 10q2.5 -2.2 5 0t5 0t5 0t5 0' }, g)
+      // A pressure gauge: an open dial with its needle well up.
+      el('path', { d: 'M-7.8 5.5A9.5 9.5 0 1 1 7.8 5.5' }, g)
+      el('path', { d: 'M0 0L5 -6' }, g)
+      el('circle', { class: 'fill', cx: 0, cy: 0, r: 1.8 }, g)
     }
   }
 
@@ -413,26 +403,10 @@ ${DAY}
     const { cx, R } = D.tach
     const g = this.tachG = el('g', { class: 'fd-tach' }, this.svg)
     this.scaleG = el('g', {}, g)
-    // RPM×1000 round the lower right rim, in the dark channel past the
-    // scale's end, reading upwards.
-    const tp = el('path', { id: this.id('rpmx'), d: arcPath(cx, CY, R * 0.985, 80, 34) }, this.defs)
-    const t = el('text', { class: 'fd-rpmx' }, g)
-    const tpath = el('textPath', { href: '#' + tp.id }, t)
-    tpath.textContent = 'RPM×1000'
     // A short tick at 6 o'clock across the grey line.
     this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
-    // Boost, 0 to 1.2 bar, under the gear: numbers above, "bar" below.
-    const bw = R * 0.92, bh = 12, bx = cx - bw / 2, by = CY + 73
-    this.boost = { bx, by, bw, bh }
-    ;[[0, '0'], [0.4, '0,4'], [0.8, '0,8'], [1.2, '1,2']].forEach(([v, s]) =>
-      text(g, f1(bx + bh / 2 + (v / 1.2) * (bw - bh)), by - 7, 'fd-small', s))
-    text(g, cx, by + bh + 19, 'fd-small', 'bar')
-    this.grad('linearGradient', 'btrack', { x1: 0, y1: 0, x2: 1, y2: 0 }, [[0, '#3a1810'], [1, '#26120d']])
-    this.grad('linearGradient', 'bfill', { x1: 0, y1: 0, x2: 1, y2: 0 }, [[0, '#6a2412'], [0.7, '#e2461c'], [1, '#ff6a34']])
-    this.grad('radialGradient', 'bglow', {}, [[0, '#ff5a24', 0.55], [1, '#ff5a24', 0]])
-    el('rect', { x: f1(bx), y: by, width: f1(bw), height: bh, rx: bh / 2, fill: this.url('btrack') }, g)
-    this.boostGlow = el('ellipse', { cy: by + bh / 2, rx: 20, ry: 14, fill: this.url('bglow'), style: 'display:none', class: 'fd-bglow' }, g)
-    this.boostBar = el('rect', { x: f1(bx), y: by, width: 0, height: bh, rx: bh / 2, fill: this.url('bfill') }, g)
+    // The scale's unit in the gap at the bottom, as km/h is on the speed.
+    text(g, cx, CY + 92, 'fd-unit', 'RPM ×1000')
     // Needle above the scale, the gear above the needle.
     this.tachSweep = this.sweep(g, 'tach', cx, R, { a0: TACH.a0, rIn: R * 0.2, shade: true })
     this.gear = this.wide(g, cx, CY + 22, 'fd-gear', '–', 1.2)
@@ -486,20 +460,9 @@ ${DAY}
       if (major) this.wide(g, ...polar(cx, CY, R * 0.6, a), 'fd-snum', String(v))
     }
     this.tick(g, cx, 90, R * 0.95, R * 0.86, 1.6, 'fd-tick min')
-    // Odometer chip under the top numeral.
-    el('rect', { x: cx - 31, y: CY - 46, width: 62, height: 18, rx: 2, fill: '#060606', stroke: '#2c2c2f', 'stroke-width': 1, class: 'fd-chip' }, g)
-    this.odo = text(g, cx, CY - 36.5, 'fd-odo', '000000')
     this.speedSweep = this.sweep(g, 'speed', cx, R, { a0: SPEED.a0, rIn: R * 0.2, w: 0.9, shade: true })
     this.kmh = this.wide(g, cx, CY + 14, 'fd-kmh', '0', 1.2)
     text(g, cx, CY + 38, 'fd-unit', 'km/h')
-    // Trip under it, with a small road icon.
-    const tg = el('g', {}, g)
-    const ic = el('g', { class: 'fd-icon', transform: `translate(${cx - 34} ${CY + 76})` }, tg)
-    el('path', { d: 'M-6 7L-2 -7M6 7L2 -7M0 -5.5V-3M0 0V2.5M0 5V7' }, ic)
-    this.trip = text(g, cx - 22, CY + 81, 'fd-trip', '')
-    this.tripN = el('tspan', { class: 'n' }, this.trip)
-    this.tripU = el('tspan', { dx: 3 }, this.trip)
-    this.tripU.textContent = 'km'
   }
 
   // ── Clock ─────────────────────────────────────────────────────────────
@@ -564,19 +527,8 @@ ${DAY}
         if (this.moved('low-' + h.key, low, force)) h.g.classList.toggle('low', low)
       }
     })
-    // Boost: the bar grows from its left cap; the glow sits on its end.
-    const { bx, bw, bh } = this.boost
-    const f = Math.round(clamp(v.boost / 1.2, 0, 1) * 200) / 200
-    if (this.moved('boost', f, force)) {
-      const wd = f > 0 ? bh + f * (bw - bh) : 0
-      this.boostBar.setAttribute('width', f1(wd))
-      this.boostGlow.style.display = f > 0 ? '' : 'none'
-      this.boostGlow.setAttribute('cx', f1(bx + wd - bh / 2))
-    }
     setText(this.gear, i.gear || '–')
     setText(this.kmh, i.stale ? '--' : String(Math.min(999, Math.round(v.kmh))))
-    setText(this.odo, String(Math.floor(v.odo) % 1000000).padStart(6, '0'))
-    setText(this.tripN, (Math.floor(v.trip * 10) / 10).toFixed(1))
     this.paintTyres(force)
     // The clock: the seconds trace moves every frame, smoothly; the hands
     // turn only when the second changes.
