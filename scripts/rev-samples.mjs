@@ -369,7 +369,31 @@ function printLevels(car, json = false) {
     // than its neighbours, which pumps as you rev. Each layer is smoothed
     // across rpm with a 3-point geometric mean, keeping the overall rise.
     const smooth = (xs) => xs.map((x, i) => Math.cbrt((xs[i - 1] ?? x) * x * (xs[i + 1] ?? x)))
-    const onL = smooth(on.map((l) => raw(l.render))), offL = smooth(on.map((l) => raw(`off-${l.rpm}`)))
+    let onL = smooth(on.map((l) => raw(l.render))), offL = smooth(on.map((l) => raw(`off-${l.rpm}`)))
+    // smooth: 'combined' (the cars added on 2026-11-25): the own and dense
+    // points smoothed together, in rpm order (5-point geometric mean). Smoothing the own points only
+    // among themselves leaves a resonance that falls on every other point
+    // (the 2JZ's engine group alternates ~5 dB from 2,500 to 3,850 rpm) as a
+    // 2 dB step between an own point and the dense ones beside it.
+    const combined = set.smooth === 'combined'
+    let denseL = null
+    const ownRpm = on.map((l) => l.rpm), denseRpm = plan.dense
+    const smoothAll = (layer) => {
+      const all = [...ownRpm.map((r) => [r, rawOf(`${layer}-${r}`)]), ...denseRpm.map((r) => [r, rawOf(`${layer}-${r}`)])].sort((a, b) => a[0] - b[0])
+      if (all.some(([, x]) => x == null)) return null
+      // Over the own and dense points together, 5 points: the same span of
+      // rpm as 3 of the own points alone.
+      const xs = all.map(([, x]) => x)
+      const sm = xs.map((x, i) => { const w = [-2, -1, 0, 1, 2].map((d) => xs[i + d]).filter((v) => v != null); return Math.exp(w.reduce((a, v) => a + Math.log(v), 0) / w.length) })
+      return new Map(all.map(([r], i) => [r, sm[i]]))
+    }
+    if (combined) {
+      const onM = smoothAll('on'), offM = smoothAll('off')
+      if (onM && offM) {
+        onL = ownRpm.map((r) => onM.get(r)); offL = ownRpm.map((r) => offM.get(r))
+        denseL = { on: onM, off: offM }
+      }
+    }
     const top = Math.max(...onL)
     const q = (x) => Math.round((x / top) * 1000) / 1000
     if (!json) {
@@ -377,6 +401,8 @@ function printLevels(car, json = false) {
       console.log('  [' + on.map((l, i) => `[${l.rpm}, ${q(onL[i])}, ${q(offL[i])}]`).join(', ') + ']')
     }
     const g = (out[group] = {})
+    g.idle = q(0.6 * onL[0])
+    g.own = on.map((l, i) => [l.rpm, q(onL[i]), q(offL[i])])
     const pts = plan.points
     // A dense point between own points i and i+1, smoothed with them.
     const mid = (layerRaw, i, m) => {
@@ -384,14 +410,20 @@ function printLevels(car, json = false) {
       return x == null || a == null || b == null ? null : q(Math.cbrt(a * x * b))
     }
     const onRaw = (rpm) => rawOf(`on-${rpm}`), offRaw = (rpm) => rawOf(`off-${rpm}`)
-    g.dense = plan.dense.map((m, i) => [m, mid(onRaw, i, m), mid(offRaw, i, m)])
+    g.dense = denseL ? plan.dense.map((m) => [m, q(denseL.on.get(m)), q(denseL.off.get(m))])
+      : plan.dense.map((m, i) => [m, mid(onRaw, i, m), mid(offRaw, i, m)])
     if (g.dense.some(([, a, b]) => a == null || b == null)) g.dense = null
     if (set.part) {
       const pRaw = (rpm) => rawOf(`part-${rpm}`)
       const ownP = pts.map(pRaw)
-      if (ownP.every((x) => x != null)) {
+      const partM = combined ? smoothAll('part') : null
+      if (partM) {
+        g.part = [...partM].map(([rpm, x]) => [rpm, q(x)]).sort((a, b) => a[0] - b[0])
+      } else if (ownP.every((x) => x != null)) {
         const sm = smooth(ownP).map(q)
         g.part = [...pts.map((rpm, i) => [rpm, sm[i]]), ...plan.dense.map((m, i) => [m, mid(pRaw, i, m)])].sort((a, b) => a[0] - b[0])
+      }
+      if (g.part) {
         if (g.part.some(([, l]) => l == null)) g.part = null
         // Never louder than full throttle at the same rpm: near the redline
         // the flat-6 is up to 6 dB louder at light throttle than at full in
@@ -399,6 +431,13 @@ function printLevels(car, json = false) {
         else {
           const full = new Map([...on.map((l, i) => [l.rpm, q(onL[i])]), ...(g.dense || []).map(([m, a]) => [m, a])])
           g.part = g.part.map(([rpm, l]) => [rpm, Math.min(l, full.get(rpm))])
+          // And (combined sets) never quieter than overrun: at the bottom
+          // of the range the boxer is quieter at a fifth of its torque than
+          // closed, which would dip between lifting off and cruising.
+          if (combined) {
+            const off = new Map([...on.map((l, i) => [l.rpm, q(offL[i])]), ...(g.dense || []).map(([m, , b]) => [m, b])])
+            g.part = g.part.map(([rpm, l]) => [rpm, Math.max(l, off.get(rpm))])
+          }
         }
       }
     }
@@ -657,7 +696,54 @@ function groupsOf(set) {
     { dir: set.renders.engine, env: { ES_IR: set.ir.engine } },
     { dir: set.renders.exhaust, env: { ES_IR: set.ir.exhaust } },
     { dir: set.sub.renders, env: { ES_CONV: '0' } },
-  ].map((g) => ({ ...g, env: { ES_GAIN: '0.0006', ES_SYNC: '1', ...g.env } }))
+  ].map((g) => ({ ...g, env: { ES_GAIN: '0.0006', ES_SYNC: '1', ...(set.catchThrottle ? { ES_CATCH_THROTTLE: String(set.catchThrottle) } : {}), ...g.env } }))
+}
+
+// --render-base <car> [--force]: a set's own renders, the three ways, one
+// es-render per core, as render-set.sh and render-oneshots.sh make them but
+// with ES_SYNC (every run identical, render.cpp) and the set's idle and
+// catch throttles: the free-running idle (10 s), the dyno holds at each rev
+// point at full and closed throttle (3 s), and the start (twice: at 10x and
+// at 330x the loops' gain, see render-oneshots.sh) and stop. The engine
+// group's start logs its rpm (start-rpm.txt), for the set's `crank` and
+// `start` (printed at the end). The cars added after the first four are
+// rendered this way.
+async function renderBase(car, force) {
+  const set = SAMPLE_SETS[car], s = stageScript(set)
+  const idleEnv = set.idleThrottle ? { ES_IDLE_THROTTLE: String(set.idleThrottle) } : {}
+  const specs = [{ name: 'idle', args: ['idle', '10', '4'], env: idleEnv }]
+  for (const r of set.points) {
+    specs.push({ name: `on-${r}`, args: ['hold', String(r), '1', '3', '3'] }, { name: `off-${r}`, args: ['hold', String(r), '0', '3', '3'] })
+  }
+  specs.push({ name: 'start', args: ['start', '6'], env: { ...idleEnv, ES_GAIN: '0.006' }, log: true },
+    { name: 'start-hi', args: ['start', '6'], env: { ...idleEnv, ES_GAIN: '0.2' } },
+    { name: 'stop', args: ['stop', '1.6', '4'], env: { ...idleEnv, ES_GAIN: '0.006' } })
+  const jobs = []
+  for (const [gi, g] of groupsOf(set).entries()) {
+    const dir = path.join(ES, 'out', g.dir)
+    fs.mkdirSync(dir, { recursive: true })
+    for (const sp of specs) {
+      const wavOut = path.join(dir, sp.name + '.wav')
+      if (!force && fs.existsSync(wavOut)) continue
+      const env = { ...g.env, ...sp.env }
+      if (sp.log && gi === 0) env.ES_RPM_LOG = path.join(dir, sp.name + '-rpm.txt')
+      jobs.push({ args: [s, wavOut, ...sp.args], env })
+    }
+  }
+  console.log(`${car}: ${jobs.length} renders`)
+  const t0 = Date.now()
+  await esRender(jobs)
+  console.log(`${car}: done in ${((Date.now() - t0) / 1000).toFixed(0)} s`)
+  // crank: the starter's speed (the median rpm while cranking, 0.15-0.6 s);
+  // start: the catch (the first time past max(450, 1.5x crank) after the
+  // ignition comes on at 0.65 s) and the flare (the highest rpm in the 1.5 s
+  // after it), as render.cpp's start mode defines them.
+  const log = fs.readFileSync(path.join(ES, 'out', set.renders.engine, 'start-rpm.txt'), 'utf8').trim().split('\n').map((l) => l.split(' ').map(Number))
+  const cr = log.filter(([t]) => t >= 0.15 && t < 0.6).map(([, r]) => r).sort((a, b) => a - b)
+  const crank = cr[cr.length >> 1]
+  const at = log.find(([t, r]) => t >= 0.65 && r > Math.max(450, 1.5 * crank))
+  const flare = at ? Math.max(...log.filter(([t]) => t >= at[0] && t < at[0] + 1.5).map(([, r]) => r)) : NaN
+  console.log(`${car}: crank: ${Math.round(crank / 5) * 5}, start: { catch: ${at ? at[0].toFixed(2) : '?'}, flare: ${Math.round(flare / 10) * 10} }`)
 }
 
 // --fit-part <car> [--torque 0.2]: for each rev point (the set's own and
@@ -669,7 +755,10 @@ function groupsOf(set) {
 async function fitPart(car, torque) {
   const set = SAMPLE_SETS[car], plan = extrasPlan(set), s = stageScript(set)
   const pts = [...plan.points, ...plan.dense].sort((a, b) => a - b)
-  const grid = []
+  // A finer start for engines with a linear throttle (the 2JZ makes a
+  // fifth of its torque under 0.025); the first crossing is taken, so the
+  // engines that cross higher up fit as they did.
+  const grid = [0, 0.005, 0.01, 0.015, 0.02]
   for (let t = 0.025; t <= 0.5001; t += 0.025) grid.push(Math.round(t * 1000) / 1000)
   const jobs = [], tq = {}
   for (const rpm of pts) for (const th of [...grid, 1]) {
@@ -843,6 +932,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   }
   const argOf = (k) => args[args.indexOf(k) + 1]
   if (args.includes('--fit-part')) { await fitPart(argOf('--fit-part'), args.includes('--torque') ? Number(argOf('--torque')) : 0.2); process.exit(0) }
+  if (args.includes('--render-base')) {
+    const c = argOf('--render-base')
+    for (const car of c && !c.startsWith('--') ? [c] : Object.keys(SAMPLE_SETS)) await renderBase(car, args.includes('--force'))
+    process.exit(0)
+  }
   if (args.includes('--render-extras')) {
     const c = argOf('--render-extras')
     for (const car of c && !c.startsWith('--') ? [c] : Object.keys(SAMPLE_SETS)) await renderExtras(car, args.includes('--force'))

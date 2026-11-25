@@ -178,6 +178,7 @@ int main(int argc, char **argv) {
     const bool wantTorque = getenv("ES_TORQUE") != nullptr;
     double torqueSum = 0, nextLog = 0; long torqueN = 0;
     const double idleThrottle = getenv("ES_IDLE_THROTTLE") ? std::atof(getenv("ES_IDLE_THROTTLE")) : 0.0;
+    const double catchThrottle = getenv("ES_CATCH_THROTTLE") ? std::atof(getenv("ES_CATCH_THROTTLE")) : 0.0;
 
     // Every mode but start: 1.5 s on the starter with the ignition on, then
     // warmup s unrecorded. start records from rest instead.
@@ -236,6 +237,11 @@ int main(int argc, char **argv) {
             else if (u > 5.5 && u < 8.5) target = 1.0;     // sweep into the limiter
             else target = 0;
         }
+        // ES_CATCH_THROTTLE: the throttle at least this open while on the
+        // starter (the first 1.5 s) in every mode but start, for scripts
+        // that do not catch at a closed throttle (the 2JZ) but idle once
+        // running. Unset, nothing changes.
+        if (!startMode && starting && catchThrottle > target) target = catchThrottle;
         speed = target * 0.5 + 0.5 * speed;  // as the app smooths it
         engine->setSpeedControl(speed);
 

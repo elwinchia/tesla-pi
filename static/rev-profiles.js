@@ -94,11 +94,75 @@ const gt3 = {
   pulseMs: 1.1, bright: [1500, 4200], intake: [2900, 0.2], pops: 0.04, drive: 1.6, lope: 0.05,
 }
 
+// Straight six, 1-5-3-6-2-4, the front three and the rear three into their
+// own pipes: smooth and even, a turbine-like howl. Its sound: engine-sim's
+// 2JZ-style script (no turbo: engine-sim models none).
+const i6 = {
+  name: 'Inline-6', style: '2JZ-style',
+  blurb: 'engine-sim\'s 2JZ straight six: smooth, even and rising to 6,500 rpm.',
+  idle: 1023, redline: 6500, launch: 2800, revRise: 9000, revFall: 4500, limiter: 100,
+  gears: kmh(48, 79, 115, 155, 205, 275),
+  cylinders: [1, 5, 3, 6, 2, 4].map((c, i) => ({ at: i / 6, bank: c <= 3 ? 0 : 1 })),
+  banks: [
+    [[120, 3.0, 0.8], [330, 4.0, 0.55], [850, 5.0, 0.35], [2100, 6.0, 0.18]],
+    [[126, 3.0, 0.8], [345, 4.0, 0.55], [890, 5.0, 0.35], [2200, 6.0, 0.18]],
+  ],
+  pulseMs: 1.6, bright: [1100, 3200], intake: [2200, 0.12], pops: 0.05, drive: 1.5, lope: 0.05,
+}
+
+// Flat four with unequal-length headers, 1-3-2-4: the pulses from the two
+// banks arrive unevenly, which is the boxer's off-beat rumble. Its sound:
+// engine-sim's EJ25 script, unequal headers.
+const boxer = {
+  name: 'Flat-4', style: 'Rally boxer',
+  blurb: 'engine-sim\'s EJ25 boxer with unequal headers: the off-beat rally rumble.',
+  idle: 750, redline: 6500, launch: 3000, revRise: 9000, revFall: 4500, limiter: 160,
+  gears: kmh(44, 74, 108, 145, 190, 255),
+  cylinders: [1, 3, 2, 4].map((c, i) => ({ at: i / 4, bank: c % 2 ? 0 : 1, delayMs: c % 2 ? 0 : 0.9 })),
+  banks: [
+    [[95, 2.6, 1.0], [240, 3.5, 0.6], [640, 4.5, 0.35], [1600, 5.0, 0.16]],
+    [[102, 2.6, 1.0], [255, 3.5, 0.6], [680, 4.5, 0.35], [1700, 5.0, 0.16]],
+  ],
+  pulseMs: 2.2, bright: [800, 2600], intake: [1800, 0.12], pops: 0.08, drive: 1.7, lope: 0.1,
+}
+
+// Inline four, 1-3-4-2, a high-revving cam-switching (VTEC-style) engine:
+// thin at the bottom, hard and loud at the top. Its sound: engine-sim's
+// Honda VTEC script (no turbo: engine-sim models none).
+const i4 = {
+  name: 'Inline-4', style: 'VTEC-style',
+  blurb: 'engine-sim\'s VTEC four: buzzy low down, screaming to 8,400 rpm.',
+  idle: 748, redline: 8400, launch: 3500, revRise: 13000, revFall: 6500, limiter: 50,
+  gears: kmh(46, 76, 108, 142, 182, 240),
+  cylinders: [1, 3, 4, 2].map((c, i) => ({ at: i / 4, bank: 0 })),
+  banks: [
+    [[140, 3.0, 0.8], [380, 4.0, 0.6], [1000, 5.0, 0.42], [2600, 6.0, 0.22]],
+    [[140, 3.0, 0.8], [380, 4.0, 0.6], [1000, 5.0, 0.42], [2600, 6.0, 0.22]],
+  ],
+  pulseMs: 1.3, bright: [1400, 4000], intake: [2800, 0.18], pops: 0.04, drive: 1.6, lope: 0,
+}
+
+// 65-degree V12, firing every 60 degrees, the banks alternating: the
+// smoothest and highest note here. Its sound: our engine-sim V12, the
+// bundled 412 T2 script with a road car's idle (scripts/engine-sim/v12_412.mr).
+const v12 = {
+  name: 'V12', style: 'Race V12',
+  blurb: 'engine-sim\'s 412 T2 V12, tamed to a road car\'s 9,000 rpm: a shrill, seamless wail.',
+  idle: 1406, redline: 9000, launch: 3500, revRise: 15000, revFall: 7000, limiter: 60,
+  gears: kmh(52, 86, 124, 166, 214, 270, 330),
+  cylinders: [1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9].map((c, i) => ({ at: i / 12, bank: c <= 6 ? 0 : 1 })),
+  banks: [
+    [[240, 3.0, 0.7], [560, 4.0, 0.6], [1400, 5.0, 0.45], [3100, 6.0, 0.25]],
+    [[252, 3.0, 0.7], [585, 4.0, 0.6], [1460, 5.0, 0.45], [3200, 6.0, 0.25]],
+  ],
+  pulseMs: 0.9, bright: [2000, 4600], intake: [3200, 0.14], pops: 0.03, drive: 1.3, lope: 0.1,
+}
+
 // Each idle is the rpm its engine-sim idle actually runs at (--fit-idle in
 // scripts/rev-samples.mjs), so the idle loop plays at its own pitch.
 
 // The cars, in the picker's order. Each one's sound is engine-sim loops
 // (static/rev-samples.js); these numbers drive its gearbox and rev range,
 // and synthesise it only if the loops cannot be loaded.
-export const PROFILES = { v8, lfa, f136, gt3 }
+export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12 }
 export const DEFAULT_PROFILE = 'v8'

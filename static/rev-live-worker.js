@@ -33,6 +33,10 @@ export const ES_GAIN = 0.0006
 // Scripts that stall at a fully closed throttle idle with it cracked
 // (render-set.sh: ES_IDLE_THROTTLE).
 export const IDLE_THROTTLE = { f136: 0.02 }
+// Scripts that do not catch on the starter at a closed throttle crank with
+// it cracked, then idle closed (render.cpp: ES_CATCH_THROTTLE). Both tables
+// match the sets' idleThrottle / catchThrottle (rev-samples.js; tested).
+export const CATCH_THROTTLE = { i6: 0.1 }
 export const FRAME_S = 1 / 200   // one simulation frame
 export const STARTER_S = 1.5     // on the starter, as render.cpp
 export const WARM_S = 1.0        // then idling, unheard, before it plays
@@ -284,9 +288,10 @@ export class EngineRunner {
     this.freq = M._es_frequency()
     this.steps = Math.max(1, Math.round(this.freq * FRAME_S))
     this.idleThrottle = IDLE_THROTTLE[car] || 0
+    this.catchThrottle = Math.max(this.idleThrottle, CATCH_THROTTLE[car] || 0)
     const vols = Array.from({ length: M._es_exhaust_count() }, (_, i) => M._es_ir_volume(i))
     // One impulse response for the summed exhausts is exact only if they
-    // all have the same volume (true of all four scripts).
+    // all have the same volume (true of all eight scripts).
     if (new Set(vols).size !== 1) throw new Error('exhausts have different impulse-response volumes: ' + vols.join(', '))
     this.irVolume = vols[0]
     this.slow = 1
@@ -310,11 +315,11 @@ export class EngineRunner {
   warmUp(seconds = STARTER_S + WARM_S) {
     const manual = this.manual
     this.manual = true // idling on its own whatever the player asks meanwhile
-    this.M._es_control(1, 0, this.idleThrottle)
+    this.M._es_control(1, 0, this.catchThrottle)
     this.M._es_ignition(1)
     this.M._es_starter(1)
     while (this.t < seconds) {
-      if (this.t >= STARTER_S) this.M._es_starter(0)
+      if (this.t >= STARTER_S) { this.M._es_starter(0); this.M._es_control(1, 0, this.idleThrottle) }
       this.dry()
     }
     this.M._es_starter(0)

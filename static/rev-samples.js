@@ -21,9 +21,11 @@ export const ALLOWED_LICENCES = {
   'MIT': { url: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE', attribution: true },
 }
 
-// One entry per recording. `audio` is the copy Freesound serves on that
-// sound's own page (its 128 kbit/s MP3 preview: the original file needs a
-// Freesound login); `fetched` is when it was downloaded.
+// One entry per source. Every car is engine-sim now (the Freesound
+// recordings of the V12, V10 and turbo 4 were retired on 2026-11-23); a
+// recording added later would carry `audio`, the copy Freesound serves on
+// that sound's own page (its 128 kbit/s MP3 preview), and `fetched`, when it
+// was downloaded, and the tests hold it to ALLOWED_LICENCES.
 export const CREDITS = {
   enginesim: {
     kind: 'render',
@@ -31,10 +33,15 @@ export const CREDITS = {
     url: 'https://github.com/ange-yaghi/engine-sim',
     licence: 'MIT', licenceUrl: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE',
     commit: '85f7c3b',
-    // Engine scripts: three bundled with engine-sim (MIT), and our own flat-6.
+    // Engine scripts: six bundled with engine-sim (MIT), our own flat-6, and
+    // its 412 T2 V12 with a lower idle (ours, from theirs).
     engineScripts: [
       'assets/engines/atg-video-2/07_gm_ls.mr', 'assets/engines/atg-video-2/10_lfa_v10.mr',
       'assets/engines/atg-video-2/08_ferrari_f136_v8.mr', 'scripts/engine-sim/flat6_gt3.mr (ours)',
+      'assets/engines/atg-video-2/03_2jz.mr', 'assets/engines/atg-video-2/02_subaru_ej25_uh.mr',
+      'assets/engines/atg-video-1/05_honda_vtec.mr',
+      // v12_412.mr is assets/engines/atg-video-2/12_ferrari_412_t2.mr with less idle air.
+      'scripts/engine-sim/v12_412.mr (ours)',
     ],
     recording: 'Rendered offline on our own machine with engine-sim, a physically modelled engine simulator, from engine scripts: the engine held on its dynamometer at each rpm at full throttle (on-load) and closed throttle (overrun), plus a free-running idle; heard through engine-sim\'s own "real engine" impulse response (the engine group) and its "minimal muffling" one (the exhaust group), with a dry render of the same runs as a low sub layer; and each engine started from rest and stopped from idle, its cranking mixed with a starter motor we synthesise. For the optional extras: more rev points, held at light throttle too, and held longer for 4 s loops; the engine free-revving against engine-sim\'s own rev limiter; and upshifts under load, the ignition cut on the dyno while the revs fall to the next gear. scripts/engine-sim/ rebuilds them.',
   },
@@ -178,7 +185,7 @@ function withPhases(own, extra) {
 
 // One car's set. The options' loops are made only where their levels have
 // been filled in (`--print-levels`), so a half-built set still plays.
-function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, dense, part, limiter, shifts, idleThrottle }) {
+function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, dense, part, limiter, shifts, idleThrottle, catchThrottle, smooth }) {
   const tag = (g) => (g === 'exhaust' ? 'ex' : 'es')
   const loop = (group, rpm, layer, level, render) => ({
     file: `${car}-${tag(group)}-${render}.ogg`, src: 'enginesim', group, render,
@@ -224,8 +231,8 @@ function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, 
   }
   return {
     // optBitrate / longBitrate: the options' short and long loops, lower than
-    // the set's own (64k) to keep them in budget (~10 MB for all four cars).
-    kind: 'engine-sim', bitrate: '64k', optBitrate: '40k', longBitrate: '36k', car, script, idleThrottle,
+    // the set's own (64k) to keep them in budget (~20 MB for all eight cars).
+    kind: 'engine-sim', bitrate: '64k', optBitrate: '40k', longBitrate: '36k', car, script, idleThrottle, catchThrottle, smooth,
     points: engine[1].map(([rpm]) => rpm),
     renders: { engine: renders, exhaust: `${renders}-exhaust` },
     ir: IR, eq: EQ,
@@ -357,6 +364,117 @@ export const SAMPLE_SETS = {
       [5800, 0.974, 0.537], [6800, 1, 0.673], [7800, 0.856, 0.718], [8800, 0.928, 0.861]]],
     exhaust: [0.35, [[1400, 0.584, 0.089], [2100, 0.644, 0.136], [2900, 0.785, 0.232], [3800, 0.877, 0.332], [4800, 1, 0.439],
       [5800, 0.946, 0.523], [6800, 0.964, 0.657], [7800, 0.828, 0.729], [8800, 0.775, 0.801]]],
+  }),
+  // 2JZ-style straight six, bundled with engine-sim. It does not catch on the
+  // starter at a closed throttle, but idles once running, so its renders
+  // crank with the throttle cracked (ES_CATCH_THROTTLE=0.1, catchThrottle).
+  i6: engineSim({
+    dense: {
+      engine: [[1500,  0.762,  0.141],  [1950,  0.802,  0.165],  [2500,  0.817,  0.187],  [3150,  0.959,  0.272],  [3850,  0.813,  0.284],  [4600,  0.656,  0.266],  [5350,  0.702,  0.292],  [6050,  0.775,  0.334]],
+      exhaust: [[1500,  0.572,  0.106],  [1950,  0.627,  0.139],  [2500,  0.725,  0.191],  [3150,  0.872,  0.251],  [3850,  0.952,  0.308],  [4600,  0.841,  0.303],  [5350,  0.943,  0.364],  [6050,  0.889,  0.365]],
+    },
+    limiter: {
+      corr: -0.06,
+      engine: { level: 0.824, start: 1.58, seconds: 1.77244, long: 4.09925 },
+      exhaust: { level: 1.004, start: 1.58, seconds: 1.77244, long: 4.09925 },
+    },
+    shifts: [
+      { from: 3600, to: 2500, engine: 0.906, exhaust: 0.89, engineTo: 0.817, exhaustTo: 0.725, corr: 0.27 },
+      { from: 4900, to: 3450, engine: 0.644, exhaust: 0.867, engineTo: 0.949, exhaustTo: 0.866, corr: 0.68 },
+      { from: 6000, to: 4200, engine: 0.771, exhaust: 0.887, engineTo: 0.812, exhaustTo: 0.918, corr: -0.08 },
+    ],
+    part: {
+      torque: 0.2,
+      throttle: [[1300, 0.006], [1500, 0.008], [1700, 0.011], [1950, 0.015], [2200, 0.019], [2500, 0.026], [2800, 0.031], [3150, 0.036], [3500, 0.042], [3850, 0.047], [4200, 0.052], [4600, 0.059], [5000, 0.065], [5350, 0.071], [5700, 0.077], [6050, 0.083], [6400, 0.089]],
+      engine: [[1300,  0.145],  [1500,  0.156],  [1700,  0.182],  [1950,  0.228],  [2200,  0.302],  [2500,  0.355],  [2800,  0.54],  [3150,  0.699],  [3500,  0.84],  [3850,  0.813],  [4200,  0.812],  [4600,  0.656],  [5000,  0.64],  [5350,  0.702],  [5700,  0.747],  [6050,  0.775],  [6400,  0.818]],
+      exhaust: [[1300,  0.104],  [1500,  0.116],  [1700,  0.133],  [1950,  0.183],  [2200,  0.245],  [2500,  0.336],  [2800,  0.471],  [3150,  0.621],  [3500,  0.73],  [3850,  0.9],  [4200,  0.918],  [4600,  0.841],  [5000,  0.876],  [5350,  0.943],  [5700,  0.875],  [6050,  0.889],  [6400,  1]],
+    },
+    smooth: 'combined',
+    car: 'i6', renders: 'jz-i6', script: 'scripts/engine-sim/jz_i6.mr', catchThrottle: 0.1, idle: { rpm: 1023, start: 1, seconds: { engine: 5.40644, exhaust: 5.40648 } }, crank: 200, start: { catch: 1.9, flare: 2020 },
+    engine: [0.472, [[1300,  0.787,  0.138],  [1700,  0.813,  0.152],  [2200,  0.853,  0.184],  [2800,  1,  0.243],  [3500,  0.948,  0.302],  [4200,  0.812,  0.306],  [5000,  0.64,  0.257],  [5700,  0.747,  0.32],  [6400,  0.818,  0.357]]],
+    exhaust: [0.351, [[1300,  0.585,  0.098],  [1700,  0.582,  0.116],  [2200,  0.659,  0.162],  [2800,  0.817,  0.225],  [3500,  0.865,  0.269],  [4200,  0.918,  0.312],  [5000,  0.876,  0.325],  [5700,  0.875,  0.352],  [6400,  1,  0.41]]],
+  }),
+  // EJ25 boxer four with unequal-length headers, bundled with engine-sim.
+  boxer: engineSim({
+    dense: {
+      engine: [[1150,  0.341,  0.108],  [1500,  0.484,  0.153],  [1950,  0.629,  0.213],  [2500,  0.725,  0.275],  [3150,  0.801,  0.376],  [3900,  0.877,  0.481],  [4750,  0.982,  0.603],  [5800,  0.952,  0.596]],
+      exhaust: [[1150,  0.397,  0.114],  [1500,  0.525,  0.161],  [1950,  0.674,  0.235],  [2500,  0.75,  0.291],  [3150,  0.806,  0.37],  [3900,  0.879,  0.475],  [4750,  0.965,  0.616],  [5800,  0.994,  0.687]],
+    },
+    limiter: {
+      corr: 0.02,
+      engine: { level: 0.859, start: 1.77, seconds: 1.68206, long: 4.07944 },
+      exhaust: { level: 0.982, start: 1.77, seconds: 1.68206, long: 4.07944 },
+    },
+    shifts: [
+      { from: 3600, to: 2500, engine: 0.861, exhaust: 0.844, engineTo: 0.725, exhaustTo: 0.75, corr: 0.01 },
+      { from: 4900, to: 3450, engine: 0.978, exhaust: 0.968, engineTo: 0.847, exhaustTo: 0.828, corr: 0.14 },
+      { from: 6000, to: 4200, engine: 0.968, exhaust: 0.996, engineTo: 0.941, exhaustTo: 0.914, corr: 0.18 },
+    ],
+    part: {
+      torque: 0.2,
+      throttle: [[1000, 0.066], [1150, 0.073], [1300, 0.079], [1500, 0.089], [1700, 0.101], [1950, 0.116], [2200, 0.133], [2500, 0.154], [2800, 0.175], [3150, 0.189], [3500, 0.204], [3900, 0.221], [4300, 0.236], [4750, 0.25], [5300, 0.261], [5800, 0.273], [6400, 0.285]],
+      engine: [[1000,  0.095],  [1150,  0.108],  [1300,  0.121],  [1500,  0.153],  [1700,  0.186],  [1950,  0.213],  [2200,  0.238],  [2500,  0.331],  [2800,  0.466],  [3150,  0.593],  [3500,  0.735],  [3900,  0.81],  [4300,  0.919],  [4750,  0.94],  [5300,  0.93],  [5800,  0.91],  [6400,  0.969]],
+      exhaust: [[1000,  0.102],  [1150,  0.114],  [1300,  0.129],  [1500,  0.161],  [1700,  0.197],  [1950,  0.235],  [2200,  0.266],  [2500,  0.337],  [2800,  0.469],  [3150,  0.638],  [3500,  0.771],  [3900,  0.879],  [4300,  0.925],  [4750,  0.965],  [5300,  0.974],  [5800,  0.994],  [6400,  1]],
+    },
+    smooth: 'combined',
+    car: 'boxer', renders: 'ej25-boxer', script: 'scripts/engine-sim/ej25_boxer.mr', idle: { rpm: 750, start: 1, seconds: { engine: 4.65444, exhaust: 5.73304 } }, crank: 505, start: { catch: 1.05, flare: 2480 },
+    engine: [0.182, [[1000,  0.303,  0.095],  [1300,  0.379,  0.121],  [1700,  0.566,  0.186],  [2200,  0.681,  0.238],  [2800,  0.775,  0.326],  [3500,  0.855,  0.444],  [4300,  0.962,  0.58],  [5300,  0.968,  0.596],  [6400,  1,  0.674]]],
+    exhaust: [0.214, [[1000,  0.356,  0.102],  [1300,  0.437,  0.129],  [1700,  0.612,  0.197],  [2200,  0.716,  0.266],  [2800,  0.77,  0.324],  [3500,  0.832,  0.402],  [4300,  0.925,  0.553],  [5300,  0.974,  0.637],  [6400,  1,  0.686]]],
+  }),
+  // VTEC-style inline four, bundled with engine-sim.
+  i4: engineSim({
+    dense: {
+      engine: [[1150,  0.189,  0.084],  [1500,  0.255,  0.109],  [1950,  0.354,  0.139],  [2550,  0.417,  0.174],  [3300,  0.477,  0.22],  [4300,  0.623,  0.308],  [5550,  0.855,  0.333],  [7200,  0.957,  0.298]],
+      exhaust: [[1150,  0.153,  0.076],  [1500,  0.199,  0.095],  [1950,  0.274,  0.126],  [2550,  0.352,  0.151],  [3300,  0.45,  0.189],  [4300,  0.567,  0.243],  [5550,  0.752,  0.288],  [7200,  0.851,  0.318]],
+    },
+    limiter: {
+      corr: 0.05,
+      engine: { level: 0.995, start: 1.74, seconds: 1.37533, long: 4.10842 },
+      exhaust: { level: 1.062, start: 1.74, seconds: 1.37533, long: 4.10842 },
+    },
+    shifts: [
+      { from: 4600, to: 3200, engine: 0.665, exhaust: 0.612, engineTo: 0.467, exhaustTo: 0.438, corr: -0.31 },
+      { from: 6300, to: 4400, engine: 0.917, exhaust: 0.843, engineTo: 0.637, exhaustTo: 0.582, corr: 0.11 },
+      { from: 7750, to: 5450, engine: 0.981, exhaust: 0.932, engineTo: 0.832, exhaustTo: 0.737, corr: 0.16 },
+    ],
+    part: {
+      torque: 0.2,
+      throttle: [[1000, 0.043], [1150, 0.049], [1300, 0.054], [1500, 0.062], [1700, 0.07], [1950, 0.081], [2200, 0.092], [2550, 0.105], [2900, 0.115], [3300, 0.127], [3800, 0.141], [4300, 0.155], [4900, 0.173], [5550, 0.192], [6300, 0.222], [7200, 0.249], [8200, 0.284]],
+      engine: [[1000,  0.077],  [1150,  0.084],  [1300,  0.091],  [1500,  0.109],  [1700,  0.125],  [1950,  0.139],  [2200,  0.15],  [2550,  0.174],  [2900,  0.191],  [3300,  0.22],  [3800,  0.26],  [4300,  0.308],  [4900,  0.301],  [5550,  0.361],  [6300,  0.378],  [7200,  0.389],  [8200,  0.387]],
+      exhaust: [[1000,  0.07],  [1150,  0.076],  [1300,  0.082],  [1500,  0.095],  [1700,  0.11],  [1950,  0.126],  [2200,  0.136],  [2550,  0.156],  [2900,  0.181],  [3300,  0.207],  [3800,  0.243],  [4300,  0.27],  [4900,  0.312],  [5550,  0.362],  [6300,  0.413],  [7200,  0.426],  [8200,  0.477]],
+    },
+    smooth: 'combined',
+    car: 'i4', renders: 'vtec-i4', script: 'scripts/engine-sim/vtec_i4.mr', idle: { rpm: 748, start: 1, seconds: { engine: 4.73506, exhaust: 4.57215 } }, crank: 520, start: { catch: 0.9, flare: 3460 },
+    engine: [0.101, [[1000,  0.168,  0.077],  [1300,  0.209,  0.091],  [1700,  0.306,  0.125],  [2200,  0.381,  0.15],  [2900,  0.436,  0.191],  [3800,  0.533,  0.26],  [4900,  0.707,  0.301],  [6300,  0.917,  0.313],  [8200,  1,  0.279]]],
+    exhaust: [0.085, [[1000,  0.141,  0.07],  [1300,  0.168,  0.082],  [1700,  0.234,  0.11],  [2200,  0.311,  0.136],  [2900,  0.4,  0.176],  [3800,  0.528,  0.225],  [4900,  0.658,  0.268],  [6300,  0.843,  0.331],  [8200,  1,  0.363]]],
+  }),
+  // V12: engine-sim's 412 T2 script with a road car's idle
+  // (scripts/engine-sim/v12_412.mr).
+  v12: engineSim({
+    dense: {
+      engine: [[2200,  0.561,  0.148],  [2850,  0.651,  0.178],  [3600,  0.712,  0.207],  [4450,  0.719,  0.222],  [5400,  0.72,  0.234],  [6450,  0.812,  0.277],  [7500,  0.881,  0.287],  [8450,  0.938,  0.303]],
+      exhaust: [[2200,  0.525,  0.142],  [2850,  0.611,  0.167],  [3600,  0.697,  0.196],  [4450,  0.713,  0.208],  [5400,  0.82,  0.253],  [6450,  0.875,  0.27],  [7500,  0.95,  0.293],  [8450,  0.963,  0.302]],
+    },
+    limiter: {
+      corr: 0.18,
+      engine: { level: 0.768, start: 1.35, seconds: 1.45554, long: 3.93648 },
+      exhaust: { level: 0.741, start: 1.35, seconds: 1.45554, long: 3.93648 },
+    },
+    shifts: [
+      { from: 4950, to: 3450, engine: 0.717, exhaust: 0.783, engineTo: 0.699, exhaustTo: 0.678, corr: 0.53 },
+      { from: 6750, to: 4750, engine: 0.849, exhaust: 0.928, engineTo: 0.718, exhaustTo: 0.757, corr: 0.05 },
+      { from: 8300, to: 5800, engine: 0.943, exhaust: 0.959, engineTo: 0.766, exhaustTo: 0.835, corr: 0.17 },
+    ],
+    part: {
+      torque: 0.2,
+      throttle: [[1900, 0.085], [2200, 0.089], [2500, 0.1], [2850, 0.114], [3200, 0.126], [3600, 0.14], [4000, 0.153], [4450, 0.169], [4900, 0.185], [5400, 0.199], [5900, 0.21], [6450, 0.216], [7000, 0.221], [7500, 0.229], [8000, 0.232], [8450, 0.235], [8900, 0.238]],
+      engine: [[1900,  0.183],  [2200,  0.199],  [2500,  0.209],  [2850,  0.243],  [3200,  0.275],  [3600,  0.312],  [4000,  0.339],  [4450,  0.371],  [4900,  0.413],  [5400,  0.433],  [5900,  0.479],  [6450,  0.507],  [7000,  0.561],  [7500,  0.552],  [8000,  0.581],  [8450,  0.575],  [8900,  0.599]],
+      exhaust: [[1900,  0.193],  [2200,  0.21],  [2500,  0.224],  [2850,  0.256],  [3200,  0.295],  [3600,  0.335],  [4000,  0.36],  [4450,  0.389],  [4900,  0.439],  [5400,  0.468],  [5900,  0.499],  [6450,  0.535],  [7000,  0.604],  [7500,  0.596],  [8000,  0.581],  [8450,  0.59],  [8900,  0.606]],
+    },
+    smooth: 'combined',
+    car: 'v12', renders: 'v12-412', script: 'scripts/engine-sim/v12_412.mr', idle: { rpm: 1406, start: 1, seconds: { engine: 5.64394, exhaust: 4.90873 } }, crank: 500, start: { catch: 1.15, flare: 3700 },
+    engine: [0.311, [[1900,  0.518,  0.135],  [2500,  0.568,  0.151],  [3200,  0.676,  0.189],  [4000,  0.694,  0.207],  [4900,  0.717,  0.227],  [5900,  0.778,  0.259],  [7000,  0.879,  0.294],  [8000,  0.952,  0.314],  [8900,  1,  0.315]]],
+    exhaust: [0.297, [[1900,  0.494,  0.133],  [2500,  0.558,  0.153],  [3200,  0.646,  0.178],  [4000,  0.713,  0.206],  [4900,  0.779,  0.232],  [5900,  0.839,  0.26],  [7000,  0.973,  0.296],  [8000,  0.95,  0.299],  [8900,  1,  0.316]]],
   }),
 }
 

@@ -7,10 +7,11 @@ browser, and the Pi only serves a few more static files.
 A synthesised engine that revs and shifts as you drive, through the car's own
 speakers. It is modelled on [TesRev](https://tesrev.com/). None of TesRev's
 code or sounds are used: its site publishes no source code and no licence
-for its sounds. There are four cars (a muscle V8, an LFA-style V10, a
-Ferrari-style flat-plane V8 and a GT3-style flat-6), and their sound is
+for its sounds. There are eight cars (a muscle V8, an LFA-style V10, a
+Ferrari-style flat-plane V8, a GT3-style flat-6, a 2JZ-style straight six,
+a rally boxer four, a VTEC-style four and a V12), and their sound is
 loops we render ourselves with engine-sim, a physically modelled engine
-([The sound](#the-sound-four-engine-sim-cars)). A synthesiser stands in only
+([The sound](#the-sound-eight-engine-sim-cars)). A synthesiser stands in only
 if the loops cannot be loaded.
 
 ## 1. How TesRev works
@@ -60,7 +61,7 @@ TesRev's "Tesla only" mode.
   sounded fake. A physically modelled engine (engine-sim) rendered offline
   into loops at many rpm, on-load and overrun, sounds far more like an
   engine and costs the car nothing but playback
-  ([The sound](#the-sound-four-engine-sim-cars)).
+  ([The sound](#the-sound-eight-engine-sim-cars)).
 - **GPS speed with a physics load model.** Speed is the one signal we have in
   real time. Load comes from how fast it changes, the way TesRev uses mass,
   power and drag: (mass × accel + drag + rolling) ÷ the force available at
@@ -102,13 +103,13 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | File | What |
 |---|---|
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
-| `static/rev-profiles.js` | The four cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
+| `static/rev-profiles.js` | The eight cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A high shelf from 650 Hz (−11 dB on overrun and at idle, opening to −6 dB under full load) and a low-pass at 3.2 kHz, run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
 | `static/rev-loudness.js` | The last stage: a compressor, +16 dB make-up, the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
 | `static/rev-live.js`, `rev-live-worker.js`, `rev-live-worklet.js`, `static/live/` | Live engine-sim (the "Engine: Live engine-sim" setting): engine-sim compiled to WebAssembly, run in a Web Worker, its dry output played through the loops' own impulse responses, EQ and sub layer with native nodes. Built by `scripts/engine-sim/wasm/build-wasm.sh`. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
-| `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
+| `static/sounds/` | The loops (Ogg Opus, mono; the cars' own loops and clips at 64 kbit/s, 5.0 MB for all eight, 0.6–0.7 MB per car; the options' loops at 40/36 kbit/s, 19.8 MB, 2.2–2.9 MB per car; engine and exhaust) and `CREDITS.md`. |
 | `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
 | `static/rev-car.js` | The car's real battery charge, range, odometer, outside and cabin temperatures and tyre pressures for the dash, read over Bluetooth through the Pi (`/telemetry/ble`): all once when the engine sound starts, then the charge and temperatures every five minutes while it runs and the tyres every fifteen. |
 | `static/rev-dash.js` | The dash: the chosen gauge style beside **ENGINE START/STOP** (with a settings button), on the passenger's side; holding the rev meter revs the engine ([The dash](#the-dash-buttons-and-gauge-styles)). Feeds the style the engine's state and the made-up side instruments. |
@@ -188,7 +189,7 @@ moving, and `Engine.step()` ends it on the first tick the car is:
   pulling away; on the car's GPS it is the first fix over ~4 km/h, so up to
   about a second.
 
-### The sound: four engine-sim cars
+### The sound: eight engine-sim cars
 
 Every car's sound is loops rendered offline with
 [engine-sim](https://github.com/ange-yaghi/engine-sim) (MIT), a physically
@@ -200,6 +201,21 @@ modelled combustion engine:
 | V10, LFA-style | LFA V10, bundled | 901 / 9,000 |
 | V8, Ferrari-style flat-plane | F136 V8, bundled (idles only with the throttle cracked: `ES_IDLE_THROTTLE=0.02`) | 1,058 / 9,000 |
 | Flat-6, GT3-style | our own `scripts/engine-sim/flat6_gt3.mr`, written on the pattern of engine-sim's Subaru boxer (engine-sim has no flat-6) | 923 / 9,000 |
+| Inline-6, 2JZ-style | 2JZ, bundled (does not catch on the starter at a closed throttle, idles once running: its renders crank with `ES_CATCH_THROTTLE=0.1`). engine-sim models no turbo, so it is the straight six without the twin-turbo whoosh | 1,023 / 6,500 (the script's own rev limiter) |
+| Flat-4, Rally boxer | Subaru EJ25 with unequal-length headers, bundled | 750 / 6,500 |
+| Inline-4, VTEC-style | Honda VTEC I4, bundled (no turbo, as above) | 748 / 8,400 |
+| V12, Race V12 | our `scripts/engine-sim/v12_412.mr`: the bundled Ferrari 412 T2 (a 1995 F1 engine) with less idle air, idle_throttle_plate_position 0.992 → 0.9975, so it idles at ~1,400 instead of ~3,800 rpm; revved to 9,000, not its 18,000 | 1,406 / 9,000 |
+
+The first four were rendered with `render-set.sh` and `render-oneshots.sh`;
+the four added on 2026-11-25 with `node scripts/rev-samples.mjs
+--render-base <car>`, which makes the same renders with `ES_SYNC` (every run
+bit-identical, `scripts/engine-sim/README.md`). Their rev points are spaced
+no more than 1.32× apart (1.35× from the idle to the first), so even
+without "Twice the rev points" no loop is stretched more than about 16 %;
+with it, about 7 % between rev points.
+
+Rotary: engine-sim models piston engines only, so there is none. The synth
+cars that were here before (2026-11-23) are gone; each car is engine-sim.
 
 Each car is a free-running idle plus 8–9 rev points up to just under its
 redline, each held on engine-sim's dynamometer twice: at **full throttle
@@ -212,8 +228,9 @@ and half):
 - **Exhaust** (`<car>-ex-*`): through its "minimal muffling" response, a
   near straight pipe, raspier, with its weight at 160–320 Hz.
 
-That makes 148 loops at 64 kbit/s, about 2.2 MB, and the car downloads only
-the chosen car's (about 0.55 MB).
+That makes 38 loops per car at 64 kbit/s, plus its start and stop clips:
+5.0 MB for all eight, and the car downloads only the chosen car's (0.6–0.7
+MB).
 
 **The idle.** Each idle is the rpm its engine really idles at in
 engine-sim, measured, and its loop is 4.8–6.6 s long, cut where the idle's
@@ -292,6 +309,15 @@ default is now 70 % (it was 50 %).
 | V10 | −29.4 → −15.5 | −21.4 → −11.6 | −12.7 → −8.4 | −1.3 dBFS |
 | F136 | −29.2 → −15.8 | −25.1 → −13.6 | −13.8 → −9.1 | −1.1 dBFS |
 | Flat-6 | −25.3 → −14.7 | −23.0 → −12.9 | −15.6 → −9.9 | −1.0 dBFS |
+| Inline-6 (added after) | −14.2 | −13.4 | −9.3 | −1.0 dBFS |
+| Flat-4 (added after) | −17.6 | −11.5 | −8.6 | −1.0 dBFS |
+| Inline-4 (added after) | −21.6 | −13.8 | −10.4 | −1.0 dBFS |
+| V12 (added after) | −15.0 | −14.2 | −9.9 | −1.0 dBFS |
+
+Over the whole drive the eight cars are within 1.9 dB of each other
+(−11.6 to −13.5 LUFS). The VTEC-style four idles 6–7 dB under the rest:
+engine-sim's VTEC is quiet low down and loud at the top, and the start
+clip's level is tied to the idle loop's, so it is left as it is.
 
 The spread from idle to a hard pull shrinks from 11–17 dB to 5–7 dB: the
 quiet parts are what the road hides. The limiter touches 0.001 % of samples
@@ -387,7 +413,8 @@ within 0.05 dB) and start where their short twins start. The idle loops were
 already 4.8–6.6 s.
 
 **What they cost.** All the extras' files together add 9.8 MiB across the
-four cars (2.2–2.9 MiB per car, at 40 kbit/s short and 36 kbit/s long).
+first four cars (2.2–2.9 MiB per car, at 40 kbit/s short and 36 kbit/s long),
+19.8 MB across all eight since 2026-11-25.
 With everything on, a car downloads 1.8–2.3 MB and the worklet holds
 75–83 MB of loops (handed to it, not copied; only the set in use is kept);
 the player costs about 1.2 % of one core (the old one 0.7 %; it now skips
@@ -611,7 +638,7 @@ sound on the main page.
    full-screen or another app. `visibilitychange` would pause it, which is the
    right behaviour, but it means no engine unless the browser is on screen.
 4. **The bass in the cabin.** The low end was raised to within a few dB of
-   real V8 recordings (measured, see [The sound](#the-sound-four-engine-sim-cars)),
+   real V8 recordings (measured, see [The sound](#the-sound-eight-engine-sim-cars)),
    but the car's speakers and EQ decide what is heard.
 5. **Dragging on the car's screen.** Pointer events in the desktop browser
    follow the finger within about 0.1 s. Whether the car's touchscreen

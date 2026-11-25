@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createModule, EngineRunner, ChainMeter, controlFor, levelAt, levelsFor, stateAt, CORRECT_DB, IDLE_THROTTLE } from '../static/rev-live-worker.js'
+import { createModule, EngineRunner, ChainMeter, controlFor, levelAt, levelsFor, stateAt, CORRECT_DB, IDLE_THROTTLE, CATCH_THROTTLE } from '../static/rev-live-worker.js'
 import { RingReader, IN_RATE } from '../static/rev-live-worklet.js'
 import { SlowJudge, SLOW_MS, UNDERRUNS, irFromWav, resample } from '../static/rev-live.js'
 import { SAMPLE_SETS, loopsFor } from '../static/rev-samples.js'
@@ -199,4 +199,11 @@ test('the WebAssembly engine compiles a car, holds 3000 rpm on the dyno and make
   const e = buf.subarray(0, n)
   const peak = e.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
   assert.ok(buf.every(Number.isFinite) && peak > 1e-3 && peak < 50, `peak ${peak}`)
+})
+
+test('live starts and idles each engine as its renders did (idle and catch throttles)', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    assert.equal(IDLE_THROTTLE[car] || 0, set.idleThrottle || 0, car + ' idle')
+    assert.equal(CATCH_THROTTLE[car] || 0, set.catchThrottle || 0, car + ' catch')
+  }
 })

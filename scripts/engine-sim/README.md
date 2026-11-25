@@ -35,6 +35,46 @@ node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the su
 # ES_IDLE_THROTTLE=0.02 (es-render ... idle 10 4).
 ```
 
+The four cars added on 2026-11-25 (`i6` 2JZ, `boxer` EJ25 unequal headers,
+`i4` Honda VTEC, `v12` our `v12_412.mr`) are rendered from their sets in
+`static/rev-samples.js`, every run with `ES_SYNC` (so the same command gives
+the same files), one es-render per core:
+
+```bash
+node scripts/rev-samples.mjs --render-base i6     # idle, holds, start, stop; prints crank and start
+node scripts/rev-samples.mjs --fit-idle i6        # -> idle
+node scripts/rev-samples.mjs --fit-part i6        # -> part.throttle
+scripts/engine-sim/render-extras.sh i6
+node scripts/rev-samples.mjs --fit-limiter i6     # -> limiter start/seconds/long
+node scripts/rev-samples.mjs --print-levels i6    # -> every level (smooth: 'combined')
+node scripts/rev-samples.mjs --car i6 && node scripts/rev-samples.mjs --oneshots i6
+```
+
+- **`ES_CATCH_THROTTLE`**: the 2JZ does not catch on the starter at a closed
+  throttle (it stalls in `idle` mode, and the F136's `ES_IDLE_THROTTLE` only
+  idles it at 2,400 rpm and up), but idles at ~1,020 once running. This
+  opens the throttle to 0.1 for the 1.5 s on the starter in every mode but
+  `start`, then lets it close. Unset, nothing changes (a V8 hold rendered
+  with the new build is byte-identical to the committed source). The set's
+  `catchThrottle` passes it to every render, and live mode does the same
+  (`CATCH_THROTTLE` in `rev-live-worker.js`).
+- **The 2JZ's redline is 6,500**, its script's own ignition limiter: held
+  above it on the dyno it does not fire at all (the first render at 6,800 rpm
+  was the limiter cutting, −120 N m at full throttle).
+- **The V12** is engine-sim's Ferrari 412 T2, a 1995 F1 engine that idles at
+  ~3,800 rpm on its own idle air. `v12_412.mr` is that script with one number
+  changed (`idle_throttle_plate_position` 0.992 → 0.9975: 2,300 rpm at 0.996,
+  ~1,480 at 0.9975, stalls at 0.998), revved to 9,000 by the app.
+- **No turbos:** engine-sim models none, so the 2JZ and the four have no
+  turbo whoosh or blow-off. No rotary either (piston engines only).
+- **`smooth: 'combined'`** in their sets: `--print-levels` smooths the own
+  and dense points together (5-point geometric mean over both), and floors
+  the light-throttle layer at overrun. The 2JZ's engine group alternates
+  ~4 dB from one rev point to the next between 1,950 and 3,850 rpm (the
+  same in 3 s and 5 s holds: the simulation, not the render), which the
+  first four cars' own-points-only smoothing left as a 2 dB step.
+
+
 The engine starting and stopping, the same three ways (`ES_IR` as above for the
 engine and exhaust groups, `ES_CONV=0` for the sub; the F136 with
 `ES_IDLE_THROTTLE=0.02`), then the clips:
@@ -238,6 +278,9 @@ engine-sim bundles these engine scripts (`assets/engines/`):
 - **Flat-4:** Subaru EJ25
 - **V12:** Ferrari 412 T2 (F1), Rolls-Royce Merlin (aircraft)
 - **Other:** Audi I5, Honda VTEC I4, and more
+
+Used: the LS V8, F136, LFA, 2JZ, EJ25 (unequal headers), VTEC I4, and the
+412 T2 with a road car's idle (`v12_412.mr`).
 
 It has no flat-6, so `flat6_gt3.mr` is ours: a 4.0 L, 9,000 rpm boxer six
 written on the pattern of the Subaru EJ25 script, with its crank and firing
