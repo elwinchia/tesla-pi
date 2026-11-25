@@ -2,7 +2,7 @@
 // Volume slider and the peak limiter.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Loudness, LOUDNESS, BUILD, compGainDb, buildDb, drive } from '../static/rev-loudness.js'
+import { Loudness, LOUDNESS, BUILD, TONE, compGainDb, buildDb, drive } from '../static/rev-loudness.js'
 
 const SR = 48000
 
@@ -75,4 +75,11 @@ test('the build: a hard pull is left alone, the idle comes down, a cruise betwee
   assert.ok(Math.abs(pull.db - idle.db - BUILD.depth) < 0.3, `${(pull.db - idle.db).toFixed(2)} dB`)
   // Until the car's revs and load arrive it does nothing.
   assert.ok(Math.abs(through(0.05, 1).db - pull.db) < 0.1)
+})
+
+test('the tone: more bass and treble than the mids', () => {
+  // Quiet tones (under the compressor), so only the tone tells them apart.
+  const lo = through(0.003, 1, 1, 40).db, mid = through(0.003, 1, 1, 700).db, hi = through(0.003, 1, 1, 9000).db
+  assert.ok(Math.abs(lo - mid - TONE.bass.db) < 1, `bass +${(lo - mid).toFixed(1)} dB`)
+  assert.ok(Math.abs(hi - mid - TONE.treble.db) < 1, `treble +${(hi - mid).toFixed(1)} dB`)
 })

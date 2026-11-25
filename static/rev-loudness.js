@@ -8,7 +8,8 @@
 // the road hides: after the cabin filter the engine lives below ~600 Hz,
 // where the tyres and the wind are.
 //
-//   in ──► compressor (brings a cruise and the idle up towards a hard pull,
+//   in ──► tone (more bass and treble, as the car's own Bass and Treble
+//          would give, so they can stay at standard) ──► compressor (brings a cruise and the idle up towards a hard pull,
 //          ratio RATIO above THRESHOLD) ──► make-up gain ──► build (the
 //          engine working: idle and a light cruise turned down, a pull
 //          left alone) ──► volume (the page's slider, squared) ──► peak
@@ -30,6 +31,8 @@
 // Pure, like rev-cabin.js: the AudioWorklet runs it after the cabin, and
 // scripts/rev-render.mjs and the tests run it offline.
 
+import { lowShelf, highShelf } from './rev-cabin.js'
+
 const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x)
 const dbToLin = (db) => Math.pow(10, db / 20)
 
@@ -37,13 +40,19 @@ export const LOUDNESS = {
   threshold: -30,  // dBFS of the detector's RMS where the compressor starts
   ratio: 2.5,
   knee: 8,         // dB, soft
-  makeup: 16,      // dB
+  makeup: 15,      // dB
   attack: 0.02,    // s, the detector rising
   release: 0.35,   // s, the detector falling
   ceiling: 0.89,   // -1 dBFS: the limiter's most
   limRelease: 0.12, // s
   tauVolume: 0.05, // s, the slider's glide
 }
+
+// The tone (above): a low shelf and a high shelf, before the compressor,
+// so they change the balance and not the loudness. The owner found the
+// sound better with the car's Bass turned up, and wants the car left at
+// standard.
+export const TONE = { bass: { hz: 100, db: 6 }, treble: { hz: 2500, db: 6 } }
 
 // The build (above): depth, dB at idle; tau, s, how fast it follows.
 // load counts most, the revs some.
@@ -81,6 +90,9 @@ export class Loudness {
     this.kLim = 1 - Math.exp(-1 / (LOUDNESS.limRelease * sampleRate))
     this.kVol = 1 - Math.exp(-1 / (LOUDNESS.tauVolume * sampleRate))
     this.limited = 0        // samples the limiter turned down (for the tests and the render)
+    this.bass = lowShelf(TONE.bass.hz, TONE.bass.db, sampleRate)
+    this.treble = highShelf(TONE.treble.hz, TONE.treble.db, sampleRate)
+    this.tz = []            // the tone's filter state, per channel
     // The build: off (0 dB) until the car's load or rpm arrive.
     this.load = NaN; this.rpm = NaN; this.idle = 0; this.redline = 0
     this.build = 1; this.buildTarget = 1
@@ -97,9 +109,28 @@ export class Loudness {
       this.buildTarget = dbToLin(buildDb(this.load, clamp((this.rpm - this.idle) / (this.redline - this.idle), 0, 1)))
     }
   }
+  // The tone, in place: two biquads per channel, transposed direct form II.
+  tone(outs, n) {
+    const b = this.bass, t = this.treble
+    while (this.tz.length < outs.length) this.tz.push(new Float64Array(4))
+    for (let c = 0; c < outs.length; c++) {
+      const o = outs[c], z = this.tz[c]
+      for (let i = 0; i < n; i++) {
+        const x = o[i]
+        const y1 = b[0] * x + z[0]
+        z[0] = b[1] * x - b[3] * y1 + z[1]
+        z[1] = b[2] * x - b[4] * y1
+        const y2 = t[0] * y1 + z[2]
+        z[2] = t[1] * y1 - t[3] * y2 + z[3]
+        z[3] = t[2] * y1 - t[4] * y2
+        o[i] = y2
+      }
+    }
+  }
   // Processes outs (channel arrays, the same signal on each or not) in place.
   process(outs, n) {
     const C = outs.length, ceil = LOUDNESS.ceiling
+    this.tone(outs, n)
     let env = this.env, vol = this.vol, lim = this.lim, build = this.build
     // The compressor's gain changes slowly: work it out once per 16 frames.
     let g = dbToLin(compGainDb(10 * Math.log10(env + 1e-12)))

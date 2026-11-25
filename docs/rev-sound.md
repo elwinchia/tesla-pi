@@ -108,7 +108,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A low shelf at 110 Hz (the body's boom: +3 dB, +8 dB under full load), a high shelf from 650 Hz (−11 dB on overrun and at idle, −6 dB under full load) and a low-pass at 3.2 kHz; high in the revs the shelf and the low-pass open up (to −1.5 dB and 10 kHz at the redline under load) so the scream gets through. Run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
 | `scripts/rev-jet.mjs` | Our own turbojet, rendered into the files engine-sim would make (engine-sim is pistons only): blade-pass and turbine tones, buzz-saw, jet roar, rumble, crackle; its start and stop. |
-| `static/rev-loudness.js` | The last stage: a compressor, +16 dB make-up, the build (up to −5 dB when the engine is not working, so a pull climbs over the idle), the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
+| `static/rev-loudness.js` | The last stage: the tone (+6 dB bass below 100 Hz, +6 dB treble above 2.5 kHz), a compressor, +15 dB make-up, the build (up to −5 dB when the engine is not working, so a pull climbs over the idle), the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
 | `static/rev-live.js`, `rev-live-worker.js`, `rev-live-worklet.js`, `static/live/` | Live engine-sim (the "Engine: Live engine-sim" setting): engine-sim compiled to WebAssembly, run in a Web Worker, its dry output played through the loops' own impulse responses, EQ and sub layer with native nodes. Built by `scripts/engine-sim/wasm/build-wasm.sh`. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono; the cars' own loops and clips at 64 kbit/s, 6.6 MB for all ten, 0.5–0.7 MB per car (the jet 1.0); the options' loops at 40/36 kbit/s, 25.3 MB, 2.2–2.9 MB per car; engine and exhaust) and `CREDITS.md`. |
@@ -422,6 +422,18 @@ Each band's share of the total, before → after (cabin on):
 
 The limiter takes more than 1 dB off 1.7 % of the drive's samples (it was
 1.3 %).
+
+**More bass and treble** (2026-11-25). The owner found it better with the
+car's own Bass turned up, but wants the car's audio left at standard. So
+`static/rev-loudness.js` starts with a tone: a low shelf at 100 Hz and a
+high shelf at 2.5 kHz, +6 dB each (`TONE`), before the compressor, so they
+change the balance rather than the loudness. Measured on the drive (V8,
+each band's share of the total), 20–60 Hz comes up about 3 dB and 4–8 kHz
+3 dB against 250 Hz–1 kHz, which goes down 2–3 dB. The bass peaks pushed
+the limiter to 5.7 % of the samples, so the make-up drops from 16 to
+15 dB: 2.3 %, at most 3.4 dB. Over the drive the ten cars are at −13.6 to
+−14.9 LUFS (about 0.5–1 dB under the step before; LUFS weights the bass
+down, so it reads quieter than it sounds).
 
 ### Two ways to make the sound, and four extras (2026-11-25)
 
