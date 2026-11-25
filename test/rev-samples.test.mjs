@@ -6,11 +6,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, creditLine, hasRecording, filesOf } from '../static/rev-samples.js'
+import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, creditLine, hasRecording, filesOf, loopsFor, extrasPlan, LONG_SECONDS, SHIFT } from '../static/rev-samples.js'
 import { PROFILES } from '../static/rev-profiles.js'
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
-const BUDGET = 3 * 1024 * 1024 // bytes, all cars together (the car loads only its own)
+// Bytes, all cars together (the car loads only its own, and only the
+// options' files when they are on): the set's own loops and clips, and the
+// options' loops (rev-samples.js loopsFor).
+const BUDGET = 3 * 1024 * 1024, OPTIONS_BUDGET = 10.25 * 1024 * 1024
 
 test('every recorded car is a real car sound with loops at two or more rpm points', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
@@ -19,7 +22,7 @@ test('every recorded car is a real car sound with loops at two or more rpm point
     assert.ok(new Set(set.loops.map((l) => l.rpm)).size >= 2, `${car}: one rpm point is not enough to pitch between`)
     for (const l of set.loops) {
       assert.match(l.file, /^[a-z0-9-]+\.ogg$/, l.file)
-      assert.ok(['on', 'off', 'any', undefined].includes(l.layer), `${l.file} layer`)
+      assert.ok(['on', 'off', 'any', 'part', 'limiter', 'shift', undefined].includes(l.layer), `${l.file} layer`)
       assert.ok(l.rpm >= p.idle * 0.6 && l.rpm <= p.redline * 1.05, `${l.file}: ${l.rpm} rpm is outside ${car}'s range`)
       assert.ok(l.start >= 0 && l.seconds >= 0.3 && l.seconds <= (l.exact ? 8 : 6), `${l.file} cut`)
       // Rev points are cut to whole cycles; an idle is cut where its own
@@ -53,8 +56,11 @@ test('every file is in the folder, is Ogg Opus, and the folder holds nothing els
     assert.ok(head.startsWith('OggS') && head.includes('OpusHead'), `${f} is not Ogg Opus`)
   }
   for (const f of present) assert.ok(listed.has(f) || f === 'CREDITS.md', `${f} is not credited or not used`)
-  const total = [...listed].reduce((s, f) => s + fs.statSync(path.join(DIR, f)).size, 0)
+  const own = new Set(Object.values(SAMPLE_SETS).flatMap((s) => filesOf({ ...s, loops: loopsFor(s, {}) })))
+  const size = (fs_) => [...fs_].reduce((s, f) => s + fs.statSync(path.join(DIR, f)).size, 0)
+  const total = size(own), extra = size([...listed].filter((f) => !own.has(f)))
   assert.ok(total <= BUDGET, `${(total / 1024).toFixed(0)} kB of loops, budget ${BUDGET / 1024} kB`)
+  assert.ok(extra <= OPTIONS_BUDGET, `${(extra / 1024).toFixed(0)} kB of the options' loops, budget ${OPTIONS_BUDGET / 1024} kB`)
 })
 
 test('every car starts and stops: both clips, both groups, a catch inside the start and a flare above idle', () => {
@@ -137,7 +143,7 @@ test('an engine-sim car has an on-load and an overrun loop at every rev point, a
     const groups = [...new Set(set.loops.map((l) => l.group || 'engine'))]
     const points = {}
     for (const g of groups) {
-      const loops = set.loops.filter((l) => (l.group || 'engine') === g)
+      const loops = loopsFor(set, {}).filter((l) => (l.group || 'engine') === g)
       const on = loops.filter((l) => l.layer === 'on').map((l) => l.rpm).sort((a, b) => a - b)
       const off = loops.filter((l) => l.layer === 'off').map((l) => l.rpm).sort((a, b) => a - b)
       assert.deepEqual(on, off, `${car} ${g}: layers cover different rpm`)
@@ -170,5 +176,113 @@ test('every car plays engine-sim loops, with both an engine and an exhaust group
     assert.equal(set.kind, 'engine-sim', car)
     const groups = new Set(set.loops.map((l) => l.group))
     assert.ok(groups.has('engine') && groups.has('exhaust'), `${car}: ${[...groups]}`)
+  }
+})
+
+// ── The recorded mix's options ────────────────────────────────────────────
+const OPTIONS = ['denseRpm', 'partThrottle', 'oneShots', 'longLoops']
+const combos = () => Array.from({ length: 16 }, (_, m) => Object.fromEntries(OPTIONS.map((k, i) => [k, !!(m & (1 << i))])))
+const ownLoops = (set) => set.loops.filter((l) => !(Array.isArray(l.opt) ? l.opt.length : l.opt))
+
+test('with every option off a set plays its own loops, as they always were', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const off = loopsFor(set, {})
+    assert.deepEqual(off, loopsFor(set, Object.fromEntries(OPTIONS.map((k) => [k, false]))))
+    // Idle in both layers and an on-load and overrun loop at each point,
+    // for both groups, 1.5 s apart from the idle, in the original order.
+    assert.equal(off.length, 2 * (2 + 2 * set.points.length), car)
+    assert.deepEqual(off.map((l) => l.file), set.loops.slice(0, off.length).map((l) => l.file))
+    for (const l of off) {
+      assert.ok(!l.file.includes('-long') && !/part|limiter|shift/.test(l.file), `${car}: ${l.file}`)
+      assert.ok(l.exact || l.seconds === 1.5, l.file)
+    }
+  }
+})
+
+test('each option, alone and together, plays what it says and nothing else', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const plan = extrasPlan(set)
+    for (const o of combos()) {
+      const name = `${car} ${OPTIONS.filter((k) => o[k]).join('+') || 'none'}`
+      const ls = loopsFor(set, o)
+      // One loop per group, layer and rpm (an idle file serves several layers).
+      const keys = ls.map((l) => `${l.group}/${l.layer}/${l.rpm}/${l.render === 'idle' ? 'idle' : ''}`)
+      assert.equal(new Set(keys).size, keys.length, `${name}: a loop twice`)
+      for (const group of ['engine', 'exhaust']) {
+        const g = ls.filter((l) => l.group === group)
+        const at = (layer) => g.filter((l) => l.layer === layer && l.render !== 'idle').map((l) => l.rpm).sort((a, b) => a - b)
+        const want = (o.denseRpm ? [...plan.points, ...plan.dense] : plan.points).sort((a, b) => a - b)
+        assert.deepEqual(at('on'), want, `${name} ${group}: on-load points`)
+        assert.deepEqual(at('off'), want, `${name} ${group}: overrun points`)
+        assert.deepEqual(at('part'), o.partThrottle ? want : [], `${name} ${group}: light-throttle points`)
+        assert.equal(g.filter((l) => l.render === 'idle').length, o.partThrottle ? 3 : 2, `${name} ${group}: idle in every layer`)
+        assert.equal(g.filter((l) => l.layer === 'limiter').length, o.oneShots ? 1 : 0, `${name} ${group}: limiter`)
+        assert.deepEqual(g.filter((l) => l.layer === 'shift').map((l) => l.from), o.oneShots ? plan.shifts.map((s) => s.from) : [], `${name} ${group}: shifts`)
+        // Long loops replace every short rev-point and limiter loop.
+        for (const l of g) {
+          if (l.render === 'idle' || l.layer === 'shift') continue
+          assert.equal(l.file.endsWith('-long.ogg'), o.longLoops, `${name}: ${l.file}`)
+          if (!l.exact) assert.equal(l.seconds, o.longLoops ? LONG_SECONDS : 1.5, l.file)
+        }
+        if (o.partThrottle) assert.ok(g.filter((l) => l.layer === 'part').every((l) => l.torque === set.part.torque))
+      }
+    }
+  }
+})
+
+test('the options\' loops are levelled on the set\'s own scale', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const all = loopsFor(set, Object.fromEntries(OPTIONS.map((k) => [k, true])))
+    const byKey = new Map(set.loops.map((l) => [`${l.group}/${l.layer}/${l.rpm}/${l.file.endsWith('-long.ogg')}`, l]))
+    for (const l of set.loops) {
+      assert.ok(l.level > 0 && l.level <= 1.25, `${car} ${l.file}: level ${l.level}`)
+      // A long loop is exactly as loud as its short twin.
+      if (l.file.endsWith('-long.ogg')) {
+        const short = byKey.get(`${l.group}/${l.layer}/${l.rpm}/false`)
+        assert.ok(short, `${l.file}: no short twin`)
+        assert.equal(l.level, short.level, `${l.file}: long vs short`)
+      }
+    }
+    for (const group of ['engine', 'exhaust']) {
+      const g = all.filter((l) => l.group === group)
+      const lv = (layer, rpm) => g.find((l) => l.layer === layer && l.rpm === rpm && l.render !== 'idle')?.level
+      const pts = [...new Set(g.filter((l) => l.layer === 'on' && l.render !== 'idle').map((l) => l.rpm))].sort((a, b) => a - b)
+      for (let i = 1; i < pts.length - 1; i++) {
+        // No dense point jumps out of line with its neighbours: within
+        // 2 dB (levels are square-rooted: 1.26x) of their geometric middle.
+        const a = lv('on', pts[i - 1]), b = lv('on', pts[i]), c = lv('on', pts[i + 1])
+        assert.ok(Math.abs(Math.log(b / Math.sqrt(a * c))) < Math.log(1.26), `${car} ${group} ${pts[i]}: on ${a} ${b} ${c}`)
+      }
+      for (const r of pts) {
+        // Light throttle sits between overrun and full (with the slack a
+        // simulation's resonances need), and overrun under full.
+        const on = lv('on', r), off = lv('off', r), part = lv('part', r)
+        assert.ok(off <= on * 1.1, `${car} ${group} ${r}: overrun ${off} vs on ${on}`)
+        assert.ok(part >= off * 0.8 && part <= on * 1.15, `${car} ${group} ${r}: part ${part} vs ${off}..${on}`)
+      }
+      // The limiter: about as loud as pulling near the redline.
+      const lim = g.find((l) => l.layer === 'limiter'), topOn = lv('on', pts[pts.length - 1])
+      assert.ok(lim.level > 0.5 * topOn && lim.level < 1.6 * topOn, `${car} ${group}: limiter ${lim.level} vs ${topOn}`)
+    }
+  }
+})
+
+test('the limiter and shift clips are cut where they play: the limiter at the redline, the shifts across the gearbox\'s range', () => {
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    const p = PROFILES[car]
+    for (const l of set.loops.filter((x) => x.layer === 'limiter')) {
+      assert.equal(l.rpm, p.redline, l.file)
+      assert.ok(l.exact && l.seconds >= 1 && l.seconds <= LONG_SECONDS + 0.5, `${l.file}: ${l.seconds} s`)
+      assert.equal(l.cut, p.limiter / 1000)
+    }
+    for (const l of set.loops.filter((x) => x.layer === 'shift')) {
+      assert.ok(l.from > l.to && l.to > p.idle && l.from < p.redline, l.file)
+      assert.ok(l.exact && l.at === SHIFT.at && l.cut === SHIFT.cut && l.seconds === SHIFT.seconds, l.file)
+      assert.ok(l.start + l.at === SHIFT.renderAt, `${l.file}: the cut is where es-render made it`)
+    }
+    // Every set's light throttle was found at every point it plays.
+    const pts = [...extrasPlan(set).points, ...extrasPlan(set).dense]
+    assert.deepEqual(set.part.throttle.map(([r]) => r).sort((a, b) => a - b), pts.sort((a, b) => a - b), car)
+    for (const [, th] of set.part.throttle) assert.ok(th > 0 && th < 1)
   }
 })

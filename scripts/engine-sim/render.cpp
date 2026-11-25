@@ -20,6 +20,23 @@
 //       The engine stopping: started and idled unrecorded for warmup s,
 //       then recorded idling for 0.4 s, the ignition cut, and it running
 //       down to rest.
+//   es-render <script.mr> <out.wav> limiter <seconds> [warmup s]
+//       Free revving in neutral at full throttle, bouncing off engine-sim's
+//       own ignition-cut rev limiter (IgnitionModule): idle for warmup s
+//       unrecorded (ES_IDLE_THROTTLE), then the throttle opens as the
+//       recording starts. ES_REV_LIMIT (rpm) and ES_LIMITER_S (s) replace
+//       the script's rev limit and cut length.
+//   es-render <script.mr> <out.wav> shift <rpm> <to rpm> <seconds> [warmup s]
+//       An upshift under full load: held at <rpm> as in hold, then at
+//       ES_SHIFT_AT s into the recording (default 0.5) the ignition is cut
+//       for ES_SHIFT_CUT s (0.14) while the dyno brings the revs down to
+//       <to rpm> the way the app's gearbox does (rev-model.js: a 60 ms time
+//       constant during the shift, 120 ms after), then fires again and holds
+//       <to rpm>. ES_SHIFT_THROTTLE: the throttle during the cut (default 1,
+//       a flat shift).
+// Diagnostics, which leave the WAV as it is: ES_RPM_LOG=<file> writes the
+// engine's rpm every millisecond of the recording ("t rpm" per line), and
+// ES_TORQUE=1 prints the dyno's mean torque over the recording.
 #include "scripting/include/compiler.h"
 #include "include/engine.h"
 #include "include/simulator.h"
@@ -29,6 +46,7 @@
 #include "include/impulse_response.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -56,6 +74,13 @@ static std::vector<int16_t> readWav16(const std::string &path) {
     std::fclose(f);
     return out;
 }
+
+// The ignition module keeps its rev limit and cut length to itself; a
+// derived type may name them.
+struct IgnitionAccess : IgnitionModule {
+    static double IgnitionModule::*revLimit() { return &IgnitionAccess::m_revLimit; }
+    static double IgnitionModule::*limiterDuration() { return &IgnitionAccess::m_limiterDuration; }
+};
 
 static void writeWav(const std::string &path, const std::vector<int16_t> &s) {
     FILE *f = std::fopen(path.c_str(), "wb");
@@ -114,7 +139,15 @@ int main(int argc, char **argv) {
     // The synthesizer is built around its rendering thread: each frame hands
     // it a block of simulation output (endFrame) and waits until it has been
     // turned into audio (waitProcessed), so nothing is dropped or invented.
-    sim->startAudioRenderingThread();
+    // ES_SYNC=1 renders the audio on this thread, after each frame, instead
+    // of on engine-sim's audio thread. Both threads draw from the C library's
+    // one rand() (the combustion's flame-speed scatter and the synthesizer's
+    // noise), so with the thread a run's noise depends on timing: holds
+    // longer than ~6 s came out a few LSB different from run to run. With
+    // ES_SYNC every run is identical. The renders the committed loops came
+    // from were made without it, and are left so.
+    const bool sync = getenv("ES_SYNC") != nullptr;
+    if (!sync) sim->startAudioRenderingThread();
     const double redline = units::toRpm(engine->getRedline());
     double holdRpm = 0, throttle = 0, seconds = 0, warmup = 4;
     if (mode == "hold") {
@@ -128,7 +161,22 @@ int main(int argc, char **argv) {
         seconds = std::atof(argv[4]); warmup = 0;
     } else if (mode == "stop") {
         seconds = std::atof(argv[4]); if (argc > 5) warmup = std::atof(argv[5]);
+    } else if (mode == "limiter") {
+        seconds = std::atof(argv[4]); if (argc > 5) warmup = std::atof(argv[5]);
+    } else if (mode == "shift") {
+        if (argc < 7) { std::fprintf(stderr, "usage: shift <rpm> <to rpm> <seconds> [warmup]\n"); return 2; }
+        holdRpm = std::atof(argv[4]); seconds = std::atof(argv[6]); throttle = 1;
+        if (argc > 7) warmup = std::atof(argv[7]);
     } else { std::fprintf(stderr, "unknown mode\n"); return 2; }
+    const double shiftTo = mode == "shift" ? std::atof(argv[5]) : 0;
+    const double shiftAt = getenv("ES_SHIFT_AT") ? std::atof(getenv("ES_SHIFT_AT")) : 0.5;
+    const double shiftCut = getenv("ES_SHIFT_CUT") ? std::atof(getenv("ES_SHIFT_CUT")) : 0.14;
+    const double shiftThrottle = getenv("ES_SHIFT_THROTTLE") ? std::atof(getenv("ES_SHIFT_THROTTLE")) : 1.0;
+    if (getenv("ES_REV_LIMIT")) engine->getIgnitionModule()->*IgnitionAccess::revLimit() = units::rpm(std::atof(getenv("ES_REV_LIMIT")));
+    if (getenv("ES_LIMITER_S")) engine->getIgnitionModule()->*IgnitionAccess::limiterDuration() = std::atof(getenv("ES_LIMITER_S"));
+    FILE *rpmLog = getenv("ES_RPM_LOG") ? std::fopen(getenv("ES_RPM_LOG"), "w") : nullptr;
+    const bool wantTorque = getenv("ES_TORQUE") != nullptr;
+    double torqueSum = 0, nextLog = 0; long torqueN = 0;
     const double idleThrottle = getenv("ES_IDLE_THROTTLE") ? std::atof(getenv("ES_IDLE_THROTTLE")) : 0.0;
 
     // Every mode but start: 1.5 s on the starter with the ignition on, then
@@ -167,7 +215,9 @@ int main(int argc, char **argv) {
             const double u = t - recordFrom;
             engine->getIgnitionModule()->m_enabled = u < 0.4;
             target = u < 0.4 ? idleThrottle : 0.0;
-        } else if (mode == "hold") {
+        } else if (mode == "limiter") {
+            target = t >= recordFrom ? 1.0 : idleThrottle;
+        } else if (mode == "hold" || mode == "shift") {
             const bool hold = t >= 1.5;
             sim->m_dyno.m_enabled = hold;
             sim->m_dyno.m_hold = hold;
@@ -189,11 +239,39 @@ int main(int argc, char **argv) {
         speed = target * 0.5 + 0.5 * speed;  // as the app smooths it
         engine->setSpeedControl(speed);
 
+        // The shift is steered step by step: a frame (1/60 s) is too coarse
+        // for a 140 ms cut. Other modes only watch.
+        const double shiftFrom = recordFrom + shiftAt;
+        long k = 0;
+        const bool shiftSoon = mode == "shift" && t + 1.0 / 30 >= shiftFrom;
         sim->startFrame(1.0 / 60);
-        while (sim->simulateStep()) {}
+        for (;;) {
+            if (shiftSoon) {
+                const double ts = t + k / freq, u = ts - shiftFrom;
+                const bool cut = u >= 0 && u < shiftCut;
+                engine->getIgnitionModule()->m_enabled = !cut;
+                engine->setSpeedControl(cut ? shiftThrottle : speed);
+                if (u >= 0) {
+                    // rev-model.js Gearbox: tau 0.06 s while shifting, 0.12 s after.
+                    const double at = holdRpm - shiftTo;
+                    const double rc = shiftTo + at * std::exp(-shiftCut / 0.06);
+                    const double r = u < shiftCut ? shiftTo + at * std::exp(-u / 0.06)
+                                                  : shiftTo + (rc - shiftTo) * std::exp(-(u - shiftCut) / 0.12);
+                    sim->m_dyno.m_rotationSpeed = units::rpm(r);
+                }
+            }
+            if (!sim->simulateStep()) break;
+            ++k;
+            const double ts = t + k / freq;
+            if (ts >= recordFrom) {
+                if (rpmLog && ts - recordFrom >= nextLog) { std::fprintf(rpmLog, "%.4f %.1f\n", ts - recordFrom, engine->getRpm()); nextLog += 0.001; }
+                if (wantTorque) { torqueSum += sim->m_dyno.getTorque(); ++torqueN; }
+            }
+        }
         t += sim->getFrameIterationCount() / freq;
         sim->endFrame();
-        if (sim->getFrameIterationCount() > 0) sim->synthesizer().waitProcessed();
+        if (sync) { if (sim->getFrameIterationCount() > 0) sim->synthesizer().renderAudio(); }
+        else if (sim->getFrameIterationCount() > 0) sim->synthesizer().waitProcessed();
         for (;;) {
             const int n = sim->readAudioOutput((int)buf.size(), buf.data());
             if (n <= 0) break;
@@ -206,8 +284,10 @@ int main(int argc, char **argv) {
         }
     }
     writeWav(outPath, out);
+    if (rpmLog) std::fclose(rpmLog);
+    if (wantTorque) std::fprintf(stderr, "torque %.2f N m (mean over the recording)\n", torqueN ? torqueSum / torqueN : 0.0);
     std::fprintf(stderr, "%s: %.2f s, redline %.0f rpm\n", outPath.c_str(), out.size() / 44100.0, redline);
-    sim->endAudioRenderingThread();
+    if (!sync) sim->endAudioRenderingThread();
     sim->destroy();
     return 0;
 }

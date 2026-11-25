@@ -12,6 +12,10 @@
 //   node scripts/rev-render.mjs --recorded --outside   # without the cabin
 //                                 # (static/rev-cabin.js): as a microphone
 //                                 # at the engine hears it
+//   node scripts/rev-render.mjs --recorded --dense --part --shots --long
+//                                 # with the recorded mix's options on
+//                                 # (denseRpm, partThrottle, oneShots,
+//                                 # longLoops; rev-samples.js loopsFor)
 //
 // It runs the same code the car's browser runs (static/rev-*.js): a simulated
 // car reports its speed once a second like the car's GPS, the Engine turns
@@ -31,7 +35,7 @@ import { PROFILES } from '../static/rev-profiles.js'
 import { EngineVoice } from '../static/rev-worklet.js'
 import { SampleVoice } from '../static/rev-sampler.js'
 import { Cabin } from '../static/rev-cabin.js'
-import { SAMPLE_SETS, hasRecording, loopSlice } from '../static/rev-samples.js'
+import { SAMPLE_SETS, hasRecording, loopSlice, loopsFor } from '../static/rev-samples.js'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -43,13 +47,18 @@ const opt = (name, def) => {
 if (args.includes('--help') || args.includes('-h')) {
   console.log('usage: rev-render.mjs [--profile ' + Object.keys(PROFILES).join('|') + ' | --all] [--mode comfort|normal|sport]\n' +
     '                     [--car ' + Object.keys(CARS).join('|') + '] [--scene drive|rev|demo]\n' +
-    '                     [--recorded [--exhaust 0..1]] [--outside] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
+    '                     [--recorded [--exhaust 0..1] [--dense] [--part] [--shots] [--long]] [--outside]\n' +
+    '                     [--fix-ms 1000] [--out file.wav | --out-dir dir]')
   process.exit(0)
 }
 const fixMs = Number(opt('fix-ms', 1000))
 const sceneName = opt('scene', 'drive')
 const recorded = args.includes('--recorded')
 const outside = args.includes('--outside')
+// The recorded mix's options, as rev-sound.js's settings name them.
+const FLAGS = { dense: 'denseRpm', part: 'partThrottle', shots: 'oneShots', long: 'longLoops' }
+const options = Object.fromEntries(Object.entries(FLAGS).map(([f, k]) => [k, args.includes('--' + f)]))
+const optTag = Object.keys(FLAGS).filter((f) => options[FLAGS[f]]).join('-')
 
 const SR = 48000, TICK = 0.02, BLOCK = SR * TICK // 960 frames per 20 ms tick
 const drive = (t) => {
@@ -97,7 +106,7 @@ if (recorded) {
 for (const name of names) {
   if (!Object.hasOwn(PROFILES, name)) { console.error('unknown profile ' + name); process.exit(2) }
   const settings = sanitise({ ...DEFAULTS, profile: name, mode: opt('mode', DEFAULTS.mode), car: opt('car', DEFAULTS.car), cabin: !outside })
-  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}${recorded ? '-recorded' : ''}${outside ? '-outside' : ''}.wav`
+  const file = `rev-${name}${sceneName === 'drive' ? '' : '-' + sceneName}${recorded ? '-recorded' : ''}${recorded && optTag ? '-' + optTag : ''}${outside ? '-outside' : ''}.wav`
   const out = names.length === 1 && opt('out') ? opt('out') : path.join(opt('out-dir', '.'), file)
   render(settings, out)
 }
@@ -113,10 +122,19 @@ if (recorded) {
   // decodes them itself).
   voice = new SampleVoice(SR)
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
-  voice.setSet({ loops: SAMPLE_SETS[settings.profile].loops.map((l) => {
-    const b = execFileSync('ffmpeg', ['-v', 'error', '-i', path.join(dir, l.file), '-ac', '1', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 26 })
-    const data = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length))
-    return { rpm: l.rpm, layer: l.layer, group: l.group, gain: l.gain, data: loopSlice(data, SR, l), sr: SR }
+  // As RevSound.loadSet: the loops the options call for, each decoded once,
+  // with every extra field passed through to the player.
+  const decoded = new Map()
+  const decode = (file) => {
+    if (!decoded.has(file)) {
+      const b = execFileSync('ffmpeg', ['-v', 'error', '-i', path.join(dir, file), '-ac', '1', '-ar', String(SR), '-f', 'f32le', '-'], { maxBuffer: 1 << 26 })
+      decoded.set(file, new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)))
+    }
+    return decoded.get(file)
+  }
+  voice.setSet({ options, loops: loopsFor(SAMPLE_SETS[settings.profile], options).map((l) => {
+    const { file, src, render, start, seconds, level, exact, ...rest } = l
+    return { ...rest, layer: l.layer || 'any', group: l.group || 'engine', gain: l.gain || 1, data: loopSlice(decode(l.file), SR, l), sr: SR }
   }) })
 } else {
   voice = new EngineVoice(SR, 0x5eed)
@@ -142,7 +160,7 @@ for (let i = 0; i < seconds / TICK; i++) {
   if (lift != null) engine.untouch(lift)
   const s = engine.step(ms, TICK)
   maxKmh = Math.max(maxKmh, v * 3.6); maxGear = Math.max(maxGear, s.gear)
-  voice.set({ rpm: s.rpm, load: s.load })
+  voice.set({ rpm: s.rpm, load: s.load, shifting: s.shifting, limiter: !!s.limiter, gear: s.gear })
   cabin.set({ load: s.load })
   // The browser renders in 128-frame quanta; do the same so filter updates
   // happen at the same rate.

@@ -105,6 +105,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-profiles.js` | The four cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A high shelf from 650 Hz (−11 dB on overrun and at idle, opening to −6 dB under full load) and a low-pass at 3.2 kHz, run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
+| `static/rev-live.js`, `rev-live-worker.js`, `rev-live-worklet.js`, `static/live/` | Live engine-sim (the "Engine: Live engine-sim" setting): engine-sim compiled to WebAssembly, run in a Web Worker, its dry output played through the loops' own impulse responses, EQ and sub layer with native nodes. Built by `scripts/engine-sim/wasm/build-wasm.sh`. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
 | `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
@@ -120,7 +121,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev.html` | The page for the dashboard, the Simulator, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
 | `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
-| `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin. |
+| `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin; `--dense --part --shots --long` turn on the recorded mix's options. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
 ### Safety rails
@@ -271,6 +272,113 @@ against outside; loudness within 0.6 dB, nothing clips):
 
 The V8's straight-pipe rasp (2.6–5.1 kHz) was the loudest top end of the
 four, and the cabin takes 12 dB off it.
+
+### Two ways to make the sound, and four extras (2026-11-25)
+
+The owner asked whether running the engine sound in real time would be
+more realistic. Partly: it would help in transitions (rev sweeps, part
+throttle, the limiter) and nothing would repeat, but not at a steady speed,
+since the loops already are engine-sim's own output; and the biggest limit,
+the GPS-driven input, stays. So both are now settings on `rev.html`'s Car
+sound card, to compare in the car: **Engine: Recorded mix** (the default)
+or **Live engine-sim**, and for the recorded mix four extras that each
+switch on and off alone. All off is the mix exactly as it was: none of the
+existing files was re-encoded, and every scene renders byte for byte as
+before.
+
+**Live engine-sim** (`static/rev-live*.js`, `static/live/`, built by
+`scripts/engine-sim/wasm/build-wasm.sh`). The car's browser runs engine-sim
+itself, compiled to WebAssembly (Emscripten 6.0.13 from the official emsdk,
+single-threaded, no Boost; 0.7 MB in all, engine-sim's MIT licence
+alongside). A Web Worker simulates about 120 ms ahead of the speakers. It
+holds the engine on engine-sim's dynamometer at the model's rpm with the
+throttle from the load, lets it idle on its own when parked, and lets it
+bounce off its own rev limiter. Its output is the dry synthesizer signal;
+the page applies the loops' own recipe with native nodes (the two impulse
+responses as ConvolverNodes, the EQ shelves, the low-passed sub layer and
+the 25 Hz rumble filter), since engine-sim's direct-form convolution would
+be half its cost. It then goes through the cabin like everything else. To
+play as loud as the loops, the worker runs that same chain on the dry
+signal and sets the level to what the recorded player measures at the same
+rpm, load and Exhaust setting (`levels.json`, `calibrate.mjs`): within 2 dB
+across idle, part and full load, overrun and the limiter.
+
+- **Speed is the open question.** On an Apple M4 it simulates at 2.3–2.9×
+  real time at Full quality and 4.7–5.4× at Half (native code: 3.0–3.4×).
+  The car's AMD Ryzen is perhaps half as fast per core: Full may be
+  marginal, 75% or Half likely keep up. The Quality setting runs the
+  simulation at that share of the script's rate (rougher, cheaper).
+- **It never crackles.** The card shows the measured speed and dropouts.
+  Below 0.98× for 3 s, or after 4 dropouts in 10 s, it stops simulating and
+  the recorded mix plays instead, with a note saying why.
+- **Known:** about 120 ms of buffer on top of the model's lag; at lower
+  quality the simulated idle settles at a slightly different rpm (the V8
+  678 against 690, the LFA 1,035 against 901 at Half); the limiter's
+  re-fire bangs touch full scale at volume 100%.
+
+**Twice the rev points** (`denseRpm`). A rev point midway between each pair
+of the car's own, at the geometric middle (to 50 rpm), held on-load and on
+overrun and heard both ways with its dry sub layer. The nearest loop is then
+never stretched more than about 1.15×, half as far as before, so the impulse
+responses' resonances slide half as far as the revs move. Its levels are on
+the car's own scale, each smoothed with the points either side. Where
+engine-sim has a real resonance (the F136 at cruise, the V8 near 5,950 rpm)
+the new point makes it heard, up to about 5 dB.
+
+**Light throttle** (`partThrottle`). A third layer between overrun and full
+throttle, held at every rev point where the engine makes 20 % of its
+full-throttle torque at that rpm, measured on engine-sim's dyno
+(`--fit-part`). engine-sim's throttle is far from linear: the LS makes no
+torque at 0.15 and 55 % at 0.3, and anything from about 0.3 up sounds like
+full throttle, so the layer is chosen by torque (throttles 0.07–0.34). The
+model's load is not a pedal: a steady cruise reads 0.02–0.08, a gentle pull
+0.15–0.3, a firm one 0.5 and up. So load −0.1 and below is overrun, 0 to
+0.12 is the light layer, and it reaches full throttle by 0.5, each step an
+equal-power crossfade. Cruising is 3–7 dB quieter than the old
+full-throttle-and-overrun mix. The idle is unchanged, and the light layer
+is never louder than full throttle at the same rpm.
+
+**Limiter and shifts** (`oneShots`), both rendered by engine-sim. *The
+limiter:* the engine free-revving at full throttle against engine-sim's own
+ignition-cut limiter, set to the profile's redline and cut length so it
+bounces in step with the rev meter, cut into a loop. It plays at its own
+pitch while the model is on the limiter and the throttle is pushing, and
+leaves about 0.2 s after a finger lifts. It is as loud as full throttle near
+the top, a few dB louder than before, when the bouncing load mostly played
+the overrun loops. *The shifts:* three upshifts per car across the range the
+gearbox shifts at under load. On the dyno at full throttle, the ignition is
+cut for 140 ms while the revs fall exactly as the model's gearbox drops them,
+then it fires again. When the model shifts up after a load of 0.25 or more,
+the nearest clip plays from 20 ms before its cut, pitched so its revs follow
+the model's, and fades back into the loops over 120 ms; both follow the
+level the loops are playing at. engine-sim has no afterfire model, so there
+is no overrun crackle.
+
+**Long loops** (`longLoops`). Every rev-point loop and the limiter 4 s long
+instead of 1.5 s (whole engine cycles, seamless as before), cut from 5 s
+holds. They replace the short ones when on, are exactly as loud (decoded RMS
+within 0.05 dB) and start where their short twins start. The idle loops were
+already 4.8–6.6 s.
+
+**What they cost.** All the extras' files together add 9.8 MiB across the
+four cars (2.2–2.9 MiB per car, at 40 kbit/s short and 36 kbit/s long).
+With everything on, a car downloads 1.8–2.3 MB and the worklet holds
+75–83 MB of loops (handed to it, not copied; only the set in use is kept);
+the player costs about 1.2 % of one core (the old one 0.7 %; it now skips
+the interpolation of every loop that is silent for a whole block).
+
+**Found on the way, not fixed:**
+
+- The engine and exhaust loops of one rev point are the same run, so two
+  loops pitched to one rpm share their firing harmonics, and where each
+  starts moves the level 2–4 dB (the GT3 on its top loop: −12.7 dB with
+  Exhaust at either end, −16.8 dB in the middle), with a 2–3 dB dip halfway
+  between points. Starting each pair in step would fix it, but would change
+  the existing sound.
+- The dry renders the sub layer is made from clip at `ES_GAIN` 0.0006 (the
+  V8's `on-3200` dry render peaks at full scale). The sub is low-passed at
+  100 Hz, which hides most of it; the live mode is calibrated from its own
+  renders instead.
 
 **The bass.** The owner found the first render thin. It was: the LS script's
 exhaust impulse response, `smooth_39`, is centred on 320–640 Hz, and left

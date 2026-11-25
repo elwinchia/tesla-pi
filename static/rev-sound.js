@@ -5,7 +5,7 @@
 // by the car's browser, so the Pi's CarPlay service never sees it.
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
-import { SAMPLE_SETS, hasRecording, loopSlice } from './rev-samples.js'
+import { SAMPLE_SETS, hasRecording, loopSlice, loopsFor } from './rev-samples.js'
 import { onLoadMix, IDLE_LOUDNESS } from './rev-sampler.js'
 import { DEFAULT_STYLE, styleKey } from './gauges/index.js'
 import {
@@ -24,8 +24,20 @@ export const DEFAULTS = Object.freeze({
   car: DEFAULT_CAR,
   exhaust: 0.5,        // 0 = heard from the engine, 1 = from the exhaust
   cabin: true,         // heard through the car's body (rev-cabin.js), as the driver hears it
+  // Where the sound comes from: 'recorded', the engine-sim loops (rev-samples.js),
+  // or 'live', engine-sim itself running in the browser (rev-live.js).
+  engineSim: 'recorded',
+  liveQuality: 1,      // live: the share of the engine script's simulation rate it runs at
+  // The recorded mix's optional extras, each on its own so they can be
+  // heard one at a time (rev-samples.js):
+  denseRpm: false,     // rev points every ~450 rpm instead of every ~900
+  partThrottle: false, // light-throttle layers between full throttle and overrun
+  oneShots: false,     // the rev limiter and gear-shift cuts, rendered by engine-sim
+  longLoops: false,    // 4 s loops instead of 1.5 s, so nothing repeats audibly
   gauge: DEFAULT_STYLE, // the dash's gauge style (static/gauges/index.js)
 })
+export const LIVE_QUALITIES = [1, 0.75, 0.5]
+export const RECORDED_OPTIONS = ['denseRpm', 'partThrottle', 'oneShots', 'longLoops']
 // Below this the car counts as stopped: the gearbox hands over to the free
 // revving engine, and the Rev control is allowed. ~4 km/h.
 export const STOPPED_MS = 1.0
@@ -69,6 +81,9 @@ export function sanitise(raw) {
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
   if (Number.isFinite(raw.exhaust)) s.exhaust = clamp(raw.exhaust, 0, 1)
   if (typeof raw.cabin === 'boolean') s.cabin = raw.cabin
+  if (raw.engineSim === 'recorded' || raw.engineSim === 'live') s.engineSim = raw.engineSim
+  if (LIVE_QUALITIES.includes(raw.liveQuality)) s.liveQuality = raw.liveQuality
+  for (const k of RECORDED_OPTIONS) if (typeof raw[k] === 'boolean') s[k] = raw[k]
   if (typeof raw.gauge === 'string') s.gauge = styleKey(raw.gauge)
   return s
 }
@@ -194,6 +209,9 @@ export class RevSound {
     this.clipReady = new Map()   // the same, once decoded
     this.clips = []              // the clip sources playing now
     this.crank = null            // the start clip under way: { t0, end, ... }
+    this.live = null             // engine-sim running live (rev-live.js), when chosen
+    this.liveFor = null          // 'car@quality' it was started for
+    this.liveNote = null         // why it is not playing, when it failed to start
     this.onVisibility = () => (document.hidden ? this.pause() : this.resume())
   }
 
@@ -208,10 +226,9 @@ export class RevSound {
     this.settings = next
     this.engine.configure(next)
     this.sim.car.setCar(CARS[next.car])
-    if (next.profile !== prev.profile) {
-      if (this.node) this.node.port.postMessage({ profile: this.engine.profile })
-      this.syncSound()
-    }
+    if (next.profile !== prev.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
+    if (next.profile !== prev.profile || RECORDED_OPTIONS.some((k) => next[k] !== prev[k])) this.syncSound()
+    else if (next.engineSim !== prev.engineSim || next.liveQuality !== prev.liveQuality) this.syncLive()
     return next
   }
 
@@ -371,6 +388,7 @@ export class RevSound {
     this.stopGps()
     document.removeEventListener('visibilitychange', this.onVisibility)
     if (this.node) this.node.port.postMessage({ params: { gain: 0 } })
+    if (this.live) this.live.set({ gain: 0 })
     const ctx = this.ctx
     let tail = 250 // let the gain glide to zero before suspending: no click
     if (ctx) {
@@ -424,8 +442,10 @@ export class RevSound {
     const car = this.settings.profile
     // Its start and stop, so they are ready when wanted.
     this.clip('start', car); this.clip('stop', car)
-    this.soundFor = car
     this.soundNote = null
+    // Live engine-sim, when chosen, starts alongside: the recorded loops
+    // play until it is running, and take over again if it cannot keep up.
+    this.syncLive()
     if (!hasRecording(car)) {
       this.node.port.postMessage({ samples: null })
       this.sound = 'synth'
@@ -433,14 +453,19 @@ export class RevSound {
     }
     this.node.port.postMessage({ samples: null })
     this.sound = 'loading'
+    const want = this.soundFor = car + ':' + this.optionsKey()
     try {
       const set = await this.loadSet(car)
-      if (this.soundFor !== car || !this.node) return // changed meanwhile
-      this.node.port.postMessage({ samples: set })
+      if (this.soundFor !== want || !this.node) return // changed meanwhile
+      // Handed over, not copied: the worklet keeps the only copy (up to
+      // ~80 MB with every option on), and the next sync decodes afresh from
+      // the browser's cache.
+      this.sampleCache.delete(want)
+      this.node.port.postMessage({ samples: set }, [...new Set(set.loops.map((l) => l.data.buffer))])
       this.sound = 'recorded'
     } catch (e) {
-      this.sampleCache.delete(car)
-      if (this.soundFor !== car) return
+      this.sampleCache.delete(car + ':' + this.optionsKey())
+      if (this.soundFor !== want) return
       this.sound = 'synth'
       this.soundNote = 'The recordings could not be loaded, so this is the synthesised sound. (' + (e && e.message ? e.message : e) + ')'
     }
@@ -449,8 +474,17 @@ export class RevSound {
   // Fetch and decode one car's loops, once. Each file carries a little of
   // its own wrap-around either side; loopSlice takes the exact loop, so the
   // codec's start and end never land in the seam.
+  // The recorded mix's options that are on, as a cache key.
+  options() { return Object.fromEntries(RECORDED_OPTIONS.map((k) => [k, this.settings[k]])) }
+  optionsKey() { return RECORDED_OPTIONS.filter((k) => this.settings[k]).join(',') }
+
   loadSet(car) {
-    if (!this.sampleCache.has(car)) {
+    const key = car + ':' + this.optionsKey()
+    if (!this.sampleCache.has(key)) {
+      // Only the set in use is kept decoded: with every option on one car's
+      // loops are ~80 MB of Float32, and each car and option set its own.
+      // Going back to an earlier one fetches it again (the browser's cache).
+      this.sampleCache.clear()
       const ctx = this.ctx
       // One fetch and decode per file: a file can serve both layers.
       const files = new Map()
@@ -463,13 +497,45 @@ export class RevSound {
         }
         return files.get(file)
       }
-      this.sampleCache.set(car, Promise.all(SAMPLE_SETS[car].loops.map(async (l) => {
+      // The loops the chosen options call for (loopsFor in rev-samples.js);
+      // the extra fields a loop carries (its throttle, a one-shot's kind)
+      // pass through to the player.
+      this.sampleCache.set(key, Promise.all(loopsFor(SAMPLE_SETS[car], this.options()).map(async (l) => {
         const buf = await decoded(l.file)
-        return { rpm: l.rpm, layer: l.layer || 'any', group: l.group || 'engine', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
-      })).then((loops) => ({ loops })))
+        const { file, src, render, start, seconds, level, exact, ...rest } = l
+        return { ...rest, layer: l.layer || 'any', group: l.group || 'engine', gain: l.gain || 1, data: loopSlice(buf.getChannelData(0), buf.sampleRate, l), sr: buf.sampleRate }
+      })).then((loops) => ({ loops, options: this.options() })))
     }
-    return this.sampleCache.get(car)
+    return this.sampleCache.get(key)
   }
+
+  // ── Live engine-sim (static/rev-live.js) ──
+  // Started when chosen and the audio is up, for the car and quality chosen;
+  // stopped otherwise. Loaded on demand: the recorded mix never fetches it.
+  // It plays into the worklet's input, so it goes through the cabin.
+  syncLive() {
+    const s = this.settings
+    const want = s.engineSim === 'live' && this.ctx ? s.profile + '@' + s.liveQuality : null
+    if (want === this.liveFor) return
+    this.liveFor = want
+    this.liveNote = null
+    if (this.live) { try { this.live.dispose() } catch {} this.live = null }
+    if (!want) return
+    import('./rev-live.js')
+      .then(async ({ LiveEngine }) => {
+        if (this.liveFor !== want) return
+        const live = new LiveEngine(this.ctx, this.node)
+        this.live = live
+        await live.load(s.profile, s.liveQuality)
+      })
+      .catch((e) => {
+        if (this.liveFor !== want) return
+        if (this.live) { try { this.live.dispose() } catch {} this.live = null }
+        this.liveNote = 'Live engine-sim could not start, so this is the recorded mix. (' + (e && e.message ? e.message : e) + ')'
+      })
+  }
+  // Live is heard only while it keeps up; otherwise the recorded loops are.
+  get livePlaying() { return !!(this.live && this.live.playing) }
 
   startGps() {
     if (this.watchId != null) return
@@ -518,7 +584,11 @@ export class RevSound {
     const s = this.engine.step(t, dt)
     if (this.node) {
       const v = this.settings.volume
-      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: v * v * this.loopsIn(t), exhaust: this.settings.exhaust, cabin: this.settings.cabin } })
+      const gain = v * v * this.loopsIn(t)
+      const live = this.livePlaying
+      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: live ? 0 : gain, exhaust: this.settings.exhaust, cabin: this.settings.cabin,
+        shifting: s.shifting, limiter: !!s.limiter, gear: s.gear } })
+      if (this.live) this.live.set({ rpm: s.rpm, load: s.load, gain, exhaust: this.settings.exhaust, idle: this.engine.profile.idle, stopped: s.stopped, limiter: !!s.limiter })
     }
     this.emit(t)
   }
@@ -527,7 +597,8 @@ export class RevSound {
     const st = this.crank ? { ...this.engine.state, rpm: this.crankRpm(t), cranking: true } : this.engine.state
     this.onState({ ...st, source: this.source, fixRate: this.rate.get(t),
       simSpeed: this.sim.car.v, running: this.running, error: this.error,
-      sound: this.sound, soundNote: this.soundNote,
+      sound: this.livePlaying ? 'live' : this.sound, soundNote: this.liveNote || this.soundNote,
+      live: this.live ? this.live.status() : null,
       redline: this.engine.profile.redline, idle: this.engine.profile.idle })
   }
 }

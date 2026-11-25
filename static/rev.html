@@ -182,6 +182,37 @@
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
       <p class="hint">Each car plays loops rendered with engine-sim, a physically modelled engine, at idle and nine rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
       <div class="credits" id="credits"></div>
+      <div class="row">
+        <label>Engine</label>
+        <div class="seg" id="engineSim">
+          <button type="button" data-es="recorded">Recorded mix</button>
+          <button type="button" data-es="live">Live engine-sim</button>
+        </div>
+      </div>
+      <div id="rec-opts">
+        <p class="hint">Extras for the recorded mix, each on its own so you can hear what it does. Off is the mix as it was. Each one loads more sound the first time.</p>
+        <div class="row"><label for="opt-denseRpm">Twice the rev points</label><button id="opt-denseRpm" type="button" data-opt="denseRpm">Off</button></div>
+        <p class="hint">A loop every ~450 rpm instead of ~900, so each is stretched less and the exhaust's resonances stop sliding with the revs.</p>
+        <div class="row"><label for="opt-partThrottle">Light throttle</label><button id="opt-partThrottle" type="button" data-opt="partThrottle">Off</button></div>
+        <p class="hint">Loops at part throttle between full throttle and lifting off, for cruising and gentle pulls.</p>
+        <div class="row"><label for="opt-oneShots">Limiter and shifts</label><button id="opt-oneShots" type="button" data-opt="oneShots">Off</button></div>
+        <p class="hint">The rev limiter cutting the ignition, and the cut of a gear change, rendered by engine-sim.</p>
+        <div class="row"><label for="opt-longLoops">Long loops</label><button id="opt-longLoops" type="button" data-opt="longLoops">Off</button></div>
+        <p class="hint">4 s loops instead of 1.5 s, so the sound never audibly repeats.</p>
+      </div>
+      <div id="live-opts" hidden>
+        <p class="hint">engine-sim's physics running in this browser as you drive: true part throttle, transitions and limiter, nothing looped. It needs a lot of processor. If it cannot keep up, the recorded mix plays instead and this says so.</p>
+        <div class="row">
+          <label>Quality</label>
+          <div class="seg" id="liveQuality">
+            <button type="button" data-q="1">Full</button>
+            <button type="button" data-q="0.75">75%</button>
+            <button type="button" data-q="0.5">Half</button>
+          </div>
+        </div>
+        <p class="hint">How finely it simulates: lower needs less processor and sounds a little rougher.</p>
+        <p class="hint" id="live-status">Starts with the engine.</p>
+      </div>
     </div>
 
     <div class="card span2">
@@ -363,6 +394,14 @@
     $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
     $('exhaust').value = Math.round(s.exhaust * 100)
+    for (const b of $('engineSim').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.es === s.engineSim))
+    for (const b of $('liveQuality').querySelectorAll('button')) b.setAttribute('aria-pressed', String(Number(b.dataset.q) === s.liveQuality))
+    $('rec-opts').hidden = s.engineSim !== 'recorded'
+    $('live-opts').hidden = s.engineSim !== 'live'
+    for (const b of document.querySelectorAll('[data-opt]')) {
+      const on = !!s[b.dataset.opt]
+      b.setAttribute('aria-pressed', String(on)); b.textContent = on ? 'On' : 'Off'; b.classList.toggle('on', on)
+    }
     for (const b of $('cabin').querySelectorAll('button')) b.setAttribute('aria-pressed', String((b.dataset.cabin === '1') === s.cabin))
     for (const [k, b] of Object.entries(cards)) b.setAttribute('aria-pressed', String(k === s.profile))
     for (const [k, b] of Object.entries(gcards)) b.setAttribute('aria-pressed', String(k === s.gauge))
@@ -388,6 +427,9 @@
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
   $('exhaust').oninput = (e) => rs.update({ exhaust: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
+  $('engineSim').onclick = (e) => { const b = e.target.closest('[data-es]'); if (b) { rs.update({ engineSim: b.dataset.es }); syncSettings() } }
+  $('liveQuality').onclick = (e) => { const b = e.target.closest('[data-q]'); if (b) { rs.update({ liveQuality: Number(b.dataset.q) }); syncSettings() } }
+  $('rec-opts').onclick = (e) => { const b = e.target.closest('[data-opt]'); if (b) { rs.update({ [b.dataset.opt]: !rs.settings[b.dataset.opt] }); syncSettings() } }
   $('cabin').onclick = (e) => { const b = e.target.closest('[data-cabin]'); if (b) { rs.update({ cabin: b.dataset.cabin === '1' }); syncSettings() } }
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
@@ -431,6 +473,18 @@
     if (performance.now() - simLastBusy > SIM_BACK_MS) { rs.setPedal(0); rs.setBrake(0); rs.setSource('gps') }
   }
 
+  // Live engine-sim's state (rev-live.js status()): how fast it simulates
+  // against real time (it needs 1x or more), and the dropouts so far.
+  function liveText(s) {
+    const l = s.live
+    if (!l) return rs.settings.engineSim === 'live' && s.running ? 'Starting\u2026' : 'Starts with the engine.'
+    const speed = Number.isFinite(l.speed) ? l.speed.toFixed(2) + '\u00d7 real time' : ''
+    if (l.state === 'loading') return 'Loading engine-sim\u2026'
+    if (l.state === 'running') return 'Live: simulating at ' + speed + (l.underruns ? ', ' + l.underruns + ' dropouts' : ', no dropouts') + '.'
+    if (l.state === 'too-slow') return 'This browser could not keep up (' + speed + '), so the recorded mix is playing. Try a lower quality.'
+    return l.note || 'Live engine-sim stopped.'
+  }
+
   function render(s) {
     fitTach()
 
@@ -438,7 +492,9 @@
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     simBack(s)
-    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
+    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
+    const ls = liveText(s)
+    if ($('live-status').textContent !== ls) $('live-status').textContent = ls
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
     const err = $('err')
     const msg = s.error || s.soundNote

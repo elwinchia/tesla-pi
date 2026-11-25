@@ -77,6 +77,61 @@ build and render.
 - **`stop <s> [warmup]`**: idle, then the ignition cut at 0.4 s and the run
   down to rest.
 
+## The options' renders
+
+`static/rev-samples.js` has four optional extras for the recorded mix
+(`denseRpm`, `partThrottle`, `oneShots`, `longLoops`; settings on `rev.html`).
+Their renders sit beside each car's own in `out/<name>/`, the three ways as
+ever, and none of them replaces a file the car's own loops came from:
+
+```bash
+cmake --build .cache/engine-sim/build               # after editing render.cpp
+node scripts/rev-samples.mjs --fit-part v8          # light throttle: the throttle for 20 % torque at each rpm (-> part.throttle)
+scripts/engine-sim/render-extras.sh v8              # everything below, one es-render per core
+node scripts/rev-samples.mjs --fit-limiter v8       # where the limiter loops are cut (-> limiter)
+node scripts/rev-samples.mjs --print-levels v8      # levels for all of them (-> dense, part, limiter, shifts)
+node scripts/rev-samples.mjs --car v8 --missing     # encode only the files not in static/sounds/ yet
+```
+
+| Render | What | For |
+|---|---|---|
+| `on-<rpm>-5s`, `off-<rpm>-5s` | the car's own points again, held 5 s | long loops |
+| `on-<mid>`, `off-<mid>` | a point midway (geometric, to 50 rpm) between each pair, 5 s | `denseRpm` |
+| `part-<rpm>` | every point at the throttle `--fit-part` found, 5 s | `partThrottle` |
+| `limiter` | 8 s of free revving at full throttle on the limiter (`-rpm.txt`: its rpm) | `oneShots` |
+| `shift-<from>` | an upshift from `<from>` to 0.7x it under full load (`-rpm.txt`) | `oneShots` |
+
+- **`ES_SYNC=1`** (all of these): the audio is rendered on the simulation's
+  thread. engine-sim's synthesizer thread and its combustion model share the C
+  library's one `rand()`, so with the thread the noise of a run depends on
+  timing. Holds longer than ~6 s came out a few LSB different from run to
+  run (3 s ones happened not to). With `ES_SYNC` every run is the same, and a
+  3 s hold is bit-identical to the threaded render the committed loops came
+  from, so nothing changes for them.
+- **Light throttle.** engine-sim's throttle is far from linear: the LS makes
+  no torque at 0.15 and 55 % at 0.3 (at 3,200 rpm), and the same throttle
+  gives less torque the higher the revs. So the part layer is not one
+  throttle. `--fit-part` holds every point at a grid of throttles
+  (`ES_TORQUE=1` prints the dyno's mean torque) and takes the throttle where
+  the engine makes 20 % of its full-throttle torque there, a cruise.
+- **`limiter <s> [warmup]`**: no dyno, the throttle wide open from the
+  start of the recording, against the ignition module's own rev limiter.
+  `ES_REV_LIMIT` / `ES_LIMITER_S` set it to the profile's redline and cut
+  length (the scripts' own are 6,800-9,500 rpm and 0.06-0.2 s), so the
+  sound bounces where and as the rev meter does. `--fit-limiter` cuts its
+  loops from a second after it first reaches the limiter, where the bouncing
+  and the dry sub layer repeat best over the crossfade (as `--fit-idle`).
+- **`shift <rpm> <to> <s> [warmup]`**: held at `<rpm>` at full throttle as
+  `hold` does; at `ES_SHIFT_AT` s into the recording the ignition is cut for
+  `ES_SHIFT_CUT` s while the dyno brings the revs down to `<to>` exactly as
+  the app's gearbox does (a 60 ms time constant during its 140 ms shift,
+  120 ms after), stepped per simulation step rather than per frame. Then it
+  fires again at `<to>`. The player pitches the clip so its revs follow the
+  model's (`clipRpm` in `rev-sampler.js`). engine-sim models no afterfire,
+  so the cut is just the engine going quiet and firing again.
+- `ES_RPM_LOG=<file>` writes the rpm every millisecond of the recording.
+  None of the diagnostics changes the WAV.
+
 ## The start and stop clips
 
 engine-sim models combustion and the exhaust, not the starter motor: its
