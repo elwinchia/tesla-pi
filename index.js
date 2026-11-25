@@ -29,6 +29,13 @@ const STATIC_DIR = path.join(__dirname, 'static')
 const PORT = 8080
 const CARLINKIT_VID = 0x1314
 const CARPLAY_CMD_DASHBOARD = 3 // iOS "exit CarPlay → host UI" signal (car-icon tap)
+// The dongle's view of the phone on its own Wi-Fi AP. 1010 is not the end of a
+// session: the phone has dropped off the AP and usually rejoins by itself
+// (2026-11-12 08:32: 1010, then 1009 20 s later, picture back 20 s after that).
+// The dongle also repeats 1010 every ~12 s while no phone is attached, so it
+// only means something while a phone is plugged.
+const CARPLAY_CMD_WIFI_UP = 1009
+const CARPLAY_CMD_WIFI_DOWN = 1010
 // Raw dongle command ids that node-carplay 4.1.0's CommandMapping omits. All
 // three were added upstream after our pinned version and never released, so we
 // send them through sendCommand() rather than sendKey().
@@ -189,6 +196,47 @@ const PHONE_LEASE_MS = Number(process.env.PHONE_LEASE_MS ?? 150000)
 // a pocket or a bag on the passenger seat, and refuses a weak link from a room
 // close to the car that does happen to answer.
 const PHONE_RSSI_MIN = Number(process.env.PHONE_RSSI_MIN ?? -8)
+// Right after the Pi powers up, the phone always reads weaker than that.
+// Measured 2026-11-02/03 over the first probes of a boot: a driver in
+// the seat read -11 and -25 and then reached the -8 bar 20 s later, and once (-11)
+// never reached it, so CarPlay waited for the browser. Phones walking past a car
+// that woke on its own read -14 and -19. So for the first few minutes of a boot
+// the bar drops to -12: it takes the seated reading and still refuses both
+// walk-pasts. Kernel uptime, not Date.now(): the clock jumps when the car's
+// browser sets it, and a service restart is not a boot.
+const PHONE_BOOT_RSSI_MIN = Number(process.env.PHONE_BOOT_RSSI_MIN ?? -12)
+const PHONE_BOOT_WINDOW_MS = Number(process.env.PHONE_BOOT_WINDOW_MS ?? 180000)
+// When the phone answers but too weakly, or answers with no RSSI at all (it
+// dropped the l2ping link), the radio cannot tell the driver's seat from a
+// room near the parked car: overnight 2026-11-03 the phone answered from the
+// house 162 times, with and without RSSI. The car can — `state closures`
+// carries isUserPresent (seat sensor), ~4 s over BLE. Every read takes one of
+// the car's three BLE slots for those seconds, so ask only after this many
+// weak answers in a row (a seated phone answers every probe; that night only
+// 12 of the 162 weak spells reached two) and no more often than the gap below.
+// Needs TESLA_BLE_HELPER; independent of the telemetry page's switch.
+const PHONE_CAR_CHECK = (process.env.PHONE_CAR_CHECK ?? 'on') !== 'off'
+const PHONE_CAR_CHECK_STREAK = Number(process.env.PHONE_CAR_CHECK_STREAK ?? 2)
+const PHONE_CAR_CHECK_GAP_MS = Number(process.env.PHONE_CAR_CHECK_GAP_MS ?? 300000)
+// The car only reports a user once they are seated, so the first check of a
+// spell often lands while the driver is still opening the door (2026-11-04
+// 09:55: "no", then the driver sat waiting 90 s behind the 5-minute gap).
+// Within one unbroken spell of answers, re-ask this soon, up to this many times.
+const PHONE_CAR_RECHECK_MS = Number(process.env.PHONE_CAR_RECHECK_MS ?? 40000)
+const PHONE_CAR_CHECKS_PER_SPELL = Number(process.env.PHONE_CAR_CHECKS_PER_SPELL ?? 3)
+// Sometimes the phone does not answer at all although it is in the seat: three
+// of four browser-started sessions on 2026-11-13/14 came after 1-3 minutes of
+// silent probes, and the adapter then reached the same phone within ~10 s. The
+// weak-answer checks above never fire for a silent phone, so also ask the car
+// while the phone is silent: often just after power-up (the car usually woke
+// because someone is getting in), slower after that so a car that stays awake
+// for hours is not read every minute. A "yes" here may be another driver with
+// no phone; that costs an adapter opened for nothing, closed again by the
+// usual idle stop once the car empties.
+const PHONE_CAR_SILENT = (process.env.PHONE_CAR_SILENT ?? 'on') !== 'off'
+const PHONE_CAR_SILENT_FAST_MS = Number(process.env.PHONE_CAR_SILENT_FAST_MS ?? 30000)
+const PHONE_CAR_SILENT_FAST_WINDOW_MS = Number(process.env.PHONE_CAR_SILENT_FAST_WINDOW_MS ?? 600000)
+const PHONE_CAR_SILENT_SLOW_MS = Number(process.env.PHONE_CAR_SILENT_SLOW_MS ?? 120000)
 // timesyncd creates this the first time it gets an NTP answer in a boot, and
 // /run is tmpfs so a power cut clears it. While it exists the box is on
 // internet time, which beats anything a page can report.
@@ -710,6 +758,10 @@ carplay.start = () => {
 }
 
 let plugged = false
+// Set when the plugged phone drops off the dongle's Wi-Fi (1010), cleared when
+// it is back (1009) or the session ends. Drives the page's "Reconnecting to
+// your iPhone" card, which tells the driver to wait instead of closing it.
+let phoneWifiDownAt = 0
 let carplayStarted = false
 let restartInFlight = false
 // A restart asked for while one is already running. This used to be dropped on
@@ -1321,6 +1373,7 @@ async function releaseDongle(reason) {
     const wasStarted = carplayStarted
     carplayStarted = false
     plugged = false
+    setPhoneWifiDown(false, 'release')
     phoneType = null
     // Only if there was a session to unwind. Closing a device we never opened
     // is a no-op that still costs a 250 ms settle on every idle timeout.
@@ -1330,6 +1383,18 @@ async function releaseDongle(reason) {
   } finally {
     releasing = false
   }
+}
+
+function setPhoneWifiDown(down, why) {
+  if (!!phoneWifiDownAt === down) return
+  if (down) {
+    phoneWifiDownAt = Date.now()
+    log('info', 'phone_wifi_lost', { why })
+  } else {
+    log('info', 'phone_wifi_back', { why, down_ms: Date.now() - phoneWifiDownAt })
+    phoneWifiDownAt = 0
+  }
+  broadcast(socketControl, JSON.stringify({ type: 'phoneWifi', down }), { compress: false })
 }
 
 // One place that answers "what is CarPlay doing", for /healthz and statusReq
@@ -1729,6 +1794,7 @@ const httpServer = http.createServer(async (req, res) => {
       const usedMb = Math.round((os.totalmem() - os.freemem()) / 1048576)
       sendJson(res, 200, {
         carplay: carplayPhase(),
+        phone_wifi_down: !!phoneWifiDownAt,
         carplay_on_demand: onDemand,
         carplay_demand: demandActive(),
         phone_near: phoneNearState(),
@@ -2398,6 +2464,7 @@ socketControl.on('connection', (ws) => {
       syncDemand(msg.value ? 'client_visible' : 'client_hidden')
     } else if (msg.type === 'statusReq') {
       ws.send(JSON.stringify({ type: 'statusReq', data: carplayPhase(), phone: phoneLabel() }))
+      if (phoneWifiDownAt) ws.send(JSON.stringify({ type: 'phoneWifi', down: true }))
     } else if (msg.type === 'nightMode') {
       applyNightMode(msg.value, 'client')
     } else if (msg.type === 'frameRate') {
@@ -3116,6 +3183,7 @@ carplay.onmessage = (ev) => {
       break
     case 'plugged':
       plugged = true
+      setPhoneWifiDown(false, 'plugged')
       pluggedAt = Date.now()
       framesAtPlug = videoFramesTotal
       broadcast(socketControl, JSON.stringify({ type: 'statusReq', data: 'plugged', phone: phoneLabel() }), { compress: false })
@@ -3140,6 +3208,7 @@ carplay.onmessage = (ev) => {
       break
     case 'unplugged': {
       plugged = false
+      setPhoneWifiDown(false, 'unplugged')
       // Name the failure that cost two hours to find by hand.
       //
       // Wireless CarPlay is two links: Bluetooth for control, then the phone has
@@ -3186,6 +3255,8 @@ carplay.onmessage = (ev) => {
         broadcast(socketControl, JSON.stringify({ type: 'goRoute', route: 'launcher' }), { compress: false })
       } else {
         log('debug', 'carplay_command', { value })
+        if (value === CARPLAY_CMD_WIFI_DOWN && plugged) setPhoneWifiDown(true, 'dongle')
+        else if (value === CARPLAY_CMD_WIFI_UP) setPhoneWifiDown(false, 'dongle')
       }
       break
     }
@@ -3285,6 +3356,9 @@ const phoneHelperPresent = () => fsSync.existsSync(PHONE_HELPER)
 const phone = {
   lastProbeAt: 0, lastPresent: null, lastRssi: null, lastMs: null,
   lastError: null, lastState: null, sightings: 0,
+  // Consecutive present-but-not-near answers, and the last car check, on the
+  // monotonic clock (the wall clock jumps when the car's browser sets it).
+  weakStreak: 0, spellChecks: 0, carCheckAt: null, carSaid: null,
 }
 let phoneTimer = null
 let phoneProbing = false
@@ -3299,13 +3373,64 @@ function learnPhoneMac(raw) {
   schedulePhoneProbe(0)
 }
 
+function inPhoneBootWindow() {
+  return os.uptime() * 1000 < PHONE_BOOT_WINDOW_MS
+}
+
+function phoneRssiMin() {
+  return inPhoneBootWindow() ? PHONE_BOOT_RSSI_MIN : PHONE_RSSI_MIN
+}
+
+function phoneCarCheckAvailable() {
+  return PHONE_CAR_CHECK && !!TESLA_BLE_HELPER
+}
+
+// Ask the car whether someone is in it. Returns true/false, or null when the
+// car could not be read (asleep, out of range, all three BLE slots taken).
+async function askCarUserPresent() {
+  phone.carCheckAt = performance.now()
+  phone.spellChecks++
+  const out = await readBleState('closures')
+  const present = out.ok ? out.data?.closuresState?.isUserPresent : undefined
+  phone.carSaid = typeof present === 'boolean' ? present : null
+  log(out.ok ? 'info' : 'warn', 'phone_car_check', {
+    user_present: phone.carSaid, ms: out.elapsedMs, cached: !!out.cached,
+    ...(out.ok ? {} : { error: String(out.error).slice(0, 160) }),
+  })
+  return phone.carSaid
+}
+
+function carCheckDue() {
+  // Just after power-up one weak answer is enough: the car usually woke because
+  // someone walked up to it, and a driver quick to the browser beat the
+  // two-answer wait (2026-11-05 12:39, 14 s). The overnight case this streak
+  // guards against is a car long awake, never one that just booted us.
+  const streak = inPhoneBootWindow() ? 1 : PHONE_CAR_CHECK_STREAK
+  if (phone.weakStreak < streak || !phoneCarCheckAvailable()) return false
+  if (phoneLeaseUntil > Date.now()) return false
+  if (phone.carCheckAt == null) return true
+  const since = performance.now() - phone.carCheckAt
+  if (phone.spellChecks === 0) return since >= PHONE_CAR_CHECK_GAP_MS
+  return phone.spellChecks < PHONE_CAR_CHECKS_PER_SPELL && since >= PHONE_CAR_RECHECK_MS
+}
+
+// For a phone that did not answer at all. Independent of the weak-answer spell
+// logic above: it shares only the car check's timestamp, so the two never ask
+// the car back to back.
+function silentCarCheckDue() {
+  if (!PHONE_CAR_SILENT || !phoneCarCheckAvailable()) return false
+  if (plugged || phoneLeaseUntil > Date.now()) return false
+  const every = os.uptime() * 1000 < PHONE_CAR_SILENT_FAST_WINDOW_MS ? PHONE_CAR_SILENT_FAST_MS : PHONE_CAR_SILENT_SLOW_MS
+  return phone.carCheckAt == null || performance.now() - phone.carCheckAt >= every
+}
+
 function phoneNearState() {
   const now = Date.now()
   return {
     enabled: phoneNear,
     available: phoneHelperPresent(),
     phone_known: !!phoneBtMac,
-    rssi_min: PHONE_RSSI_MIN,
+    rssi_min: phoneRssiMin(),
     lease_ms: Math.max(0, phoneLeaseUntil - now),
     last_probe_at: phone.lastProbeAt || null,
     last_present: phone.lastPresent,
@@ -3313,6 +3438,8 @@ function phoneNearState() {
     last_probe_ms: phone.lastMs,
     last_error: phone.lastError,
     sightings: phone.sightings,
+    car_check: phoneCarCheckAvailable(),
+    car_said_present: phone.carSaid,
   }
 }
 
@@ -3340,12 +3467,15 @@ async function applyPhoneNear(value) {
 }
 
 // One timer, re-armed after every probe, so probes never overlap and the
-// cadence follows the session: quick while CarPlay is down (that is when a
-// sighting is worth something), slow while it is up (only keeping the lease).
+// cadence follows the session: quick until the phone is in one (that is when a
+// sighting is worth something), slow while it is (only keeping the lease).
 function schedulePhoneProbe(ms) {
   if (phoneTimer) { clearTimeout(phoneTimer); phoneTimer = null }
   if (!phoneNear || shuttingDown) return
-  const wait = ms ?? (carplayStarted ? PHONE_POLL_ACTIVE_MS : PHONE_POLL_IDLE_MS)
+  // Slow only while the phone is actually in a session. The dongle stays open
+  // for IDLE_STOP_MS after the phone leaves, and polling at the active rate then
+  // cost a returning driver a 66 s wait (2026-11-04 11:09).
+  const wait = ms ?? (plugged ? PHONE_POLL_ACTIVE_MS : PHONE_POLL_IDLE_MS)
   phoneTimer = setTimeout(phoneTick, wait)
   phoneTimer.unref?.()
 }
@@ -3378,23 +3508,32 @@ async function phoneTick() {
     phone.lastPresent = !!r.present
     phone.lastRssi = typeof r.rssi === 'number' ? r.rssi : null
     phone.lastMs = typeof r.ms === 'number' ? r.ms : null
+    log('debug', 'phone_probe', { present: phone.lastPresent, rssi: phone.lastRssi, samples: r.samples, ms: phone.lastMs })
     // The threshold guards *starting* a session from indoors. Once the phone is
     // in one, any answer keeps it: as measured, a phone busy with
     // CarPlay reads several points weaker from the same seat (-4..-11 against
     // -1..-3 idle), so holding it to the start threshold would drop a session
     // the driver is sitting in. From indoors the phone does not answer at all,
     // so walking away still lets the lease lapse.
-    const near = r.present && (plugged || (phone.lastRssi != null && phone.lastRssi >= PHONE_RSSI_MIN))
+    // See PHONE_BOOT_RSSI_MIN for the looser bar just after power-up.
+    const rssiMin = phoneRssiMin()
+    let near = r.present && (plugged || (phone.lastRssi != null && phone.lastRssi >= rssiMin))
+    let via = 'rssi'
+    phone.weakStreak = r.present && !near ? phone.weakStreak + 1 : 0
+    if (phone.weakStreak === 0) phone.spellChecks = 0
+    if (carCheckDue() && await askCarUserPresent()) { near = true; via = 'car' }
+    else if (!r.present && silentCarCheckDue() && await askCarUserPresent()) { near = true; via = 'car_silent' }
     if (near) {
+      phone.weakStreak = 0
       phone.sightings++
       const wasHeld = phoneLeaseUntil > Date.now()
       phoneLeaseUntil = Date.now() + PHONE_LEASE_MS
-      notePhoneState('near', { rssi: phone.lastRssi, samples: r.samples, ms: phone.lastMs })
+      notePhoneState('near', { rssi: phone.lastRssi, samples: r.samples, ms: phone.lastMs, rssi_min: rssiMin, via })
       if (!wasHeld) syncDemand('phone_near')
     } else {
       // Not near: leave any lease to run out on its own. One missed probe must
       // not drop a session the driver is about to use.
-      if (r.present) notePhoneState('weak', { rssi: phone.lastRssi, samples: r.samples, rssi_min: PHONE_RSSI_MIN })
+      if (r.present) notePhoneState('weak', { rssi: phone.lastRssi, samples: r.samples, rssi_min: rssiMin })
       else notePhoneState('absent', { ms: phone.lastMs })
       if (phoneLeaseUntil && phoneLeaseUntil <= Date.now()) {
         phoneLeaseUntil = 0
@@ -3425,7 +3564,7 @@ if (onDemand) {
 // session.
 restartCarplay('boot')
 if (phoneNear) {
-  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, phone_known: !!phoneBtMac })
+  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, boot_rssi_min: PHONE_BOOT_RSSI_MIN, boot_window_ms: PHONE_BOOT_WINDOW_MS, car_check: phoneCarCheckAvailable(), car_check_streak: PHONE_CAR_CHECK_STREAK, car_check_gap_ms: PHONE_CAR_CHECK_GAP_MS, car_recheck_ms: PHONE_CAR_RECHECK_MS, car_checks_per_spell: PHONE_CAR_CHECKS_PER_SPELL, car_silent: PHONE_CAR_SILENT, car_silent_fast_ms: PHONE_CAR_SILENT_FAST_MS, car_silent_fast_window_ms: PHONE_CAR_SILENT_FAST_WINDOW_MS, car_silent_slow_ms: PHONE_CAR_SILENT_SLOW_MS, phone_known: !!phoneBtMac })
   schedulePhoneProbe(5000)
 }
 
