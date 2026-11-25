@@ -43,7 +43,7 @@ From [`telemetry-options.md`](telemetry-options.md):
 | BLE (`tesla-control`, monitor key) | `drive.speed`, `power`, `shiftState` | **~2.9 s per read**, and each read takes one of the car's **three** BLE slots | No. It is too slow, and the docs forbid polling it. |
 | Fleet API / HA `tesla_fleet` | the same, from the cloud | ~10 min, and frozen while asleep | No. Cloud values freeze at their last reading while the car sleeps, and a stale speed is worse than none. |
 | CAN (Tier 3) | real pedal position, torque, rpm | 10–100 Hz | It would be ideal, but it needs a harness, trim removal and a DBC to maintain. Not now. |
-| `DeviceMotionEvent` in the car's browser | acceleration, if any | — | **Not measured.** No motion sensor is documented for the car's browser, and WebGPU and Web Bluetooth were both missing when measured ([`tesla-browser-capabilities.md`](tesla-browser-capabilities.md)). It would be worth one line in a probe page. |
+| `DeviceMotionEvent` / Generic Sensor API in the car's browser | acceleration, if any | — | **Not measured yet.** No motion sensor is documented for the car's browser, and WebGPU and Web Bluetooth were both missing when measured ([`tesla-browser-capabilities.md`](tesla-browser-capabilities.md)). Since 2026-11-25 the main page's Status → Car → "Live, no Bluetooth" card has a **Motion sensor** row that tries both (`devicemotion`, and `LinearAccelerationSensor` or `Accelerometer` at 60 Hz) while the tab is open: "Yes: N per second" with the acceleration across the floor, or "None" and why. If it says yes, the engine could follow the pedal between GPS fixes. |
 
 The audio path is settled. The car's browser already plays Web Audio through
 the cabin speakers: RetroArch's audio and CarPlay's "Browser" audio mode both do

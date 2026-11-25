@@ -108,6 +108,14 @@ Verified against a stubbed geolocation feeding a constant 20 m/s with the real
 quirks present (sentinel accuracy, bogus timestamp): 233 m over 11.6 s, average
 72 km/h, climb 24 m from 12 x 2 m steps, fix rate 1.03/s from 12 fixes.
 
+The same card ("Live, no Bluetooth") has a **Motion sensor** row (2026-11-25):
+while the Car tab is open it listens for `devicemotion` and tries the Generic
+Sensor API (`LinearAccelerationSensor`, else `Accelerometer`, at 60 Hz), and
+shows the readings per second and the acceleration across the floor, or
+"None" with why (not offered, offered with no data, or the sensor's error).
+An accelerometer would let the engine sound follow the pedal between GPS
+fixes; see [`rev-sound.md`](rev-sound.md).
+
 Thresholds it judges against, both chosen for the gating use case: **≥0.5 Hz**
 (a gate should notice movement within a second or two) and **≤25 m median
 accuracy** (below that, a stationary fix wobbling once a second looks like

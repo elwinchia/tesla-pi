@@ -2667,6 +2667,7 @@
             <div class="cert-meta-row"><span class="k">Altitude</span><span class="v" id="t-alt">—</span></div>
             <div class="cert-meta-row"><span class="k">Position</span><span class="v mono" id="t-pos">—</span></div>
             <div class="cert-meta-row"><span class="k">Accuracy</span><span class="v" id="t-acc">—</span></div>
+            <div class="cert-meta-row"><span class="k">Motion sensor</span><span class="v" id="t-motion">—</span></div>
             <div class="cert-meta-row"><span class="k">Screen</span><span class="v" id="t-scheme">—</span></div>
             <div class="cert-meta-row"><span class="k">Hotspot</span><span class="v" id="t-apcli">—</span></div>
             <div class="cert-meta-row"><span class="k">Traffic</span><span class="v" id="t-apthru">—</span></div>
@@ -3681,6 +3682,7 @@
   }
   function startCarGps() {
     renderCarScheme();
+    startMotion();
     if (carGpsId != null) return;
     const aside = document.getElementById('gps-aside');
     if (!('geolocation' in navigator)) {
@@ -3770,6 +3772,7 @@
   }
 
   function stopCarGps() {
+    stopMotion();
     if (carGpsId == null) return;
     try { navigator.geolocation.clearWatch(carGpsId); } catch (e) {}
     carGpsId = null;
@@ -3780,6 +3783,81 @@
   {
     const b = document.getElementById('trip-reset');
     if (b) b.addEventListener('click', resetTrip);
+  }
+
+  // ── Motion sensor (a probe) ──────────────────────────────────────────────
+  // Whether the car's browser gives a page an accelerometer, and how often.
+  // GPS speed arrives about once a second, so the engine sound
+  // (static/rev-sound.js) hears the pedal 0.5-1.5 s late; an accelerometer
+  // would let it follow the pedal between fixes. A page can get one two
+  // ways: the devicemotion event, and the Generic Sensor API
+  // (LinearAccelerationSensor, else Accelerometer). Both are tried. Read only
+  // while the Car tab is on screen, like the GPS; nothing is sent anywhere.
+  const motion = { dm: [], dmEmpty: 0, dmLast: null, gs: [], gsLast: null, gsName: null, gsNote: null,
+    sensor: null, timer: null, since: 0 };
+  const MOTION_WINDOW_MS = 5000;
+  function onDeviceMotion(e) {
+    const a = e.acceleration && e.acceleration.x != null ? e.acceleration : null;
+    const g = e.accelerationIncludingGravity && e.accelerationIncludingGravity.x != null ? e.accelerationIncludingGravity : null;
+    // Chromium fires devicemotion with every field null when there is no
+    // sensor behind it: offered, but empty.
+    if (!a && !g) { motion.dmEmpty++; return; }
+    motion.dm.push(Date.now());
+    motion.dmLast = { v: a || g, gravity: !a };
+  }
+  function startMotion() {
+    if (motion.timer) return;
+    Object.assign(motion, { dm: [], dmEmpty: 0, dmLast: null, gs: [], gsLast: null, gsNote: null, since: Date.now() });
+    if (typeof DeviceMotionEvent !== 'undefined') window.addEventListener('devicemotion', onDeviceMotion);
+    const S = window.LinearAccelerationSensor || window.Accelerometer;
+    if (S) {
+      motion.gsName = window.LinearAccelerationSensor ? 'LinearAccelerationSensor' : 'Accelerometer';
+      try {
+        const sensor = new S({ frequency: 60 });
+        sensor.addEventListener('reading', () => {
+          motion.gs.push(Date.now());
+          motion.gsLast = { v: { x: sensor.x, y: sensor.y, z: sensor.z }, gravity: motion.gsName === 'Accelerometer' };
+        });
+        sensor.addEventListener('error', (e) => { motion.gsNote = (e.error && e.error.name) || 'error'; });
+        sensor.start();
+        motion.sensor = sensor;
+      } catch (e) { motion.gsNote = (e && e.name) || 'error'; }
+    }
+    motion.timer = setInterval(renderMotion, 1000);
+    renderMotion();
+  }
+  function stopMotion() {
+    if (!motion.timer) return;
+    clearInterval(motion.timer); motion.timer = null;
+    window.removeEventListener('devicemotion', onDeviceMotion);
+    if (motion.sensor) { try { motion.sensor.stop(); } catch (e) {} motion.sensor = null; }
+  }
+  function renderMotion() {
+    const now = Date.now();
+    // Readings per second over the trailing window, timed first to last.
+    const rate = (ts) => {
+      while (ts.length && now - ts[0] > MOTION_WINDOW_MS) ts.shift();
+      const n = ts.length, span = n > 1 ? (ts[n - 1] - ts[0]) / 1000 : 0;
+      return span > 0 ? (n - 1) / span : 0;
+    };
+    // The acceleration across the car's floor (x, y), in m/s^2; with
+    // gravity in it when the sensor gives only that.
+    const accel = (last) => {
+      const v = last.v;
+      return Math.hypot(v.x || 0, v.y || 0).toFixed(1) + ' m/s\u00b2' + (last.gravity ? ' with gravity' : '');
+    };
+    const dmRate = rate(motion.dm), gsRate = rate(motion.gs);
+    let text;
+    if (dmRate > 0) text = 'Yes: ' + dmRate.toFixed(0) + ' per second (devicemotion), ' + accel(motion.dmLast);
+    else if (gsRate > 0) text = 'Yes: ' + gsRate.toFixed(0) + ' per second (' + motion.gsName + '), ' + accel(motion.gsLast);
+    else if (now - motion.since < 3000) text = 'Checking\u2026';
+    else {
+      const dm = typeof DeviceMotionEvent === 'undefined' ? 'devicemotion not offered'
+        : motion.dmEmpty ? 'devicemotion offered, no data' : 'devicemotion offered, no readings';
+      const gs = !motion.gsName ? 'no sensor API' : motion.gsName + (motion.gsNote ? ': ' + motion.gsNote : ', no readings');
+      text = 'None (' + dm + '; ' + gs + ')';
+    }
+    setText('t-motion', text);
   }
 
   // ── Status tabs ──────────────────────────────────────────────────────────
