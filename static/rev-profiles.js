@@ -174,11 +174,34 @@ const f1 = {
   pulseMs: 0.5, bright: [3000, 6000], intake: [4200, 0.16], pops: 0.02, drive: 1.3, lope: 0.05,
 }
 
+// A single-spool turbojet (a 1950s-60s fighter's, about): no gears, the
+// spool's speed is the rpm, from a 67 % idle to 100 %. Its sound: our own
+// turbine render (scripts/rev-jet.mjs), engine-sim being pistons only.
+//   turbine   Gearbox.spool and FreeRev: no gears, the spool chases a demand
+//             over spoolUp / spoolDown s; cruise: the demand needed to hold
+//             ~120 km/h (more with speed, as drag)
+//   governor  held at the top instead of a limiter's bounce
+// The cylinders and banks only feed the fallback synthesiser: 48 evenly
+// spaced "firings" a cycle make a thin whine at the blade-pass pitch.
+const jet = {
+  name: 'Jet', style: 'Turbojet',
+  blurb: 'Our own turbojet: compressor whine and exhaust roar, spooling with the pedal, no gears.',
+  idle: 5000, redline: 7500, launch: 6000, revRise: 1400, revFall: 900, limiter: 50,
+  turbine: true, governor: true, spoolUp: 1.4, spoolDown: 2.0, cruise: 0.35,
+  gears: kmh(330),
+  cylinders: Array.from({ length: 48 }, (_, i) => ({ at: i / 48, bank: i % 2 })),
+  banks: [
+    [[180, 2.0, 0.6], [900, 3.0, 0.5], [2100, 6.0, 0.6], [4200, 8.0, 0.3]],
+    [[190, 2.0, 0.6], [950, 3.0, 0.5], [2200, 6.0, 0.6], [4400, 8.0, 0.3]],
+  ],
+  pulseMs: 0.2, bright: [2500, 5000], intake: [3000, 0.4], pops: 0, drive: 1.1, lope: 0,
+}
+
 // Each idle is the rpm its engine-sim idle actually runs at (--fit-idle in
 // scripts/rev-samples.mjs), so the idle loop plays at its own pitch.
 
 // The cars, in the picker's order. Each one's sound is engine-sim loops
 // (static/rev-samples.js); these numbers drive its gearbox and rev range,
 // and synthesise it only if the loops cannot be loaded.
-export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12, f1 }
+export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12, f1, jet }
 export const DEFAULT_PROFILE = 'v8'

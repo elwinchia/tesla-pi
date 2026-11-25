@@ -108,7 +108,8 @@ export function clusterInput(s) {
     running: !!s.running,
     rpm: s.running ? s.rpm : 0,
     kmh: (s.v || 0) * 3.6,
-    gear: !s.running ? '\u2013' : s.stopped ? 'N' : String(s.gear),
+    // A turbine (the jet) has no gears: D while it drives.
+    gear: !s.running ? '\u2013' : s.stopped ? 'N' : s.turbine ? 'D' : String(s.gear),
     source: s.sim ? 'SIM' : s.source === 'sim' ? 'TEST' : 'GPS',
     load: s.running ? s.load : 0,
     fixRate: s.fixRate || 0,

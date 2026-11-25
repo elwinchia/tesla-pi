@@ -61,6 +61,7 @@ function drive(profile, mode, speedAt, loadAt, seconds) {
 }
 
 for (const [name, p] of Object.entries(PROFILES)) {
+  if (p.turbine) continue // the jet: its own tests below
   test(`${name}: a full-throttle pull climbs the gears and never passes redline`, () => {
     const run = drive(p, 'normal', (t) => Math.min(kmh(220), t / 1000 * 4), () => 1, 20)
     let prev = 1
@@ -78,6 +79,42 @@ for (const [name, p] of Object.entries(PROFILES)) {
     const end = run[run.length - 1]
     assert.ok(end.gear >= p.gears.length - 2, `gear ${end.gear}`)
     assert.ok(end.rpm > p.idle && end.rpm < p.redline * 0.5, `rpm ${end.rpm}`)
+  })
+}
+
+// ── A turbine (the jet): no gears, a spool that lags the throttle ─────────
+for (const [name, p] of Object.entries(PROFILES).filter(([, x]) => x.turbine)) {
+  test(`${name}: full throttle spools up to the governor in a few seconds, never past it, in one gear`, () => {
+    const run = drive(p, 'normal', (t) => Math.min(kmh(220), t / 1000 * 4), () => 1, 12)
+    for (const s of run) { assert.equal(s.gear, 1); assert.ok(s.rpm <= p.redline + 1 && s.rpm >= p.idle - 1, `rpm ${s.rpm}`) }
+    const at = (sec) => run[Math.round(sec / 0.02)].rpm
+    assert.ok(at(0.5) < p.idle + 0.5 * (p.redline - p.idle), `not instant: ${at(0.5)} at 0.5 s`)
+    assert.ok(at(5) > p.redline * 0.97, `spooled: ${at(5)} at 5 s`)
+    // While it spools up the sound is on-load.
+    assert.ok(run.slice(5, 50).every((s) => s.load > 0.5))
+  })
+
+  test(`${name}: a cruise holds part power, more the faster, and lifting off spools down on overrun`, () => {
+    const cruise = (k) => drive(p, 'normal', () => kmh(k), () => 0.05, 15).at(-1).rpm
+    const c60 = cruise(60), c120 = cruise(120)
+    assert.ok(c60 > p.idle && c120 > c60 + 200 && c120 < p.redline * 0.95, `60: ${c60}, 120: ${c120}`)
+    const run = drive(p, 'normal', () => kmh(120), (t) => (t < 8000 ? 1 : -0.3), 14)
+    const lift = run.slice(Math.round(8.1 / 0.02), Math.round(9.5 / 0.02))
+    assert.ok(lift.every((s) => s.load < 0), 'spooling down reads as overrun')
+    assert.ok(run.at(-1).rpm < run[Math.round(8 / 0.02)].rpm - 500)
+  })
+
+  test(`${name}: parked, the throttle spools it to the governor, which holds it there without a limiter's cut`, () => {
+    const fr = new FreeRev(p)
+    let s
+    for (let i = 0; i < 300; i++) s = fr.step(1, 0.02)
+    assert.equal(s.rpm, p.redline)
+    assert.equal(fr.onLimiter, false)
+    // A finger is followed with the spool's lag, not at once.
+    const f = new FreeRev(p)
+    f.hold(p.redline)
+    for (let i = 0; i < 10; i++) s = f.step(0, 0.02)
+    assert.ok(s.rpm < p.idle + 0.3 * (p.redline - p.idle), `${s.rpm} after 0.2 s`)
   })
 }
 

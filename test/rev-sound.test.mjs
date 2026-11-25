@@ -175,3 +175,18 @@ test('every car sound can be chosen and is remembered', () => {
     assert.equal(loadSettings(st).profile, k)
   }
 })
+
+test('the jet\'s start: the rev meter follows the starter, the light-off and the spool-up to idle', async () => {
+  const { RevSound } = await import('../static/rev-sound.js')
+  const { SAMPLE_SETS } = await import('../static/rev-samples.js')
+  const p = PROFILES.jet, os = SAMPLE_SETS.jet.oneshots
+  const me = { crank: { t0: 0, c: { ...os.start, crankRpm: os.crankRpm } }, engine: { profile: p } }
+  const at = (s) => RevSound.prototype.crankRpm.call(me, s * 1000)
+  assert.equal(at(0.1), 0)
+  let prev = 0
+  for (let s = 0.2; s < os.start.seconds; s += 0.05) { const r = at(s); assert.ok(r >= prev - 1e-6, `falls at ${s.toFixed(2)} s`); prev = r }
+  assert.ok(at(os.start.catch - 0.01) < os.crankRpm && at(os.start.catch - 0.01) > 0.8 * os.crankRpm, 'on the starter at the light-off')
+  assert.ok(Math.abs(at(os.start.catch + os.start.spool) - p.idle) < 1, 'at idle once spooled')
+  // Not a piston engine's jump to a flare: still under halfway a second after the light-off.
+  assert.ok(at(os.start.catch + 0.25) < os.crankRpm + 0.5 * (p.idle - os.crankRpm))
+})

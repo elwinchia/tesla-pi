@@ -24,7 +24,8 @@ test('the shipped files: module, data bundle, impulse responses, licence, small'
   assert.ok(total < 1.2e6, `static/live/ is ${total} bytes`)
   assert.match(read('LICENSE-engine-sim.txt').toString(), /MIT[\s\S]*AngeTheGreat[\s\S]*Permission is hereby granted/)
   // Every car's script is in the bundle, with what it imports, and only .mr files.
-  for (const car of Object.keys(SAMPLE_SETS)) assert.ok(data.files[data.scripts[car]], car)
+  // (The jet is our own render, not engine-sim: no live mode, no script.)
+  for (const [car, set] of Object.entries(SAMPLE_SETS)) assert.equal(!!data.files[data.scripts[car]], set.kind === 'engine-sim', car)
   assert.ok(Object.keys(data.files).every((f) => f.endsWith('.mr')))
   // A 16-bit mono response, cut to at most engine-sim's 10,000 taps.
   for (const g of ['engine', 'exhaust']) {
@@ -36,6 +37,7 @@ test('the shipped files: module, data bundle, impulse responses, licence, small'
 
 test('levels: every car, every quality, every rev point of its recorded set', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+    if (set.kind !== 'engine-sim') { assert.equal(levelsFor(levels, car, 1), null, `${car} is not live`); continue }
     const own = loopsFor(set, {})
     const rpms = [...new Set(own.map((l) => l.rpm))].sort((a, b) => a - b)
     for (const q of [1, 0.75, 0.5]) {

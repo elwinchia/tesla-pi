@@ -477,6 +477,8 @@
   // against real time (it needs 1x or more), and the dropouts so far.
   function liveText(s) {
     const l = s.live
+    // engine-sim simulates piston engines only (rev-sound.js syncLive).
+    if (PROFILES[rs.settings.profile].turbine) return 'Not for the ' + PROFILES[rs.settings.profile].name + ': engine-sim simulates piston engines only, so it plays its rendered loops.'
     if (!l) return rs.settings.engineSim === 'live' && s.running ? 'Starting\u2026' : 'Starts with the engine.'
     const speed = Number.isFinite(l.speed) ? l.speed.toFixed(2) + '\u00d7 real time' : ''
     if (l.state === 'loading') return 'Loading engine-sim\u2026'
@@ -492,7 +494,7 @@
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     simBack(s)
-    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? 'engine-sim' : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
+    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? (PROFILES[rs.settings.profile].turbine ? 'our turbine render' : 'engine-sim') : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
     const ls = liveText(s)
     if ($('live-status').textContent !== ls) $('live-status').textContent = ls
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap

@@ -34,7 +34,10 @@ function add(rel, text) {
     add(hit, fs.readFileSync(path.join(src, hit), 'utf8'))
   }
 }
+// engine-sim's cars only (the jet is our own render, pistons being all
+// engine-sim simulates).
 for (const [car, set] of Object.entries(SAMPLE_SETS)) {
+  if (set.kind !== 'engine-sim') continue
   const rel = 'assets/' + path.basename(set.script)
   add(rel, fs.readFileSync(path.join(ROOT, set.script), 'utf8'))
   scripts[car] = rel
@@ -67,7 +70,7 @@ function writeWav16(file, x, rate) {
   h.write('data', 36); h.writeUInt32LE(pcm.length, 40)
   fs.writeFileSync(file, Buffer.concat([h, pcm]))
 }
-const irs = new Set(Object.values(SAMPLE_SETS).map((s) => JSON.stringify(s.ir)))
+const irs = new Set(Object.values(SAMPLE_SETS).filter((s) => s.ir).map((s) => JSON.stringify(s.ir)))
 if (irs.size !== 1) throw new Error('the cars use different impulse responses; ship each')
 for (const [group, rel] of Object.entries(JSON.parse([...irs][0]))) {
   const { x, rate } = readWav16(path.join(src, rel)) // rel: es/sound-library/...

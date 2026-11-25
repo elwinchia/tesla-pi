@@ -154,7 +154,7 @@ if (args[0] === '--targets') {
   const entry = await measure(args[1], factory, wasm, data, irs)
   process.stdout.write('\n@@' + JSON.stringify(entry) + '\n')
 } else {
-  const cars = args.length ? args : Object.keys(SAMPLE_SETS)
+  const cars = args.length ? args : Object.keys(SAMPLE_SETS).filter((k) => SAMPLE_SETS[k].kind === 'engine-sim')
   const file = path.join(LIVE, 'levels.json')
   const levels = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
   const { execFile } = await import('node:child_process')

@@ -154,6 +154,7 @@ export class Gearbox {
   // upshift (the ignition cut that makes the "bwaap" between gears).
   step(t, v, load, dt) {
     const p = this.p, m = this.mode
+    if (p.turbine) return this.spool(v, load, dt)
     const pos = Math.max(0, load)
     const upAt = p.redline * lerp(m.upLow, m.upHigh, pos)
     const downAt = p.redline * m.down
@@ -190,6 +191,24 @@ export class Gearbox {
     const shifting = t < this.shiftUntil
     const outLoad = shifting && this.shiftDir > 0 ? Math.min(load, -0.15) : load
     return { rpm: this.rpm, gear: this.gear, load: outLoad, shifting }
+  }
+
+  // A turbine (the jet) has no gears: the spool chases a demand, set by the
+  // throttle (the load) or by what it takes to hold the speed, whichever
+  // is more, and gets there slowly (spoolUp / spoolDown s). The sound's
+  // load is pulling while it spools up or is held at power, lifting while
+  // it spools down.
+  spool(v, load, dt) {
+    const p = this.p, pos = Math.max(0, load)
+    const hold = clamp(p.cruise * (v / 33) ** 2, 0, 0.6) // ~0.35 at 120 km/h
+    const demand = clamp(Math.max(pos, hold), 0, 1)
+    const target = p.idle + (p.redline - p.idle) * demand
+    const tau = target > this.rpm ? p.spoolUp : p.spoolDown
+    this.rpm += (target - this.rpm) * (1 - Math.exp(-dt / tau))
+    this.gear = 1
+    const gap = (target - this.rpm) / (p.redline - p.idle)
+    const outLoad = gap < -0.05 ? clamp(gap * 3, -1, -0.1) : load < 0 ? load : clamp(Math.max(demand, gap * 3), 0, 1)
+    return { rpm: this.rpm, gear: 1, load: outLoad, shifting: false }
   }
 
   shift(t, dir) {
@@ -239,7 +258,9 @@ export class FreeRev {
     const before = this.rpm
     let load
     if (this.target != null && this.cut <= 0) {
-      this.rpm += (this.target - this.rpm) * (1 - Math.exp(-dt / TOUCH_TAU))
+      // A turbine spools to the finger, slowly; an engine is there at once.
+      const tau = p.turbine ? (this.target > this.rpm ? p.spoolUp : p.spoolDown) : TOUCH_TAU
+      this.rpm += (this.target - this.rpm) * (1 - Math.exp(-dt / tau))
       // What a throttle would be doing to move the revs like that: rising
       // is load, holding needs a little, chasing a finger down is overrun.
       const rate = (this.rpm - before) / dt
@@ -250,7 +271,8 @@ export class FreeRev {
       this.rpm += (on * p.revRise - (1 - on) * p.revFall) * dt
       load = on > 0 ? on : (this.rpm > p.idle * 1.3 ? -0.6 : 0)
     }
-    if (this.rpm >= p.redline) { this.rpm = p.redline; this.cut = (p.limiter || 70) / 1000; this.sinceCut = 0 }
+    // A governor holds a turbine at the top; an engine bounces off its limiter.
+    if (this.rpm >= p.redline) { this.rpm = p.redline; if (!p.governor) { this.cut = (p.limiter || 70) / 1000; this.sinceCut = 0 } }
     if (this.rpm < p.idle) this.rpm = p.idle
     if (this.blip && this.rpm >= this.reach()) this.release()
     return { rpm: this.rpm, gear: 0, load, shifting: false }

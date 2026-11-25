@@ -19,6 +19,8 @@ export const ALLOWED_LICENCES = {
   // The renderer's licence. The loops are our own output; engine-sim is
   // credited anyway.
   'MIT': { url: 'https://github.com/ange-yaghi/engine-sim/blob/master/LICENSE', attribution: true },
+  // This repository's own licence, for sound we make ourselves (the jet).
+  'BSD-3-Clause': { url: 'https://opensource.org/license/bsd-3-clause', attribution: false },
 }
 
 // One entry per source. Every car is engine-sim now (the Freesound
@@ -27,6 +29,13 @@ export const ALLOWED_LICENCES = {
 // that sound's own page (its 128 kbit/s MP3 preview), and `fetched`, when it
 // was downloaded, and the tests hold it to ALLOWED_LICENCES.
 export const CREDITS = {
+  jetsim: {
+    kind: 'own',
+    title: 'rev-jet', author: 'this project',
+    script: 'scripts/rev-jet.mjs',
+    licence: 'BSD-3-Clause', licenceUrl: 'https://opensource.org/license/bsd-3-clause',
+    recording: 'Synthesised offline by our own turbojet model (scripts/rev-jet.mjs), since engine-sim models piston engines only: compressor blade-pass and turbine tones, the shaft-order "buzz-saw" near full power, broadband jet roar rising steeply with the spool, combustion rumble and crackle, heard from the intake (the engine group) and from behind (the exhaust group), at each spool speed on-load, at part power and spooling down; and its start (an air starter, the light-off, the spool-up) and stop. Rendered into the files engine-sim would render and cut, levelled and encoded by scripts/rev-samples.mjs like them.',
+  },
   enginesim: {
     kind: 'render',
     title: 'engine-sim', author: 'AngeTheGreat',
@@ -187,10 +196,14 @@ function withPhases(own, extra) {
 
 // One car's set. The options' loops are made only where their levels have
 // been filled in (`--print-levels`), so a half-built set still plays.
-function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, dense, part, limiter, shifts, idleThrottle, catchThrottle, smooth }) {
+// kind / src / eq / subLevel / stopSeconds: the jet ('turbine', 'jetsim')
+// is our own render played the same way; it keeps its bass as made
+// (a smaller sub layer, no low shelf) and winds down for longer.
+function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, dense, part, limiter, shifts, idleThrottle, catchThrottle, smooth,
+  kind = 'engine-sim', src = 'enginesim', eq = EQ, subLevel = 0.7, stopSeconds = 1.6 }) {
   const tag = (g) => (g === 'exhaust' ? 'ex' : 'es')
   const loop = (group, rpm, layer, level, render) => ({
-    file: `${car}-${tag(group)}-${render}.ogg`, src: 'enginesim', group, render,
+    file: `${car}-${tag(group)}-${render}.ogg`, src, group, render,
     start: 0.4, seconds: 1.5, rpm, layer, level,
   })
   const idleLoop = (group, layer, level) => ({ ...loop(group, idle.rpm, layer, level, 'idle'), start: idle.start, seconds: idle.seconds[group], exact: true })
@@ -233,12 +246,12 @@ function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, 
   }
   return {
     // optBitrate / longBitrate: the options' short and long loops, lower than
-    // the set's own (64k) to keep them in budget (~22 MB for all nine cars).
-    kind: 'engine-sim', bitrate: '64k', optBitrate: '40k', longBitrate: '36k', car, script, idleThrottle, catchThrottle, smooth,
+    // the set's own (64k) to keep them in budget (~25 MB for all ten).
+    kind, bitrate: '64k', optBitrate: '40k', longBitrate: '36k', car, script, idleThrottle, catchThrottle, smooth,
     points: engine[1].map(([rpm]) => rpm),
     renders: { engine: renders, exhaust: `${renders}-exhaust` },
-    ir: IR, eq: EQ,
-    sub: { renders: `${renders}-dry`, lowpass: 100, level: 0.7 },
+    ir: kind === 'engine-sim' ? IR : null, eq,
+    sub: { renders: `${renders}-dry`, lowpass: 100, level: subLevel },
     // partThrottle: the torque share and the throttle found for each rpm.
     part: part ? { torque: part.torque, throttle: part.throttle } : null,
     // oneShots: where each group's limiter loop is cut (`--fit-limiter`).
@@ -246,8 +259,8 @@ function engineSim({ car, renders, script, idle, engine, exhaust, crank, start, 
     loops: withPhases([...group('engine', engine), ...group('exhaust', exhaust)], [...extras('engine', engine), ...extras('exhaust', exhaust)]),
     oneshots: {
       crankRpm: crank,
-      start: { seconds: 5.5, catch: start.catch, flare: start.flare, engine: `${car}-es-start.ogg`, exhaust: `${car}-ex-start.ogg` },
-      stop: { seconds: 1.6, engine: `${car}-es-stop.ogg`, exhaust: `${car}-ex-stop.ogg` },
+      start: { seconds: 5.5, ...start, engine: `${car}-es-start.ogg`, exhaust: `${car}-ex-start.ogg` },
+      stop: { seconds: stopSeconds, engine: `${car}-es-stop.ogg`, exhaust: `${car}-ex-stop.ogg` },
     },
   }
 }
@@ -505,6 +518,26 @@ export const SAMPLE_SETS = {
     engine: [0.377, [[4900, 0.629, 0.209], [6300, 0.736, 0.234], [8000, 0.849, 0.261], [10000, 0.988, 0.299], [12300, 1, 0.31], [14800, 0.907, 0.334], [16800, 0.855, 0.365]]],
     exhaust: [0.475, [[4900, 0.792, 0.239], [6300, 0.895, 0.27], [8000, 1, 0.313], [10000, 0.919, 0.323], [12300, 0.856, 0.34], [14800, 0.858, 0.377], [16800, 0.809, 0.378]]],
   }),
+  // Turbojet: our own render (scripts/rev-jet.mjs), engine-sim being
+  // pistons only. start.spool: the spool-up after the light-off (s), which
+  // the rev meter follows (crankRpm in rev-sound.js).
+  jet: engineSim({
+    dense: {
+      engine: [[5450, 0.735, 0.736], [5800, 0.77, 0.766], [6150, 0.817, 0.81], [6500, 0.871, 0.861], [6850, 0.926, 0.913], [7200, 0.984, 0.967]],
+      exhaust: [[5450, 0.575, 0.474], [5800, 0.624, 0.499], [6150, 0.696, 0.532], [6500, 0.781, 0.573], [6850, 0.88, 0.627], [7200, 0.967, 0.675]],
+    },
+    part: {
+      torque: 0.45,
+      throttle: [],
+      engine: [[5300, 0.728], [5450, 0.736], [5650, 0.747], [5800, 0.766], [6000, 0.789], [6150, 0.812], [6350, 0.837], [6500, 0.861], [6700, 0.891], [6850, 0.92], [7050, 0.951], [7200, 0.967], [7400, 0.983]],
+      exhaust: [[5300, 0.491], [5450, 0.502], [5650, 0.512], [5800, 0.533], [6000, 0.553], [6150, 0.577], [6350, 0.601], [6500, 0.627], [6700, 0.66], [6850, 0.695], [7050, 0.735], [7200, 0.756], [7400, 0.78]],
+    },
+    kind: 'turbine', src: 'jetsim', eq: [{ type: 'lowshelf', hz: 90, db: 3 }], subLevel: 0.35, stopSeconds: 3.5,
+    smooth: 'combined',
+    car: 'jet', renders: 'jet', script: 'scripts/rev-jet.mjs', idle: { rpm: 5000, start: 1, seconds: { engine: 5.5, exhaust: 5.5 } }, crank: 1500, start: { catch: 1.8, flare: 5000, spool: 2.8 },
+    engine: [0.435, [[5300, 0.725, 0.728], [5650, 0.746, 0.747], [6000, 0.793, 0.788], [6350, 0.842, 0.836], [6700, 0.901, 0.884], [7050, 0.965, 0.951], [7400, 1, 0.983]]],
+    exhaust: [0.336, [[5300, 0.56, 0.467], [5650, 0.591, 0.482], [6000, 0.66, 0.515], [6350, 0.737, 0.552], [6700, 0.829, 0.596], [7050, 0.938, 0.66], [7400, 1, 0.694]]],
+  }),
 }
 
 // Each file holds the loop with PAD_SECONDS of its own wrap-around before
@@ -542,7 +575,7 @@ export function filesOf(set) {
 
 export const hasRecording = (car) => Object.hasOwn(SAMPLE_SETS, car)
 // 'engine-sim', 'recorded' or 'synth': what the car picker shows.
-export const soundKind = (car) => (!hasRecording(car) ? 'synth' : SAMPLE_SETS[car].kind === 'engine-sim' ? 'engine-sim' : 'recorded')
+export const soundKind = (car) => (!hasRecording(car) ? 'synth' : SAMPLE_SETS[car].kind === 'engine-sim' ? 'engine-sim' : SAMPLE_SETS[car].kind === 'turbine' ? 'own' : 'recorded')
 
 // The credits for one car, in the order its sources are listed.
 export function creditsFor(car) {
@@ -554,5 +587,6 @@ export function creditsFor(car) {
 // "Title" by author, licence: the line shown under a recorded car.
 export function creditLine(c) {
   if (c.kind === 'render') return `rendered with ${c.title} by ${c.author}, ${c.licence}`
+  if (c.kind === 'own') return `synthesised by ${c.author}'s own ${c.title} (${c.script}), ${c.licence}`
   return `“${c.title}” by ${c.author} (Freesound), ${c.licence}`
 }

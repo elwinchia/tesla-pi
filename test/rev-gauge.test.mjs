@@ -200,6 +200,8 @@ test('the cluster shows the engine state the same way on both pages', async () =
     { running: false, rpm: 0, kmh: 0, gear: '–', source: 'GPS', load: 0, fixRate: 0, stale: false })
   const moving = clusterInput({ running: true, rpm: 2500, v: 10, gear: 3, stopped: false, source: 'gps', stale: false, load: 0.4, fixRate: 1 })
   assert.equal(moving.gear, '3'); assert.equal(moving.kmh, 36); assert.equal(moving.rpm, 2500)
+  // The jet has no gears: D while it drives, N parked as ever.
+  assert.equal(clusterInput({ running: true, rpm: 6000, v: 10, gear: 1, stopped: false, turbine: true, source: 'gps', stale: false }).gear, 'D')
   assert.equal(clusterInput({ running: true, stopped: true, sim: true, rpm: 4000, v: 0, source: 'gps', stale: true }).gear, 'N')
   assert.equal(clusterInput({ running: true, stopped: true, sim: true, source: 'gps', stale: true }).source, 'SIM')
   assert.equal(clusterInput({ running: true, source: 'gps', stale: true }).stale, true, 'no GPS yet shows dashes')

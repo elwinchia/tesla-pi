@@ -375,6 +375,14 @@ export class RevSound {
     const { c, t0 } = this.crank
     const u = (t - t0) / 1000, idle = this.engine.profile.idle
     if (u < 0.15) return 0
+    // A turbine (start.spool): the starter spools it up, it lights off,
+    // and it accelerates to idle over `spool` s (scripts/rev-jet.mjs).
+    if (c.spool) {
+      if (u < c.catch) return c.crankRpm * (1 - Math.exp(-(u - 0.15) / 0.6))
+      const k = Math.min(1, (u - c.catch) / c.spool), sm = k * k * (3 - 2 * k)
+      const from = c.crankRpm * (1 - Math.exp(-(c.catch - 0.15) / 0.6))
+      return from + (idle - from) * sm
+    }
     if (u < c.catch) return c.crankRpm
     if (u < c.catch + 0.25) return c.crankRpm + (c.flare - c.crankRpm) * ((u - c.catch) / 0.25)
     return idle + (c.flare - idle) * Math.exp(-(u - c.catch - 0.25) / 0.7)
@@ -521,6 +529,12 @@ export class RevSound {
     this.liveNote = null
     if (this.live) { try { this.live.dispose() } catch {} this.live = null }
     if (!want) return
+    // engine-sim simulates piston engines only: the jet always plays its
+    // own rendered loops.
+    if (SAMPLE_SETS[s.profile]?.kind !== 'engine-sim') {
+      this.liveNote = 'Live engine-sim simulates piston engines only, so the ' + this.engine.profile.name + ' plays its rendered loops.'
+      return
+    }
     import('./rev-live.js')
       .then(async ({ LiveEngine }) => {
         if (this.liveFor !== want) return
@@ -601,6 +615,6 @@ export class RevSound {
       simSpeed: this.sim.car.v, running: this.running, error: this.error,
       sound: this.livePlaying ? 'live' : this.sound, soundNote: this.liveNote || this.soundNote,
       live: this.live ? this.live.status() : null,
-      redline: this.engine.profile.redline, idle: this.engine.profile.idle })
+      redline: this.engine.profile.redline, idle: this.engine.profile.idle, turbine: !!this.engine.profile.turbine })
   }
 }

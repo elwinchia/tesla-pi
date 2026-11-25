@@ -162,7 +162,7 @@ function wav(file, x) {
 // Ogg Opus, mono, with the credit in its comment.
 function encode(tmp, dest, bitrate, src) {
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-c:a', 'libopus', '-b:a', bitrate, '-ac', '1', '-ar', String(SR),
-    '-map_metadata', '-1', '-metadata', `comment=${CREDITS[src].title} by ${CREDITS[src].author}, ${CREDITS[src].licence}, ${CREDITS[src].url}`, dest])
+    '-map_metadata', '-1', '-metadata', `comment=${CREDITS[src].title} by ${CREDITS[src].author}, ${CREDITS[src].licence}, ${CREDITS[src].url || CREDITS[src].script}`, dest])
 }
 
 // ── Levelling the options' loops ──
@@ -229,7 +229,7 @@ function renderFile(set, loop) {
 
 // static/sounds/CREDITS.md, from the same data the page and tests use.
 function credits() {
-  const recordings = Object.values(CREDITS).some((c) => c.kind !== 'render')
+  const recordings = Object.values(CREDITS).some((c) => c.kind !== 'render' && c.kind !== 'own')
   const lines = ['# Engine sound credits', '']
   if (recordings) lines.push(
     'Some loops in this folder are cut from recordings. They are **not** covered',
@@ -253,8 +253,16 @@ function credits() {
   for (const [id, c] of Object.entries(CREDITS)) {
     const used = [...new Set(Object.entries(SAMPLE_SETS).flatMap(([car, set]) => [
       ...set.loops.filter((l) => l.src === id).map((l) => `\`${l.file}\` (${car}, ${l.rpm} rpm${l.layer && l.layer !== 'any' ? ', ' + l.layer : ''})`),
-      ...(c.kind === 'render' && set.oneshots ? ['start', 'stop'].flatMap((k) => ['engine', 'exhaust'].map((g) => `\`${set.oneshots[k][g]}\` (${car}, ${k})`)) : []),
+      ...((c.kind === 'render' || c.kind === 'own') && set.oneshots && set.loops.some((l) => l.src === id) ? ['start', 'stop'].flatMap((k) => ['engine', 'exhaust'].map((g) => `\`${set.oneshots[k][g]}\` (${car}, ${k})`)) : []),
     ]))]
+    if (c.kind === 'own') {
+      lines.push(`## ${c.title}, our own`, '',
+        `- What: ${c.recording}`,
+        `- Source: \`${c.script}\` in this repository, by ${c.author}`,
+        `- Licence: [${c.licence}](${c.licenceUrl}), this repository's`,
+        `- Used for: ${used.join(', ')}`, '')
+      continue
+    }
     if (c.kind === 'render') {
       lines.push(`## ${c.title} by ${c.author}`, '',
         `- What: ${c.recording}`,
@@ -605,7 +613,17 @@ export function buildOneshots(car) {
     const idleLoop = set.loops.find((l) => l.render === 'idle' && (l.group || 'engine') === group)
     const target = 0.25 * idleLoop.level // level()'s RMS for the idle loop
     // ── start ──
-    {
+    if (set.kind === 'turbine') {
+      // Our own jet's start (scripts/rev-jet.mjs) is whole as rendered: its
+      // starter, light-off and spool-up. Only levelled, its idle to the loop's.
+      let x = oneshotMix(set, group, 'start', Math.round((os.start.seconds - 0.6) * SR), Math.round(os.start.seconds * SR))
+      x = x.slice(0, Math.round(os.start.seconds * SR))
+      derumble(x)
+      const idle = rmsOf(x, x.length - Math.round(0.6 * SR), x.length)
+      const g = Math.min(target / idle, 0.95 / (x.reduce((m, v) => Math.max(m, Math.abs(v)), 0) || 1))
+      for (let i = 0; i < x.length; i++) x[i] *= g
+      out.push({ file: os.start[group], x, note: `light-off ${os.start.catch} s, idle x${(g * idle / target).toFixed(2)} of the loop's` })
+    } else {
       let x = oneshotMix(set, group, 'start', Math.round((os.start.seconds - 1.5) * SR), Math.round(os.start.seconds * SR))
       x = x.slice(0, Math.round(os.start.seconds * SR))
       derumble(x)
@@ -917,11 +935,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     let total = 0
     for (const car of Object.keys(SAMPLE_SETS)) {
       if (car1 && !car1.startsWith('--') && car !== car1) continue
+      const cr = CREDITS[SAMPLE_SETS[car].loops[0].src]
       for (const c of buildOneshots(car)) {
         const tmp = path.join(CACHE, c.file + '.wav'), dest = path.join(OUT, c.file)
         wav(tmp, c.x)
         execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-c:a', 'libopus', '-b:a', '48k', '-ac', '1', '-ar', String(SR),
-          '-map_metadata', '-1', '-metadata', `comment=${CREDITS.enginesim.title} by ${CREDITS.enginesim.author}, ${CREDITS.enginesim.licence}, ${CREDITS.enginesim.url}`, dest])
+          '-map_metadata', '-1', '-metadata', `comment=${cr.title} by ${cr.author}, ${cr.licence}, ${cr.url || cr.script}`, dest])
         const size = fs.statSync(dest).size
         total += size
         console.log(`${c.file}: ${(c.x.length / SR).toFixed(2)} s, ${c.note}, ${(size / 1024).toFixed(1)} kB`)
@@ -971,7 +990,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       }
       const len = Math.round(loopSeconds(loop) * SR)
       const fade = Math.round(Math.min(0.12, loopSeconds(loop) * 0.25) * SR)
-      const rendered = set.kind === 'engine-sim'
+      const rendered = set.kind === 'engine-sim' || set.kind === 'turbine'
       const secs = (len + fade) / SR + 0.05
       const seg = rendered ? stretchFor(set, loop, secs) : decode(source(loop.src), loop.start, secs)
       // Recordings are levelled alike, then louder with revs, the way the

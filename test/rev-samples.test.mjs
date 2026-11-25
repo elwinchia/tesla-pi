@@ -13,9 +13,9 @@ const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'stati
 // Bytes, all cars together (the car loads only its own, and only the
 // options' files when they are on): the set's own loops and clips, and the
 // options' loops (rev-samples.js loopsFor).
-// Nine cars since 2026-11-25: ~0.65 MB of own loops and ~2.5 MB of
-// options' loops each.
-const BUDGET = 6 * 1024 * 1024, OPTIONS_BUDGET = 23 * 1024 * 1024
+// Ten cars since 2026-11-25: ~0.65 MB of own loops and ~2.5 MB of
+// options' loops each (the jet's noise ~1.1 MB and ~3.2 MB).
+const BUDGET = 7 * 1024 * 1024, OPTIONS_BUDGET = 26 * 1024 * 1024
 
 test('every recorded car is a real car sound with loops at two or more rpm points', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {
@@ -71,7 +71,9 @@ test('every car starts and stops: both clips, both groups, a catch inside the st
     assert.ok(os, `${car}: no start or stop`)
     for (const k of ['start', 'stop']) for (const g of ['engine', 'exhaust']) assert.match(os[k][g], new RegExp(`^${car}-e[sx]-${k}\\.ogg$`))
     assert.ok(os.start.catch > 0.3 && os.start.catch < os.start.seconds - 2, `${car}: catch at ${os.start.catch} s leaves no idle to hand over from`)
-    assert.ok(os.start.flare > p.idle && os.start.flare < p.redline, `${car}: flare ${os.start.flare} rpm`)
+    // A turbine does not flare: it spools up to idle after the light-off.
+    if (p.turbine) assert.ok(os.start.flare === p.idle && os.start.spool > 0.5 && os.start.catch + os.start.spool < os.start.seconds - 0.5, `${car}: spool`)
+    else assert.ok(os.start.flare > p.idle && os.start.flare < p.redline, `${car}: flare ${os.start.flare} rpm`)
     assert.ok(os.crankRpm > 50 && os.crankRpm < p.idle, `${car}: crank ${os.crankRpm} rpm`)
   }
 })
@@ -93,6 +95,14 @@ test('every credit is an allowed licence, points at its own Freesound page (or t
       for (const set of Object.values(SAMPLE_SETS)) assert.ok(fs.existsSync(path.join(DIR, '..', '..', set.script)), set.script)
       continue
     }
+    if (c.kind === 'own') {
+      // Sound we make ourselves (the jet): this repository's licence, from a
+      // script in it.
+      assert.equal(c.licence, 'BSD-3-Clause')
+      assert.ok(fs.existsSync(path.join(DIR, '..', '..', c.script)), c.script)
+      for (const set of Object.values(SAMPLE_SETS).filter((s) => s.loops.some((l) => l.src === id))) assert.equal(set.script, c.script)
+      continue
+    }
     assert.notEqual(c.licence, 'MIT', `${id}: MIT is for renders only`)
     const n = id.replace(/^fs/, '')
     assert.equal(c.url, `https://freesound.org/people/${c.author}/sounds/${n}/`, `${id} page`)
@@ -108,7 +118,8 @@ test('CREDITS.md names every recording, its author, page and licence', () => {
   const md = fs.readFileSync(path.join(DIR, 'CREDITS.md'), 'utf8')
   for (const id of ids) {
     const c = CREDITS[id]
-    for (const s of [c.url, c.author, c.licence, c.kind === 'render' ? c.commit : c.audio]) assert.ok(md.includes(s), `CREDITS.md lacks ${s}`)
+    const want = c.kind === 'own' ? [c.title, c.script, c.author, c.licence] : [c.url, c.author, c.licence, c.kind === 'render' ? c.commit : c.audio]
+    for (const s of want) assert.ok(md.includes(s), `CREDITS.md lacks ${s}`)
   }
 })
 
@@ -171,11 +182,11 @@ test('an engine-sim car has an on-load and an overrun loop at every rev point, a
   assert.ok(SAMPLE_SETS.v8.loops.some((l) => l.group === 'exhaust'), 'the V8 has an exhaust')
 })
 
-test('every car plays engine-sim loops, with both an engine and an exhaust group', () => {
+test('every car plays engine-sim loops (the jet: our own turbine render), with both an engine and an exhaust group', () => {
   for (const car of Object.keys(PROFILES)) {
     const set = SAMPLE_SETS[car]
     assert.ok(set, `${car} has no loops`)
-    assert.equal(set.kind, 'engine-sim', car)
+    assert.equal(set.kind, PROFILES[car].turbine ? 'turbine' : 'engine-sim', car)
     const groups = new Set(set.loops.map((l) => l.group))
     assert.ok(groups.has('engine') && groups.has('exhaust'), `${car}: ${[...groups]}`)
   }
@@ -218,8 +229,10 @@ test('each option, alone and together, plays what it says and nothing else', () 
         assert.deepEqual(at('off'), want, `${name} ${group}: overrun points`)
         assert.deepEqual(at('part'), o.partThrottle ? want : [], `${name} ${group}: light-throttle points`)
         assert.equal(g.filter((l) => l.render === 'idle').length, o.partThrottle ? 3 : 2, `${name} ${group}: idle in every layer`)
-        assert.equal(g.filter((l) => l.layer === 'limiter').length, o.oneShots ? 1 : 0, `${name} ${group}: limiter`)
-        assert.deepEqual(g.filter((l) => l.layer === 'shift').map((l) => l.from), o.oneShots ? plan.shifts.map((s) => s.from) : [], `${name} ${group}: shifts`)
+        // A turbine has no limiter (a governor) and no gears to shift.
+        const shots = o.oneShots && set.kind !== 'turbine'
+        assert.equal(g.filter((l) => l.layer === 'limiter').length, shots ? 1 : 0, `${name} ${group}: limiter`)
+        assert.deepEqual(g.filter((l) => l.layer === 'shift').map((l) => l.from), shots ? plan.shifts.map((s) => s.from) : [], `${name} ${group}: shifts`)
         // Long loops replace every short rev-point and limiter loop.
         for (const l of g) {
           if (l.render === 'idle' || l.layer === 'shift') continue
@@ -263,6 +276,7 @@ test('the options\' loops are levelled on the set\'s own scale', () => {
         assert.ok(part >= off * 0.8 && part <= on * 1.15, `${car} ${group} ${r}: part ${part} vs ${off}..${on}`)
       }
       // The limiter: about as loud as pulling near the redline.
+      if (set.kind === 'turbine') continue
       const lim = g.find((l) => l.layer === 'limiter'), topOn = lv('on', pts[pts.length - 1])
       assert.ok(lim.level > 0.5 * topOn && lim.level < 1.6 * topOn, `${car} ${group}: limiter ${lim.level} vs ${topOn}`)
     }
@@ -282,8 +296,15 @@ test('the limiter and shift clips are cut where they play: the limiter at the re
       assert.ok(l.exact && l.at === SHIFT.at && l.cut === SHIFT.cut && l.seconds === SHIFT.seconds, l.file)
       assert.ok(l.start + l.at === SHIFT.renderAt, `${l.file}: the cut is where es-render made it`)
     }
-    // Every set's light throttle was found at every point it plays.
+    // Every set's light throttle was found at every point it plays (the
+    // jet's part power is a fuel setting in rev-jet.mjs, not a throttle:
+    // its part loops are at every point instead).
     const pts = [...extrasPlan(set).points, ...extrasPlan(set).dense]
+    if (set.kind === 'turbine') {
+      assert.deepEqual(set.loops.filter((l) => l.layer === 'part' && l.render !== 'idle' && !l.file.endsWith('-long.ogg') && l.group === 'engine').map((l) => l.rpm).sort((a, b) => a - b), pts.sort((a, b) => a - b), car)
+      assert.equal(set.loops.filter((l) => l.layer === 'limiter' || l.layer === 'shift').length, 0, `${car}: a turbine has no limiter or shifts`)
+      continue
+    }
     assert.deepEqual(set.part.throttle.map(([r]) => r).sort((a, b) => a - b), pts.sort((a, b) => a - b), car)
     for (const [, th] of set.part.throttle) assert.ok(th > 0 && th < 1)
   }
