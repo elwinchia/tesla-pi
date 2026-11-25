@@ -141,6 +141,29 @@
     display: flex;
     background: #000;
   }
+  /* With the engine sound on, the band under CarPlay is its dash: the gauge
+     style chosen in its settings beside ENGINE START/STOP; holding the rev
+     meter revs the engine (static/rev-dash.js, static/gauges/,
+     rev-gauge.css), scaled to fit. Dark styles always sit on the night
+     gradient, with no panel of their own around them. */
+  #carplay-dock.rv-dock {
+    align-items: center; justify-content: center; padding: 6px 16px; border: 0;
+    background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
+  }
+  #carplay-dock.rv-dock.rv-dark { background: radial-gradient(120% 90% at 50% 38%, #121a26 0%, #070a10 100%); }
+  /* The engine sound's settings (rev.html?embed=1) in a sheet over CarPlay,
+     so changing car or gauge style does not leave the page and drop CarPlay. */
+  #rev-sheet {
+    position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column;
+    background: rgba(0, 0, 0, 0.55); padding: 24px 6vw;
+  }
+  #rev-sheet[hidden] { display: none; }
+  #rev-sheet .rev-sheet-bar { display: flex; justify-content: flex-end; padding: 0 0 10px; }
+  #rev-sheet .rev-sheet-done {
+    min-height: 56px; min-width: 140px; padding: 0 28px; border-radius: 28px; border: 0;
+    font: 600 20px -apple-system, system-ui, sans-serif; background: #f08c00; color: #1a0d00;
+  }
+  #rev-sheet iframe { flex: 1 1 auto; width: 100%; border: 0; border-radius: 18px; background: #fff; }
 
   /* ─────────────────────────  NOW PLAYING  ───────────────────────── */
   /* One component, two homes: the black band under CarPlay in wide mode, and
@@ -2198,6 +2221,38 @@
               </div>
               <p class="set-row-sub" id="audio-source-note" hidden></p>
             </div>
+            <!-- Speedometer and driving sound (static/rev.html, docs/rev-sound.md).
+                 Client-only: the gauges and the sound are made by this browser,
+                 the Pi just serves the files. On: CarPlay wide with the gauges
+                 below, and the car picked heard (the Tesla is silent). Off:
+                 CarPlay full screen, nothing running. -->
+            <div class="set-row is-inline" data-search="speedometer driving sound engine sound gauges rev v8 exhaust noise fake engine tesrev">
+              <div class="set-row-main">
+                <div class="set-row-label">
+                  Speedometer and driving sound <span class="set-badge">Experimental</span>
+                  <button type="button" class="set-info" data-set-info
+                          aria-haspopup="dialog" aria-label="About the speedometer and driving sound">
+                    <svg width="17" height="17" aria-hidden="true"><use href="#i-info"/></svg>
+                  </button>
+                </div>
+                <p class="set-row-sub set-info-body" hidden>
+                  On, CarPlay shares the screen with a speedometer and rev meter that follow
+                  the car's GPS speed, and the car you pick plays a made-up engine through the
+                  car's speakers that revs and shifts with your driving (the Tesla, the
+                  default, is silent; the sound starts at your first tap on this page). It is
+                  heard inside the car only and does not reflect the car's real state. Keep it
+                  quiet enough to hear horns and sirens. Hold the gauges for the car and sound
+                  settings. Off, CarPlay is full screen and none of this runs.
+                </p>
+                <p class="set-row-sub"><a href="/rev.html" id="rev-settings-link" style="color:inherit">Car, volume, exhaust and gauge style&hellip;</a></p>
+              </div>
+              <div class="set-row-control">
+                <button type="button" class="set-switch" id="rev-switch" role="switch"
+                        aria-checked="true" aria-label="Speedometer and driving sound">
+                  <span class="knob"></span>
+                </button>
+              </div>
+            </div>
             <div class="set-row" data-search="fps frames per second bandwidth video smooth frame rate">
               <div class="set-row-label">Frame rate</div>
               <div class="set-row-control">
@@ -2621,6 +2676,7 @@
             <div class="cert-meta-row"><span class="k">Altitude</span><span class="v" id="t-alt">—</span></div>
             <div class="cert-meta-row"><span class="k">Position</span><span class="v mono" id="t-pos">—</span></div>
             <div class="cert-meta-row"><span class="k">Accuracy</span><span class="v" id="t-acc">—</span></div>
+            <div class="cert-meta-row"><span class="k">Motion sensor</span><span class="v" id="t-motion">—</span></div>
             <div class="cert-meta-row"><span class="k">Screen</span><span class="v" id="t-scheme">—</span></div>
             <div class="cert-meta-row"><span class="k">Hotspot</span><span class="v" id="t-apcli">—</span></div>
             <div class="cert-meta-row"><span class="k">Traffic</span><span class="v" id="t-apthru">—</span></div>
@@ -3011,7 +3067,8 @@
   // value the server sent is cached here and reconciled on the next push.
   const WIDE_H = Number(localStorage.getItem('carplayWideHeight')) || 840;
   const ASPECTS = { full: { w: 1920, h: 1496 }, wide: { w: 1920, h: WIDE_H } };
-  // Full unless the SERVER has been put in wide — nothing in the UI selects it.
+  // Full unless the server is in wide, which the page asks for while the
+  // engine sound is on (see reconcileAspect), to put its gauges under CarPlay.
   const renderedAspect = localStorage.getItem('carplayAspect') === 'wide' ? 'wide' : 'full';
   document.documentElement.dataset.aspect = renderedAspect;
   const carplayWidth = ASPECTS[renderedAspect].w;
@@ -3645,6 +3702,7 @@
   }
   function startCarGps() {
     renderCarScheme();
+    startMotion();
     if (carGpsId != null) return;
     const aside = document.getElementById('gps-aside');
     if (!('geolocation' in navigator)) {
@@ -3734,6 +3792,7 @@
   }
 
   function stopCarGps() {
+    stopMotion();
     if (carGpsId == null) return;
     try { navigator.geolocation.clearWatch(carGpsId); } catch (e) {}
     carGpsId = null;
@@ -3744,6 +3803,81 @@
   {
     const b = document.getElementById('trip-reset');
     if (b) b.addEventListener('click', resetTrip);
+  }
+
+  // ── Motion sensor (a probe) ──────────────────────────────────────────────
+  // Whether the car's browser gives a page an accelerometer, and how often.
+  // GPS speed arrives about once a second, so the engine sound
+  // (static/rev-sound.js) hears the pedal 0.5-1.5 s late; an accelerometer
+  // would let it follow the pedal between fixes. A page can get one two
+  // ways: the devicemotion event, and the Generic Sensor API
+  // (LinearAccelerationSensor, else Accelerometer). Both are tried. Read only
+  // while the Car tab is on screen, like the GPS; nothing is sent anywhere.
+  const motion = { dm: [], dmEmpty: 0, dmLast: null, gs: [], gsLast: null, gsName: null, gsNote: null,
+    sensor: null, timer: null, since: 0 };
+  const MOTION_WINDOW_MS = 5000;
+  function onDeviceMotion(e) {
+    const a = e.acceleration && e.acceleration.x != null ? e.acceleration : null;
+    const g = e.accelerationIncludingGravity && e.accelerationIncludingGravity.x != null ? e.accelerationIncludingGravity : null;
+    // Chromium fires devicemotion with every field null when there is no
+    // sensor behind it: offered, but empty.
+    if (!a && !g) { motion.dmEmpty++; return; }
+    motion.dm.push(Date.now());
+    motion.dmLast = { v: a || g, gravity: !a };
+  }
+  function startMotion() {
+    if (motion.timer) return;
+    Object.assign(motion, { dm: [], dmEmpty: 0, dmLast: null, gs: [], gsLast: null, gsNote: null, since: Date.now() });
+    if (typeof DeviceMotionEvent !== 'undefined') window.addEventListener('devicemotion', onDeviceMotion);
+    const S = window.LinearAccelerationSensor || window.Accelerometer;
+    if (S) {
+      motion.gsName = window.LinearAccelerationSensor ? 'LinearAccelerationSensor' : 'Accelerometer';
+      try {
+        const sensor = new S({ frequency: 60 });
+        sensor.addEventListener('reading', () => {
+          motion.gs.push(Date.now());
+          motion.gsLast = { v: { x: sensor.x, y: sensor.y, z: sensor.z }, gravity: motion.gsName === 'Accelerometer' };
+        });
+        sensor.addEventListener('error', (e) => { motion.gsNote = (e.error && e.error.name) || 'error'; });
+        sensor.start();
+        motion.sensor = sensor;
+      } catch (e) { motion.gsNote = (e && e.name) || 'error'; }
+    }
+    motion.timer = setInterval(renderMotion, 1000);
+    renderMotion();
+  }
+  function stopMotion() {
+    if (!motion.timer) return;
+    clearInterval(motion.timer); motion.timer = null;
+    window.removeEventListener('devicemotion', onDeviceMotion);
+    if (motion.sensor) { try { motion.sensor.stop(); } catch (e) {} motion.sensor = null; }
+  }
+  function renderMotion() {
+    const now = Date.now();
+    // Readings per second over the trailing window, timed first to last.
+    const rate = (ts) => {
+      while (ts.length && now - ts[0] > MOTION_WINDOW_MS) ts.shift();
+      const n = ts.length, span = n > 1 ? (ts[n - 1] - ts[0]) / 1000 : 0;
+      return span > 0 ? (n - 1) / span : 0;
+    };
+    // The acceleration across the car's floor (x, y), in m/s^2; with
+    // gravity in it when the sensor gives only that.
+    const accel = (last) => {
+      const v = last.v;
+      return Math.hypot(v.x || 0, v.y || 0).toFixed(1) + ' m/s\u00b2' + (last.gravity ? ' with gravity' : '');
+    };
+    const dmRate = rate(motion.dm), gsRate = rate(motion.gs);
+    let text;
+    if (dmRate > 0) text = 'Yes: ' + dmRate.toFixed(0) + ' per second (devicemotion), ' + accel(motion.dmLast);
+    else if (gsRate > 0) text = 'Yes: ' + gsRate.toFixed(0) + ' per second (' + motion.gsName + '), ' + accel(motion.gsLast);
+    else if (now - motion.since < 3000) text = 'Checking\u2026';
+    else {
+      const dm = typeof DeviceMotionEvent === 'undefined' ? 'devicemotion not offered'
+        : motion.dmEmpty ? 'devicemotion offered, no data' : 'devicemotion offered, no readings';
+      const gs = !motion.gsName ? 'no sensor API' : motion.gsName + (motion.gsNote ? ': ' + motion.gsNote : ', no readings');
+      text = 'None (' + dm + '; ' + gs + ')';
+    }
+    setText('t-motion', text);
   }
 
   // ── Status tabs ──────────────────────────────────────────────────────────
@@ -3823,7 +3957,9 @@
 
     // Battery
     if (cs.batteryLevel != null) {
-      const km = cs.batteryRange != null ? ' · about ' + Math.round(cs.batteryRange) + ' km' : '';
+      // The car gives its range in miles (as the odometer), whatever its
+      // screen shows: 181 at 71% is a Model 3's miles, not its km.
+      const km = cs.batteryRange != null ? ' · about ' + Math.round(cs.batteryRange * 1.609344) + ' km' : '';
       carSet('c-batt', cs.batteryLevel + '%' + km);
     }
 
@@ -4358,6 +4494,187 @@
     applyShowFps();
   }
 
+  // ---- Speedometer and driving sound (client-only; static/rev-sound.js) --
+  // Settings → CarPlay → Speedometer and driving sound, on by default. On:
+  // the engine is loaded and started with the page and follows the car's
+  // GPS speed, CarPlay is wide with the gauges below it, and the car picked
+  // (rev.html, or the sheet) is heard from the first tap (browsers refuse
+  // sound before one); the Tesla is silent. Off: CarPlay is full screen and
+  // nothing runs. It never talks to the Pi. The car and sound settings are
+  // shared with rev.html through localStorage ('revSound'); the switch is
+  // this page's own ('revDash').
+  const REV_DASH_KEY = 'revDash';
+  const revSwitchEl = document.getElementById('rev-switch');
+  function revDashOn() { return lsGet(REV_DASH_KEY) !== '0'; }
+  let revSound = null;
+  let revLoading = null;
+  function loadRevSound() {
+    if (!revLoading) {
+      revLoading = import('./rev-sound.js')
+        .then((m) => {
+          revSound = new m.RevSound({ onState: (st) => { if (revDash) revDash.state(st); } });
+          return revSound;
+        })
+        .catch((e) => { console.warn('engine sound unavailable', e); revLoading = null; return null; });
+    }
+    return revLoading;
+  }
+  let revArm = null;
+  function disarmRevStart() {
+    if (revArm) document.removeEventListener('pointerdown', revArm, true);
+    revArm = null;
+  }
+  function armRevStart() {
+    disarmRevStart();
+    revArm = () => {
+      disarmRevStart();
+      loadRevSound().then((rs) => { if (rs) rs.startSound(); });
+    };
+    document.addEventListener('pointerdown', revArm, true);
+  }
+  function applyRevSwitch(on) {
+    revSwitchEl.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+  function initRev() {
+    const on = revDashOn();
+    applyRevSwitch(on);
+    if (!on) return;
+    loadRevSound().then((rs) => { if (rs) rs.start(); });
+    startDock();
+    armRevStart();
+  }
+  revSwitchEl.addEventListener('click', async () => {
+    const on = !revDashOn();
+    lsSet(REV_DASH_KEY, on ? '1' : '0');
+    applyRevSwitch(on);
+    if (on) {
+      // The owner asking for the gauges again, even after CarPlay fell back
+      // to full screen. The tap on the switch lets the sound start.
+      lsSet(WIDE_BLOCK_KEY, '0');
+      const rs = await loadRevSound();
+      if (rs) rs.startSound();
+      armRevStart();
+    } else {
+      disarmRevStart();
+      if (revSound) revSound.stop();
+    }
+    // The server restarts CarPlay in the new format, and the page rebuilds
+    // itself for it (with the gauges below, or without).
+    reconcileAspect();
+  });
+  // The engine sound's settings in a sheet over CarPlay (rev.html?embed=1):
+  // leaving this page would drop CarPlay and cost a cold start.
+  function openRevSheet() {
+    let sh = document.getElementById('rev-sheet');
+    if (!sh) {
+      sh = document.createElement('div');
+      sh.id = 'rev-sheet';
+      sh.hidden = true;
+      sh.innerHTML = '<div class="rev-sheet-bar"><button type="button" class="rev-sheet-done">Done</button></div>' +
+        '<iframe title="Engine sound settings"></iframe>';
+      document.body.appendChild(sh);
+      sh.querySelector('.rev-sheet-done').addEventListener('click', () => {
+        sh.hidden = true;
+        sh.querySelector('iframe').src = 'about:blank';
+      });
+    }
+    sh.querySelector('iframe').src = 'rev.html?embed=1';
+    sh.hidden = false;
+  }
+  document.getElementById('rev-settings-link').addEventListener('click', (e) => { e.preventDefault(); openRevSheet(); });
+  // Settings saved by the sheet (another document on this origin) arrive as
+  // a storage event: take them. A car picked there (a tap in the sheet,
+  // which counts for this page too) brings its sound in; the Tesla glides
+  // it out. Changing the engine's settings is also the owner asking for the
+  // gauges again after CarPlay fell back to full screen.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'revSound' || !revDashOn()) return;
+    if (revSound) {
+      const st = revSound.reload();
+      if (revDash) revDash.setStyle(st.gauge).then(syncDockDark);
+      revSound.startSound();
+    }
+    armRevStart();
+    lsSet(WIDE_BLOCK_KEY, '0');
+    reconcileAspect();
+  });
+
+  // ---- Engine sound gauges under CarPlay -----------------------------------
+  // While Speedometer and driving sound is on, CarPlay is a wide top band
+  // and the band below it shows the rev meter and speedometer, fed by the
+  // same engine the sound comes from (whatever car is picked). The server owns the format (applyAspect in
+  // index.js restarts CarPlay at the new height); this page asks for it.
+  let serverAspect = null;
+  let revDash = null;
+  // CarPlay's drive side (0 left-hand drive, 1 right-hand drive), which puts
+  // the dash's buttons on the passenger's side of the gauge. The server says on connect;
+  // the last answer is kept for the first paint.
+  let serverHand = lsGet('carplayHand') === '0' ? 0 : 1;
+  const WIDE_BLOCK_KEY = 'carplayWideBlocked';
+  function wantAspect() {
+    return revDashOn() && lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
+  }
+  // Ask the server for the format the gauges want. True if asked.
+  function reconcileAspect() {
+    const want = wantAspect();
+    if (serverAspect == null || serverAspect === want) return false;
+    try { control.send(JSON.stringify({ type: 'aspect', value: want })); } catch { return false; }
+    serverAspect = want;
+    return true;
+  }
+  // Wide was unstable on this dongle at one height (it dropped off USB and
+  // CarPlay restarted in a loop: see index.js). If CarPlay keeps starting
+  // over in wide, go back to full and stop asking until Speedometer and
+  // driving sound is next switched on, or the car settings are changed.
+  const wideStarts = [];
+  function noteWidePhase(phase) {
+    if (renderedAspect !== 'wide') return;
+    const now = Date.now();
+    if (phase === 'plugged') { wideStarts.length = 0; return; }
+    if (phase !== 'starting') return;
+    wideStarts.push(now);
+    while (wideStarts.length && now - wideStarts[0] > 10 * 60 * 1000) wideStarts.shift();
+    if (wideStarts.length >= 4) {
+      console.warn('CarPlay keeps restarting in wide; going back to full screen');
+      lsSet(WIDE_BLOCK_KEY, '1');
+      reconcileAspect();
+    }
+  }
+  function syncDockDark() {
+    const dock = document.getElementById('carplay-dock');
+    if (revDash) dock.classList.toggle('rv-dark', revDash.root.hasAttribute('data-dark'));
+  }
+  function startDock() {
+    if (renderedAspect !== 'wide' || revDash) return;
+    const dock = document.getElementById('carplay-dock');
+    if (!document.querySelector('link[href="rev-gauge.css"]')) {
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'rev-gauge.css';
+      document.head.appendChild(l);
+    }
+    Promise.all([import('./rev-dash.js'), loadRevSound()]).then(([m, rs]) => {
+      if (!rs || revDash) return;
+      dock.classList.add('rv-dock', 'dash');
+      revDash = new m.Dash(dock, {
+        // Hold the gauges (away from the rev meter) for the settings.
+        rs, hand: () => serverHand, onSettings: openRevSheet,
+        // The car's real battery charge, range and odometer over Bluetooth,
+        // when Settings → Network → Experimental allows it (rev-car.js).
+        car: new m.CarReader(),
+        theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day'),
+      });
+      revDash.setStyle(rs.settings.gauge).then(syncDockDark);
+      rs.emit(performance.now());
+      let last = performance.now();
+      const frame = (now) => {
+        if (!revDash) return;
+        if (!document.hidden) revDash.frame(Math.min(0.1, (now - last) / 1000));
+        last = now;
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }).catch((e) => console.warn('engine gauges unavailable', e));
+  }
+
   // ---- Frame-rate (server-side; broadcast on /control connect drives UI) --
   const ALLOWED_FPS_CLIENT = new Set([30, 60]);
   const frameRateSegEl = document.getElementById('frame-rate-seg');
@@ -4377,6 +4694,9 @@
     const v = Number(value);
     if (!ALLOWED_HAND_CLIENT.has(v)) return;
     setSegActive(handSegEl, 'hand', v);
+    serverHand = v;
+    lsSet('carplayHand', String(v));
+    if (revDash) revDash.setHand(v);
   }
 
   // ---- CarPlay audio through the browser (Settings → CarPlay → Audio output) --
@@ -4849,6 +5169,10 @@
 
   function applyServerAspect(value, height) {
     if (!ALLOWED_ASPECT_CLIENT.has(value)) return;
+    serverAspect = value;
+    // Ask for the format the engine sound wants first: if it differs, the
+    // server restarts CarPlay and pushes the new value, which reloads below.
+    if (reconcileAspect()) return;
     localStorage.setItem('carplayAspect', value);
     // A wide height that differs from the one this page was built with needs the
     // same reload an aspect change needs — the canvas geometry is baked in.
@@ -6334,6 +6658,7 @@
       const msg = JSON.parse(ev.data);
       switch (msg.type) {
         case 'statusReq':
+          noteWidePhase(msg.data);
           switch (msg.data) {
             case 'plugged':   console.log('Phone plugged: ' + (msg.phone || 'unknown')); carplayState = 'plugged'; phoneKind = msg.phone || null; renderAaTile(); setHeadline(); break;
             case 'unplugged': console.log('Phone unplugged'); carplayState = 'unplugged'; phoneKind = null; renderAaTile(); showOverlay('unplugged'); break;
@@ -6512,6 +6837,7 @@
 
   initNightMode();
   initShowFps();
+  initRev();
 
   const video = connect('/video', {
     binary: true,

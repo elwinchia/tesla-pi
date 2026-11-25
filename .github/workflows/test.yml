@@ -1,0 +1,24 @@
+name: Tests
+
+# Unit tests that need no hardware: today, the engine sound (static/rev-*.js).
+# Uses the runner's own Node, so it adds no third-party action beyond checkout.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node version
+        run: node --version
+      - name: Engine sound tests
+        run: node --test test/*.test.mjs
+      - name: Engine sound renders a drive
+        run: node scripts/rev-render.mjs --out "$RUNNER_TEMP/rev.wav"

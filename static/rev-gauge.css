@@ -1,0 +1,74 @@
+/* The engine sound's dash (static/rev-dash.js) and its segment-arc style
+   (static/gauges/segment.js): colours for day and html.night. Shared by
+   rev.html and the dock under CarPlay on index.html. The other styles
+   carry their own CSS inside their SVG (GaugeStyle.css), with a day look
+   keyed off the svg's data-theme. In day every style sits on the floor
+   grey of Tesla's own screen (#d6d7d6, its light theme's floor under the
+   car); at night on plain black. */
+:root {
+  --dash-a: #d6d7d6; --dash-b: #d6d7d6; --dash-line: rgba(0,0,0,0.06);
+  --rv-num: #3d4148; --rv-dot: #9aa0a8; --rv-red: #e03131; --rv-glow-op: 0.16;
+  --rv-chip-bg: #ffffff; --rv-chip-line: rgba(0,0,0,0.12); --rv-chip-text: #d9480f;
+  --rv-bar-off: #c2c4c6; --rv-cap: #6b7079; --rv-pill-line: #f08c00; --rv-bloom-op: 0.55;
+  --rv-hit: rgba(240, 140, 0, 0.045);
+}
+:root.night {
+  --dash-a: #000000; --dash-b: #000000; --dash-line: rgba(255,255,255,0.06);
+  --rv-num: #cfc7bc; --rv-dot: #7c7468; --rv-red: #ff3b30; --rv-glow-op: 0.38;
+  --rv-chip-bg: #141c28; --rv-chip-line: rgba(255,170,80,0.28); --rv-chip-text: #ffb347;
+  --rv-bar-off: #2a2f37; --rv-cap: #8a8f97; --rv-pill-line: #ffdb8f; --rv-bloom-op: 1;
+  --rv-hit: rgba(255, 170, 80, 0.035);
+}
+.dash {
+  background: radial-gradient(120% 90% at 50% 38%, var(--dash-a) 0%, var(--dash-b) 100%);
+  border-color: var(--dash-line); padding: 10px 12px 12px;
+}
+.cluster-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.rv-bloom { opacity: var(--rv-bloom-op); }
+.rv-glow { fill: none; stroke: #ff8a1a; stroke-width: 58; stroke-linecap: butt; opacity: var(--rv-glow-op); }
+.rv-seg { stroke-width: 10; stroke-linecap: round; }
+.rv-seg.red { stroke: var(--rv-red); opacity: 0.72; }
+.rv-seg.red.on { opacity: 1; }
+/* At the redline the red zone is the shift light: full strength, glowing. */
+.cluster-svg[data-zone=red] .rv-seg.red { opacity: 1; filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
+.cluster-svg[data-zone=red] .rv-dot.red, .cluster-svg[data-zone=red] .rv-num.red { filter: drop-shadow(0 0 4px rgba(255, 59, 48, 0.8)); }
+.rv-dot { fill: var(--rv-dot); }
+.rv-dot.red { fill: var(--rv-red); }
+.rv-num { fill: var(--rv-num); font: 600 26px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+.rv-num.red { fill: var(--rv-red); }
+.rv-num-unit { fill: var(--rv-num); font: 500 17px -apple-system, system-ui, sans-serif; dominant-baseline: central; opacity: 0.85; }
+/* Speed: an old-school seven-segment LCD, unlit segments faintly showing. */
+.rv-lcd { stroke: #ff7a3a; stroke-opacity: 0.55; stroke-width: 2.5; }
+.rv-lcd.small { stroke-width: 1.5; stroke-opacity: 0.4; }
+.seg7 .off { fill: #ff8c42; opacity: 0.09; }
+.seg7 .on { fill: #ffd98a; filter: drop-shadow(0 0 4px rgba(255, 170, 60, 0.75)); }
+.rv-odo7 .on { fill: #ffb45a; filter: none; }
+.rv-lcd-unit { fill: #ff9a5a; font: 700 15px -apple-system, system-ui, sans-serif; text-anchor: end; letter-spacing: 0.04em; }
+.rv-lcd-label { fill: #ff9a5a; font: 700 9px -apple-system, system-ui, sans-serif; letter-spacing: 0.12em; opacity: 0.85; }
+.rv-lcd-dot { fill: #ffb45a; }
+/* The gear, a seven-segment cell in the speed LCD's top-left corner; red
+   at the redline. */
+.cluster-svg[data-zone=red] .rv-gear7 .on { fill: var(--rv-red); filter: drop-shadow(0 0 5px rgba(255, 59, 48, 0.85)); }
+.rv-icon-line path, .rv-icon-line circle { fill: none; stroke: var(--rv-num); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0.85; }
+.rv-bar-cap { fill: var(--rv-cap); font: 600 11px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.14em; }
+.rv-bar rect { fill: var(--rv-bar-off); }
+.rv-bar rect.hot { fill: var(--rv-red); opacity: 0.35; }
+.rv-bar rect.red { fill: var(--rv-red); opacity: 1; }
+.rv-bar-end { fill: var(--rv-num); font: 700 18px -apple-system, system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; }
+.rv-sim-tag { fill: #ffb45a; font: 800 14px -apple-system, system-ui, sans-serif; text-anchor: middle; letter-spacing: 0.1em; }
+/* Simulation mode: the arc is a control. A faint band shows where a
+   finger can grab it, and a ring follows the finger. */
+.rv-hit { fill: none; stroke: transparent; stroke-linecap: butt; pointer-events: none; }
+.cluster-svg[data-sim] { touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+.cluster-svg[data-sim] .rv-hit { stroke: var(--rv-hit); pointer-events: stroke; }
+.rv-finger { fill: rgba(255, 210, 120, 0.18); stroke: #ffd27a; stroke-width: 3; pointer-events: none; }
+.rv-finger.red { stroke: var(--rv-red); fill: rgba(255, 59, 48, 0.2); }
+
+/* ── The dash: the gauge, filling it. Hold the rev meter to rev (parked
+   only); hold anywhere else for the settings (rev-dash.js). */
+.rvd { container-type: size; display: flex; flex-direction: row; align-items: stretch; width: 100%; height: 100%;
+       box-sizing: border-box; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.rvd-gauge { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.rvd-gauge .cluster-svg { width: auto; height: 100%; max-width: 100%; }
+/* The rev meter is the accelerator: press and hold it to rev (parked only). */
+.rvd-gauge { touch-action: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }

@@ -1,7 +1,14 @@
 # Reading Tesla telemetry — the options
 
 Status: **Tier 2 is working end to end. Tier 1 measured parked. The Drive run is
-the one thing still outstanding.** Nothing is wired into the product UI yet.
+the one thing still outstanding.** Two things use Tier 2: the "Your car" card
+(button-driven), and the engine sound's dash (`static/rev-car.js`), which reads
+`charge`, `drive`, `climate` and `tire-pressure` once when the engine sound
+starts, then `charge` and `climate` every five minutes while it runs and
+`tire-pressure` every fifteen, for its battery and fuel gauges, range,
+odometer, temperatures and tyres. Both go through `/telemetry/ble` and its
+cache and queue. `batteryRange` is in miles, like the odometer, whatever the
+car's screen shows: 181 at 71 % on a Model 3 RWD is miles (about 291 km).
 
 Split out of [`llm-companion-options.md`](llm-companion-options.md) §6 when the
 companion was shelved (2026-08-27). Telemetry now has to justify itself on its
@@ -100,6 +107,14 @@ handled rather than noted:
 Verified against a stubbed geolocation feeding a constant 20 m/s with the real
 quirks present (sentinel accuracy, bogus timestamp): 233 m over 11.6 s, average
 72 km/h, climb 24 m from 12 x 2 m steps, fix rate 1.03/s from 12 fixes.
+
+The same card ("Live, no Bluetooth") has a **Motion sensor** row (2026-11-25):
+while the Car tab is open it listens for `devicemotion` and tries the Generic
+Sensor API (`LinearAccelerationSensor`, else `Accelerometer`, at 60 Hz), and
+shows the readings per second and the acceleration across the floor, or
+"None" with why (not offered, offered with no data, or the sensor's error).
+An accelerometer would let the engine sound follow the pedal between GPS
+fixes; see [`rev-sound.md`](rev-sound.md).
 
 Thresholds it judges against, both chosen for the gating use case: **≥0.5 Hz**
 (a gate should notice movement within a second or two) and **≤25 m median
