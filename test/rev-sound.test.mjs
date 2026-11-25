@@ -224,6 +224,14 @@ test('the engine always runs; the car picked decides its sound (the Tesla: none)
     rs.tick()
     assert.equal(sent.at(-1).params.gain, 0)
     assert.ok(states.at(-1).running && !states.at(-1).audible)
+    // Stopped (the main page's switch off): not running, silent; started
+    // again, an engine is heard again.
+    rs.update({ profile: 'v8' })
+    rs.stop()
+    assert.ok(!rs.running && !rs.audible && !states.at(-1).running)
+    assert.equal(sent.at(-1).params.gain, 0)
+    await rs.startSound()
+    assert.ok(rs.running && rs.audible)
   } finally {
     clearInterval(rs.timer)
     globalThis.document = saved

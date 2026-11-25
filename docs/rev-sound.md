@@ -126,15 +126,17 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for the dashboard, the Simulator, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
-| `static/index.html` | The main page loads the module and starts the engine with the page, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). Its sound is the car picked: the Tesla (the default) is silent; any other plays under CarPlay from the first tap. Settings → CarPlay → **Speedometer and driving sound** has the link to the settings sheet. |
+| `static/index.html` | Settings → CarPlay → **Speedometer and driving sound**, a switch, on by default (`revDash` in `localStorage`). On, the main page loads the module and starts the engine with the page, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)); its sound is the car picked (the Tesla, the default car, is silent; any other plays from the first tap). Off, CarPlay is full screen and nothing runs. The row also links to the settings sheet. |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin; `--dense --part --shots --long` turn on the recorded mix's options. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
 ### Safety rails
 
-- **Off by default.** The default car is the Tesla, which makes no sound;
-  picking another car (on `rev.html`, or in the sheet: hold the gauges under
-  CarPlay) turns it on.
+- **Silent by default.** The default car is the Tesla, which makes no
+  sound; picking another car (on `rev.html`, or in the sheet: hold the
+  gauges under CarPlay) turns it on. Settings → CarPlay → Speedometer and
+  driving sound switches the gauges and the sound off together, with
+  CarPlay back to full screen.
 - **Inside the car only.** It plays only through the browser's normal audio
   output. Nothing here touches the Boombox / external speaker, and nothing
   should. Pedestrian-warning sound rules are about the exterior, and this
@@ -588,12 +590,13 @@ for better sound.
 
 ### Gauges under CarPlay
 
-The main page always asks the Pi for CarPlay's **wide** format (since
-2026-11-25; before, only while the engine sound was on): the page sends
+While **Speedometer and driving sound** is on (Settings → CarPlay, on by
+default), the main page asks the Pi for CarPlay's **wide** format; switched
+off, it stops the engine and asks for **full** again: the page sends
 `{type: 'aspect', value: 'wide'}`, and the server restarts CarPlay at
 1920 × `CARPLAY_WIDE_HEIGHT`. CarPlay then fills a top band, and the band
 below (`#carplay-dock`) shows the same cluster as `rev.html`, fed by the
-engine, which runs whether its sound is on or not. The page rebuilds
+engine, which runs whatever car is picked (the Tesla silently). The page rebuilds
 itself on every format change, as it already did.
 
 - **The height.** Wide at the old default height, 840, made this dongle drop
@@ -602,24 +605,27 @@ itself on every format change, as it already did.
   `scripts/set-wide-height.sh`.
 - **The fallback.** If CarPlay keeps starting over while wide (4 "starting"
   phases in 10 minutes without reaching "plugged"), the page goes back to
-  full and stops asking, until the engine sound is next switched on (the
-  owner asking for the gauges again).
+  full and stops asking, until Speedometer and driving sound is next
+  switched on or the car settings are changed (the owner asking for the
+  gauges again).
 
 ### The dash: buttons and gauge styles
 
 The band under CarPlay (and the dashboard on `rev.html`) is a dash: the
 chosen gauge style, as wide as the band allows. It has no buttons
 (2026-11-25: the owner asked for ENGINE START/STOP and the settings gear
-to go). **The engine is always running**: the page starts it on load, with
-no tap, and it follows the car's GPS, so the gauges always work. **The car
+to go). **The engine is always running** (while Speedometer and driving
+sound is on, on the main page): the page starts it on load, with no tap, and it follows the car's GPS, so the gauges always work. **The car
 picked is its sound**: an engine comes in at the first tap anywhere
 (browsers only let a page make sound after one); the **Tesla** (the
 default; `silent`) glides it out, the audio sleeps and live engine-sim is
 stopped, and the gauges carry on, the rev meter showing the motor (0
 parked, about 7,100 rpm at 100 km/h, 16,000 at 225; nothing to rev) and
-the gear D. There is no on/off setting any more: "Play while driving" (and
-the main page's Engine sound switch) went on 2026-11-25, at the owner's
-asking, and settings saved with it off load as the Tesla. The
+the gear D. "Play while driving" went on 2026-11-25, at the owner's
+asking, and settings saved with it off load as the Tesla. The main page's
+switch came back the same day as **Speedometer and driving sound**, for
+the gauges and the sound together: off, `RevSound.stop()` stops the engine
+and CarPlay goes back to full screen. The
 engine's start and stop clips are no longer played (an always-running
 engine has no start); the files are still built and served.
 

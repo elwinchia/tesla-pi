@@ -248,7 +248,7 @@ export class RevSound {
   get running() { return this.timer != null }
   // Heard: the car picked makes a sound (not the Tesla), and the audio is up.
   get heard() { return !this.engine.profile.silent }
-  get audible() { return !!(this.ctx && this.heard) }
+  get audible() { return !!(this.ctx && this.heard && this.timer) }
 
   // Start the engine: no tap needed, and nothing heard yet.
   start() {
@@ -268,10 +268,27 @@ export class RevSound {
     if (!this.heard) return
     try {
       await this.ensureAudio()
+      this.syncLive() // after a stop(), live engine-sim comes back with it
     } catch (e) {
       this.error = 'Sound could not start: ' + (e && e.message ? e.message : e)
       this.emit(performance.now())
     }
+  }
+  // Stop the engine (the main page's Speedometer and driving sound switched
+  // off): no GPS, no model, no sound, live engine-sim let go. start() runs
+  // it again.
+  stop() {
+    if (!this.timer) return
+    clearInterval(this.timer)
+    this.timer = null
+    this.stopGps()
+    document.removeEventListener('visibilitychange', this.onVisibility)
+    if (this.node) this.node.port.postMessage({ params: { gain: 0 } })
+    if (this.live) { try { this.live.dispose() } catch {} this.live = null }
+    this.liveFor = null
+    const ctx = this.ctx
+    if (ctx) setTimeout(() => { if (!this.timer) ctx.suspend().catch(() => {}) }, 250)
+    this.emit(performance.now())
   }
   // Silent: the gain glides to zero, then the audio sleeps (no click).
   mute() {

@@ -2221,9 +2221,11 @@
               </div>
               <p class="set-row-sub" id="audio-source-note" hidden></p>
             </div>
-            <!-- Engine sound (static/rev.html, docs/rev-sound.md). Client-only: the
-                 sound is made and played by this browser, the Pi just serves
-                 the files. Silent until the owner picks a car other than the Tesla. -->
+            <!-- Speedometer and driving sound (static/rev.html, docs/rev-sound.md).
+                 Client-only: the gauges and the sound are made by this browser,
+                 the Pi just serves the files. On: CarPlay wide with the gauges
+                 below, and the car picked heard (the Tesla is silent). Off:
+                 CarPlay full screen, nothing running. -->
             <div class="set-row is-inline" data-search="speedometer driving sound engine sound gauges rev v8 exhaust noise fake engine tesrev">
               <div class="set-row-main">
                 <div class="set-row-label">
@@ -2234,14 +2236,21 @@
                   </button>
                 </div>
                 <p class="set-row-sub set-info-body" hidden>
-                  Plays a made-up engine through the car's speakers that revs and shifts
-                  with your driving, read from the car's GPS speed. It is heard inside the
-                  car only and does not reflect the car's real state. Keep it quiet enough
-                  to hear horns and sirens. Pick a car to hear it, from your first tap on this
-                  page; the Tesla (the default) is silent. The gauges under CarPlay follow the
-                  car either way (hold them for the engine sound's settings).
+                  On, CarPlay shares the screen with a speedometer and rev meter that follow
+                  the car's GPS speed, and the car you pick plays a made-up engine through the
+                  car's speakers that revs and shifts with your driving (the Tesla, the
+                  default, is silent; the sound starts at your first tap on this page). It is
+                  heard inside the car only and does not reflect the car's real state. Keep it
+                  quiet enough to hear horns and sirens. Hold the gauges for the car and sound
+                  settings. Off, CarPlay is full screen and none of this runs.
                 </p>
                 <p class="set-row-sub"><a href="/rev.html" id="rev-settings-link" style="color:inherit">Car, volume, exhaust and gauge style&hellip;</a></p>
+              </div>
+              <div class="set-row-control">
+                <button type="button" class="set-switch" id="rev-switch" role="switch"
+                        aria-checked="true" aria-label="Speedometer and driving sound">
+                  <span class="knob"></span>
+                </button>
               </div>
             </div>
             <div class="set-row" data-search="fps frames per second bandwidth video smooth frame rate">
@@ -4474,13 +4483,18 @@
     applyShowFps();
   }
 
-  // ---- Engine sound (client-only; static/rev-sound.js) -------------------
-  // The engine always runs: it is loaded and started with the page and
-  // follows the car's GPS speed, so the gauges under CarPlay always work.
-  // Its sound is the car picked (rev.html, or the sheet): the Tesla, the
-  // default, is silent; any other comes in at the first tap (browsers
-  // refuse sound before one). It never talks to the Pi. Settings are shared
-  // with rev.html through localStorage.
+  // ---- Speedometer and driving sound (client-only; static/rev-sound.js) --
+  // Settings → CarPlay → Speedometer and driving sound, on by default. On:
+  // the engine is loaded and started with the page and follows the car's
+  // GPS speed, CarPlay is wide with the gauges below it, and the car picked
+  // (rev.html, or the sheet) is heard from the first tap (browsers refuse
+  // sound before one); the Tesla is silent. Off: CarPlay is full screen and
+  // nothing runs. It never talks to the Pi. The car and sound settings are
+  // shared with rev.html through localStorage ('revSound'); the switch is
+  // this page's own ('revDash').
+  const REV_DASH_KEY = 'revDash';
+  const revSwitchEl = document.getElementById('rev-switch');
+  function revDashOn() { return lsGet(REV_DASH_KEY) !== '0'; }
   let revSound = null;
   let revLoading = null;
   function loadRevSound() {
@@ -4507,11 +4521,36 @@
     };
     document.addEventListener('pointerdown', revArm, true);
   }
+  function applyRevSwitch(on) {
+    revSwitchEl.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
   function initRev() {
+    const on = revDashOn();
+    applyRevSwitch(on);
+    if (!on) return;
     loadRevSound().then((rs) => { if (rs) rs.start(); });
     startDock();
     armRevStart();
   }
+  revSwitchEl.addEventListener('click', async () => {
+    const on = !revDashOn();
+    lsSet(REV_DASH_KEY, on ? '1' : '0');
+    applyRevSwitch(on);
+    if (on) {
+      // The owner asking for the gauges again, even after CarPlay fell back
+      // to full screen. The tap on the switch lets the sound start.
+      lsSet(WIDE_BLOCK_KEY, '0');
+      const rs = await loadRevSound();
+      if (rs) rs.startSound();
+      armRevStart();
+    } else {
+      disarmRevStart();
+      if (revSound) revSound.stop();
+    }
+    // The server restarts CarPlay in the new format, and the page rebuilds
+    // itself for it (with the gauges below, or without).
+    reconcileAspect();
+  });
   // The engine sound's settings in a sheet over CarPlay (rev.html?embed=1):
   // leaving this page would drop CarPlay and cost a cold start.
   function openRevSheet() {
@@ -4538,7 +4577,7 @@
   // it out. Changing the engine's settings is also the owner asking for the
   // gauges again after CarPlay fell back to full screen.
   window.addEventListener('storage', (e) => {
-    if (e.key !== 'revSound') return;
+    if (e.key !== 'revSound' || !revDashOn()) return;
     if (revSound) {
       const st = revSound.reload();
       if (revDash) revDash.setStyle(st.gauge).then(syncDockDark);
@@ -4550,9 +4589,9 @@
   });
 
   // ---- Engine sound gauges under CarPlay -----------------------------------
-  // CarPlay is a wide top band and the band below it shows the rev meter
-  // and speedometer, fed by the same engine the sound comes from, whether
-  // the sound is on or not. The server owns the format (applyAspect in
+  // While Speedometer and driving sound is on, CarPlay is a wide top band
+  // and the band below it shows the rev meter and speedometer, fed by the
+  // same engine the sound comes from (whatever car is picked). The server owns the format (applyAspect in
   // index.js restarts CarPlay at the new height); this page asks for it.
   let serverAspect = null;
   let revDash = null;
@@ -4562,7 +4601,7 @@
   let serverHand = lsGet('carplayHand') === '0' ? 0 : 1;
   const WIDE_BLOCK_KEY = 'carplayWideBlocked';
   function wantAspect() {
-    return lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
+    return revDashOn() && lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
   }
   // Ask the server for the format the gauges want. True if asked.
   function reconcileAspect() {
@@ -4574,8 +4613,8 @@
   }
   // Wide was unstable on this dongle at one height (it dropped off USB and
   // CarPlay restarted in a loop: see index.js). If CarPlay keeps starting
-  // over in wide, go back to full and stop asking until the engine sound's
-  // settings are next changed.
+  // over in wide, go back to full and stop asking until Speedometer and
+  // driving sound is next switched on, or the car settings are changed.
   const wideStarts = [];
   function noteWidePhase(phase) {
     if (renderedAspect !== 'wide') return;
