@@ -17,6 +17,7 @@
 
 import { SampleVoice } from './rev-sampler.js'
 import { Cabin } from './rev-cabin.js'
+import { Loudness } from './rev-loudness.js'
 
 // Deterministic noise, so a test render is repeatable.
 function rng(seed) {
@@ -244,11 +245,13 @@ if (typeof AudioWorkletProcessor !== 'undefined' && typeof registerProcessor ===
       // Everything is heard through the car's body (static/rev-cabin.js),
       // the start and stop clips too: they come in on the input.
       this.cabin = new Cabin(sampleRate)
+      // Then loud enough for the road, and the Volume slider (static/rev-loudness.js).
+      this.loud = new Loudness(sampleRate)
       this.port.onmessage = (e) => {
         const m = e.data || {}
         if (m.profile) this.voice.setProfile(m.profile)
         if ('samples' in m) this.sampler.setSet(m.samples)
-        if (m.params) { this.voice.set(m.params); this.sampler.set(m.params); this.cabin.set(m.params) }
+        if (m.params) { this.voice.set(m.params); this.sampler.set(m.params); this.cabin.set(m.params); this.loud.set(m.params) }
       }
     }
     process(inputs, outputs) {
@@ -264,6 +267,7 @@ if (typeof AudioWorkletProcessor !== 'undefined' && typeof registerProcessor ===
         }
       }
       this.cabin.process(out, n)
+      this.loud.process(out, n)
       return true
     }
   }

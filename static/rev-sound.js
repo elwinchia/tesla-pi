@@ -18,7 +18,7 @@ export { PROFILES, CARS, MODES }
 const KEY = 'revSound'
 export const DEFAULTS = Object.freeze({
   enabled: false,      // play while driving, on the main page as well as rev.html
-  volume: 0.5,         // 0..1, squared into gain
+  volume: 0.7,         // 0..1, squared into gain after the loudness stage (rev-loudness.js)
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
   car: DEFAULT_CAR,
@@ -309,12 +309,12 @@ export class RevSound {
   // Play a clip now, its two groups mixed by the Exhaust setting, as loud as
   // the loops play the idle. Returns the sources and their gains.
   playClip(c, at = this.ctx.currentTime) {
-    const ctx = this.ctx, m = this.settings.exhaust, v = this.settings.volume
+    const ctx = this.ctx, m = this.settings.exhaust
     return [[c.engine, Math.sqrt(1 - m)], [c.exhaust, Math.sqrt(m)]].map(([buf, g]) => {
       const src = ctx.createBufferSource()
       src.buffer = buf
       const gain = ctx.createGain()
-      gain.gain.value = g * v * v * IDLE_SUM
+      gain.gain.value = g * IDLE_SUM // the Volume comes after, in the worklet
       // Through the worklet, so the cabin hears it as it hears the loops.
       src.connect(gain).connect(this.node)
       src.start(at)
@@ -429,7 +429,7 @@ export class RevSound {
     // One input: the start and stop clips, mixed in before the cabin.
     const node = new AudioWorkletNode(ctx, 'rev-engine', { numberOfInputs: 1, outputChannelCount: [2] })
     node.connect(ctx.destination)
-    node.port.postMessage({ profile: this.engine.profile, params: { gain: 0, cabin: this.settings.cabin } })
+    node.port.postMessage({ profile: this.engine.profile, params: { gain: 0, volume: this.settings.volume, cabin: this.settings.cabin } })
     this.ctx = ctx; this.node = node
     if (ctx.state === 'suspended') ctx.resume().catch(() => {})
     this.syncSound()
@@ -583,10 +583,12 @@ export class RevSound {
     }
     const s = this.engine.step(t, dt)
     if (this.node) {
-      const v = this.settings.volume
-      const gain = v * v * this.loopsIn(t)
+      // gain: the loops' share (the start clip's handover); the Volume is
+      // applied after the cabin and the compressor (rev-loudness.js), so the
+      // slider turns everything down evenly, the clips and live included.
+      const gain = this.loopsIn(t)
       const live = this.livePlaying
-      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: live ? 0 : gain, exhaust: this.settings.exhaust, cabin: this.settings.cabin,
+      this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: live ? 0 : gain, volume: this.settings.volume, exhaust: this.settings.exhaust, cabin: this.settings.cabin,
         shifting: s.shifting, limiter: !!s.limiter, gear: s.gear } })
       if (this.live) this.live.set({ rpm: s.rpm, load: s.load, gain, exhaust: this.settings.exhaust, idle: this.engine.profile.idle, stopped: s.stopped, limiter: !!s.limiter })
     }

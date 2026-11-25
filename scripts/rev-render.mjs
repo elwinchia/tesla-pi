@@ -35,6 +35,7 @@ import { PROFILES } from '../static/rev-profiles.js'
 import { EngineVoice } from '../static/rev-worklet.js'
 import { SampleVoice } from '../static/rev-sampler.js'
 import { Cabin } from '../static/rev-cabin.js'
+import { Loudness } from '../static/rev-loudness.js'
 import { SAMPLE_SETS, hasRecording, loopSlice, loopsFor } from '../static/rev-samples.js'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -48,7 +49,7 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log('usage: rev-render.mjs [--profile ' + Object.keys(PROFILES).join('|') + ' | --all] [--mode comfort|normal|sport]\n' +
     '                     [--car ' + Object.keys(CARS).join('|') + '] [--scene drive|rev|demo]\n' +
     '                     [--recorded [--exhaust 0..1] [--dense] [--part] [--shots] [--long]] [--outside]\n' +
-    '                     [--fix-ms 1000] [--out file.wav | --out-dir dir]')
+    '                     [--volume 0..1] [--fix-ms 1000] [--out file.wav | --out-dir dir]')
   process.exit(0)
 }
 const fixMs = Number(opt('fix-ms', 1000))
@@ -140,10 +141,15 @@ if (recorded) {
   voice = new EngineVoice(SR, 0x5eed)
   voice.setProfile(PROFILES[settings.profile])
 }
-voice.set({ gain: 0.5, exhaust: Number(opt('exhaust', DEFAULTS.exhaust)) })
+voice.set({ gain: 1, exhaust: Number(opt('exhaust', DEFAULTS.exhaust)) })
 const cabin = new Cabin(SR)
 cabin.set({ cabin: settings.cabin })
 cabin.mix = settings.cabin ? 1 : 0
+// Then the loudness stage and the page's Volume slider (--volume 0..1,
+// settings' default unless given), as the worklet does.
+const loud = new Loudness(SR)
+loud.set({ volume: Number(opt('volume', settings.volume)) })
+loud.vol = loud.volTarget
 
 const frames = Math.round(seconds / TICK) * BLOCK
 const pcm = Buffer.alloc(frames * 4)
@@ -169,6 +175,7 @@ for (let i = 0; i < seconds / TICK; i++) {
     const outs = [L.subarray(o, o + n), R.subarray(o, o + n)]
     voice.render(outs, n)
     cabin.process(outs, n)
+    loud.process(outs, n)
   }
   for (let k = 0; k < BLOCK; k++) {
     pcm.writeInt16LE(Math.round(L[k] * 32767), w); w += 2

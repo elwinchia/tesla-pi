@@ -105,6 +105,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-profiles.js` | The four cars: idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A high shelf from 650 Hz (−11 dB on overrun and at idle, opening to −6 dB under full load) and a low-pass at 3.2 kHz, run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
+| `static/rev-loudness.js` | The last stage: a compressor, +16 dB make-up, the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
 | `static/rev-live.js`, `rev-live-worker.js`, `rev-live-worklet.js`, `static/live/` | Live engine-sim (the "Engine: Live engine-sim" setting): engine-sim compiled to WebAssembly, run in a Web Worker, its dry output played through the loops' own impulse responses, EQ and sub layer with native nodes. Built by `scripts/engine-sim/wasm/build-wasm.sh`. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono, 64 kbit/s; 148 files, about 2 MB, four cars, engine and exhaust) and `CREDITS.md`. |
@@ -273,6 +274,30 @@ against outside; loudness within 0.6 dB, nothing clips):
 The V8's straight-pipe rasp (2.6–5.1 kHz) was the loudest top end of the
 four, and the cabin takes 12 dB off it.
 
+**Loud enough for the road** (2026-11-25, `static/rev-loudness.js`). In
+the car the engine was too quiet: with the page at 100 % the owner had to
+turn the car from their music setting (25–30 %) up to 50–60 %. Measured at
+100 % (drive scene, cabin on), the four cars cruised at −18 to −25 LUFS and
+idled at −25 to −29, against about −14 LUFS for streamed music. A last stage
+after the cabin now fixes that: a compressor (2.5:1 above −30 dBFS RMS,
+8 dB soft knee, 20 ms attack, 350 ms release), +16 dB of make-up, then the
+Volume slider, then a peak limiter at −1 dBFS. The slider is applied after
+the compressor (it used to scale the voice, the live engine and the clips
+each), so it turns everything down evenly, 12 dB from 100 % to 50 %. The
+default is now 70 % (it was 50 %).
+
+| At 100 % (LUFS) | idle | cruise | full-throttle launch | peak |
+|---|---|---|---|---|
+| V8 | −25.7 → −14.5 | −18.1 → −10.9 | −13.8 → −9.3 | −1.0 dBFS |
+| V10 | −29.4 → −15.5 | −21.4 → −11.6 | −12.7 → −8.4 | −1.3 dBFS |
+| F136 | −29.2 → −15.8 | −25.1 → −13.6 | −13.8 → −9.1 | −1.1 dBFS |
+| Flat-6 | −25.3 → −14.7 | −23.0 → −12.9 | −15.6 → −9.9 | −1.0 dBFS |
+
+The spread from idle to a hard pull shrinks from 11–17 dB to 5–7 dB: the
+quiet parts are what the road hides. The limiter touches 0.001 % of samples
+on the drive, and holds every option (the limiter loop included) and the
+live engine (within 1 dB of the loops in the browser) under −1 dBFS.
+
 ### Two ways to make the sound, and four extras (2026-11-25)
 
 The owner asked whether running the engine sound in real time would be
@@ -314,7 +339,8 @@ across idle, part and full load, overrun and the limiter.
 - **Known:** about 120 ms of buffer on top of the model's lag; at lower
   quality the simulated idle settles at a slightly different rpm (the V8
   678 against 690, the LFA 1,035 against 901 at Half); the limiter's
-  re-fire bangs touch full scale at volume 100%.
+  re-fire bangs touched full scale at volume 100% (held under −1 dBFS by
+  the loudness stage since, `static/rev-loudness.js`).
 
 **Twice the rev points** (`denseRpm`). A rev point midway between each pair
 of the car's own, at the geometric middle (to 50 rpm), held on-load and on
