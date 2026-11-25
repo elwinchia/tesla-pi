@@ -176,7 +176,8 @@
     <div class="card span2">
       <h2>Car sound</h2>
       <div class="cars" id="cars" role="group" aria-label="Car sound"></div>
-      <p class="hint">Each car plays loops rendered with engine-sim, a physically modelled engine, at idle and nine rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
+      <p class="hint"><b>Tesla</b> (the default) is the car as it is: no engine sound, the gauges still following it. Pick any other car to hear it, here and under CarPlay; it starts at your first tap (browsers only let a page make sound after one). Hold the gauges (away from the rev meter) to open these settings.</p>
+      <p class="hint">Each engine plays loops rendered with engine-sim, a physically modelled engine, at idle and nine rev points, each pulling and lifting off, crossfaded and pitched to the engine's revs.</p>
       <div class="credits" id="credits"></div>
       <div class="row">
         <label>Engine</label>
@@ -218,11 +219,6 @@
 
     <div class="card span2">
       <h2>Sound</h2>
-      <div class="row">
-        <label for="enabled">Play while driving</label>
-        <button id="enabled" type="button" aria-pressed="false">Off</button>
-      </div>
-      <p class="hint">The engine's sound, here and on the main page under CarPlay; it starts at your first tap (browsers only let a page make sound after one). Off, it is silent and the gauges still follow the car. Hold the gauges (away from the rev meter) to open these settings. Off by default.</p>
       <div class="row">
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
@@ -274,7 +270,8 @@
   const theme = () => (document.documentElement.classList.contains('night') ? 'night' : 'day')
   // The same dash as under CarPlay: hold the rev meter to rev, hold
   // anywhere else for the settings. The engine is always running (the
-  // gauges follow the car); Play while driving decides whether it is heard.
+  // gauges follow the car); the car picked decides whether it is heard
+  // (the Tesla is silent).
   let hand = 1
   try { hand = localStorage.getItem('carplayHand') === '0' ? 0 : 1 } catch {}
   const embedded = document.documentElement.classList.contains('embed')
@@ -292,7 +289,7 @@
     const p = PROFILES[rs.settings.profile]
     if (tachFor === p) return
     tachFor = p
-    capText = p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    capText = p.silent ? p.name + ', no engine sound' : p.name + ', ' + p.style + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
   }
   let capText = ''
   let lastFrame = performance.now()
@@ -314,7 +311,8 @@
     b.querySelector('.style').textContent = p.style
     b.querySelector('b').textContent = p.name
     b.querySelector('.blurb').textContent = p.blurb
-    b.querySelector('.rng').textContent = 'idle ' + p.idle + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
+    b.querySelector('.rng').textContent = p.electric ? 'no engine sound \u00b7 motor to ' + p.redline.toLocaleString('en') + ' rpm'
+      : 'idle ' + p.idle + ' \u00b7 redline ' + p.redline.toLocaleString('en') + ' rpm'
     $('cars').appendChild(b)
     cards[k] = b
   }
@@ -384,9 +382,6 @@
 
   function syncSettings() {
     const s = rs.settings
-    $('enabled').setAttribute('aria-pressed', String(s.enabled))
-    $('enabled').textContent = s.enabled ? 'On' : 'Off'
-    $('enabled').classList.toggle('on', s.enabled)
     $('volume').value = Math.round(s.volume * 100)
     $('exhaust').value = Math.round(s.exhaust * 100)
     for (const b of $('engineSim').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.es === s.engineSim))
@@ -408,14 +403,6 @@
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
   }
 
-  $('enabled').onclick = () => {
-    const on = !rs.settings.enabled
-    // Off: silent, the engine runs on. On: the tap is the gesture the
-    // browser wants before it lets a page make sound, so it comes in now.
-    rs.update({ enabled: on })
-    if (on && !embedded) rs.startSound()
-    syncSettings()
-  }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
   $('exhaust').oninput = (e) => rs.update({ exhaust: e.target.value / 100 })
   $('car').onchange = (e) => rs.update({ car: e.target.value })
@@ -465,6 +452,7 @@
   function liveText(s) {
     const l = s.live
     // engine-sim simulates piston engines only (rev-sound.js syncLive).
+    if (PROFILES[rs.settings.profile].silent) return 'The Tesla makes no engine sound.'
     if (PROFILES[rs.settings.profile].turbine) return 'Not for the ' + PROFILES[rs.settings.profile].name + ': engine-sim simulates piston engines only, so it plays its rendered loops.'
     if (!l) return rs.settings.engineSim === 'live' && s.audible ? 'Starting\u2026' : 'Starts with the sound.'
     const speed = Number.isFinite(l.speed) ? l.speed.toFixed(2) + '\u00d7 real time' : ''
@@ -481,7 +469,7 @@
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     simBack(s)
-    const cap = capText + (!s.running ? '' : !s.audible ? ' \u00b7 sound off' : ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? (PROFILES[rs.settings.profile].turbine ? 'our turbine render' : 'engine-sim') : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)'))
+    const cap = capText + (!s.running ? '' : PROFILES[rs.settings.profile].silent ? '' : !s.audible ? ' \u00b7 tap for sound' : ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? (PROFILES[rs.settings.profile].turbine ? 'our turbine render' : 'engine-sim') : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)'))
     const ls = liveText(s)
     if ($('live-status').textContent !== ls) $('live-status').textContent = ls
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
@@ -504,12 +492,13 @@
   syncSettings()
   render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, idle: 1, running: false, stale: true, source: rs.source, sim: false })
   // The engine starts with the page: the gauges follow the car from the
-  // first GPS reading. Its sound waits for the first tap anywhere (and for
-  // Play while driving). Not in the sheet over CarPlay: the page under it
+  // first GPS reading. Its sound waits for the first tap anywhere. Not in the sheet over CarPlay: the page under it
   // runs the engine.
   if (!embedded) {
     rs.start()
-    const wake = () => { if (rs.settings.enabled) { document.removeEventListener('pointerdown', wake, true); rs.startSound() } }
+    // The first tap anywhere: the sound, unless the Tesla is picked (then a
+    // car card's own tap brings it in).
+    const wake = () => { document.removeEventListener('pointerdown', wake, true); rs.startSound() }
     document.addEventListener('pointerdown', wake, true)
   }
 </script>

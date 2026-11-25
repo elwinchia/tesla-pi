@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SpeedTracker, loadFromMotion, Gearbox, FreeRev, SimCar, CARS } from '../static/rev-model.js'
-import { PROFILES } from '../static/rev-profiles.js'
+import { PROFILES, ENGINES } from '../static/rev-profiles.js'
 
 const car = CARS.m3rwd
 const kmh = (x) => x / 3.6
@@ -60,7 +60,7 @@ function drive(profile, mode, speedAt, loadAt, seconds) {
   return out
 }
 
-for (const [name, p] of Object.entries(PROFILES)) {
+for (const [name, p] of Object.entries(ENGINES)) {
   if (p.turbine) continue // the jet: its own tests below
   test(`${name}: a full-throttle pull climbs the gears and never passes redline`, () => {
     const run = drive(p, 'normal', (t) => Math.min(kmh(220), t / 1000 * 4), () => 1, 20)
@@ -173,7 +173,7 @@ test('SimCar: a Model 3 RWD does 0-100 km/h in a believable time', () => {
 })
 
 test('the gearbox does not hunt under a steady part-throttle pull or a steady cruise', () => {
-  for (const [name, p] of Object.entries(PROFILES)) {
+  for (const [name, p] of Object.entries(ENGINES)) {
     for (const load of [0, 0.1, 0.5, 0.75, 0.9]) {
       for (const mode of ['comfort', 'normal', 'sport']) {
         // Slow climb through the whole speed range at a fixed load.
@@ -239,7 +239,7 @@ test('lifting the finger lets the engine fall back to idle like a real one, on o
 })
 
 test('a tap is a blip: the engine reaches the tapped rpm, then falls back', () => {
-  for (const [name, p] of Object.entries(PROFILES)) {
+  for (const [name, p] of Object.entries(ENGINES)) {
     const fr = new FreeRev(p)
     fr.hold(5000); fr.release(true) // finger up before the engine moved
     const out = run(fr, 3)

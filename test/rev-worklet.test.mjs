@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EngineVoice } from '../static/rev-worklet.js'
-import { PROFILES } from '../static/rev-profiles.js'
+import { PROFILES, ENGINES } from '../static/rev-profiles.js'
 
 const SR = 48000
 
@@ -22,7 +22,7 @@ function render(profile, { rpm, load, gain = 1, seconds = 1, seed = 3, settle = 
 }
 const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length)
 
-for (const [name, p] of Object.entries(PROFILES)) {
+for (const [name, p] of Object.entries(ENGINES)) {
   test(`${name}: fires each cylinder once per two revolutions`, () => {
     for (const rpm of [p.idle, 3000, p.redline]) {
       const { firings } = render(p, { rpm, load: 0.5 })
@@ -87,7 +87,7 @@ test('changing engine and rpm mid-stream stays clean', () => {
   const v = new EngineVoice(SR, 1)
   v.setProfile(PROFILES.v8)
   const L = new Float32Array(128), R = new Float32Array(128)
-  const names = Object.keys(PROFILES)
+  const names = Object.keys(ENGINES)
   for (let b = 0; b < 2000; b++) {
     if (b % 250 === 0) v.setProfile(PROFILES[names[(b / 250) % names.length]])
     v.set({ rpm: 800 + (b % 400) * 20, load: Math.sin(b / 50), gain: 1 })
@@ -106,7 +106,7 @@ test('a voice with no engine chosen yet is silent', () => {
 // ── Car sounds ──────────────────────────────────────────────────────────
 test('every car sound is complete and has its own name', () => {
   const names = new Set()
-  for (const [k, p] of Object.entries(PROFILES)) {
+  for (const [k, p] of Object.entries(ENGINES)) {
     for (const f of ['name', 'style', 'blurb']) assert.ok(typeof p[f] === 'string' && p[f].length > 1, `${k}.${f}`)
     names.add(p.name + ' ' + p.style)
     assert.ok(p.idle > 400 && p.idle < p.launch && p.launch < p.redline && p.redline <= 18000, k) // the F1 revs to 17,000
@@ -119,8 +119,8 @@ test('every car sound is complete and has its own name', () => {
       assert.ok(Number.isInteger(c.bank) && c.bank >= 0 && c.bank < p.banks.length && c.bank < 2, `${k} bank`)
     }
   }
-  assert.equal(names.size, Object.keys(PROFILES).length)
-  assert.ok(Object.keys(PROFILES).length >= 1)
+  assert.equal(names.size, Object.keys(ENGINES).length)
+  assert.ok(Object.keys(ENGINES).length >= 1)
 })
 
 test('a lumpy cam lopes at idle and smooths out with revs', () => {

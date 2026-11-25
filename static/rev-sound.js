@@ -16,8 +16,6 @@ export { PROFILES, CARS, MODES }
 
 const KEY = 'revSound'
 export const DEFAULTS = Object.freeze({
-  enabled: false,      // "Play while driving": the engine's sound, here and on the main
-                       // page. Off, it is silent; the engine and the gauges run either way.
   volume: 0.7,         // 0..1, squared into gain after the loudness stage (rev-loudness.js)
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
@@ -59,9 +57,11 @@ export function saveSettings(s, storage = globalThis.localStorage) {
 export function sanitise(raw) {
   const s = { ...DEFAULTS }
   if (!raw || typeof raw !== 'object') return s
-  if (typeof raw.enabled === 'boolean') s.enabled = raw.enabled
   if (Number.isFinite(raw.volume)) s.volume = clamp(raw.volume, 0, 1)
   if (Object.hasOwn(PROFILES, raw.profile)) s.profile = raw.profile
+  // Saved before the Tesla was a car, with "Play while driving" off: the
+  // Tesla is what off is now. (On, the car picked stays.)
+  if (raw.enabled === false) s.profile = 'tesla'
   if (Object.hasOwn(MODES, raw.mode)) s.mode = raw.mode
   if (Object.hasOwn(CARS, raw.car)) s.car = raw.car
   if (Number.isFinite(raw.exhaust)) s.exhaust = clamp(raw.exhaust, 0, 1)
@@ -116,6 +116,7 @@ export class Engine {
   // car again. Returns whether simulation mode is on.
   moving(t) { return this.tracker.at(t).v >= STOPPED_MS }
   setSim(on, t) {
+    if (on && this.profile.electric) { this.sim = false; this.simEnded = 'electric'; return false }
     if (on && this.moving(t)) { this.sim = false; this.simEnded = 'moving'; return false }
     this.sim = !!on
     this.simEnded = null
@@ -128,7 +129,7 @@ export class Engine {
   untouch(blip = false) { this.free.release(blip) }
   // One blip to `rpm`, to preview an engine. Stopped only, like Rev.
   blip(rpm, t) {
-    if (this.moving(t)) return false
+    if (this.moving(t) || this.profile.electric) return false
     this.free.hold(rpm); this.free.release(true)
     return true
   }
@@ -144,7 +145,8 @@ export class Engine {
     this.load += (target - this.load) * (1 - Math.exp(-dt / 0.15))
 
     let out
-    if (stopped) {
+    // The Tesla's motor has nothing to rev: parked, it reads 0.
+    if (stopped && !this.profile.electric) {
       if (this.state.gear !== 0) this.free.rpm = this.gearbox.rpm
       out = this.free.step(this.revThrottle, dt)
       this.gearbox.gear = 1
@@ -207,13 +209,17 @@ export class RevSound {
     this.settings = next
     this.engine.configure(next)
     this.sim.car.setCar(CARS[next.car])
-    if (next.profile !== prev.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
+    // The Tesla has no sound for the worklet to set up.
+    if (next.profile !== prev.profile && this.node && this.heard) this.node.port.postMessage({ profile: this.engine.profile })
     if (next.profile !== prev.profile || RECORDED_OPTIONS.some((k) => next[k] !== prev[k])) this.syncSound()
-    else if (next.engineSim !== prev.engineSim || next.liveQuality !== prev.liveQuality || next.enabled !== prev.enabled) this.syncLive()
-    // Play while driving switched off: the sound glides out and the audio
-    // sleeps; the engine runs on. Switched on, startSound() (from the tap)
-    // brings it back.
-    if (prev.enabled && !next.enabled) this.mute()
+    else if (next.engineSim !== prev.engineSim || next.liveQuality !== prev.liveQuality) this.syncLive()
+    // The Tesla picked: the sound glides out and the audio sleeps; the
+    // engine runs on. An engine picked again: startSound() (from the tap,
+    // or the next one) brings it back.
+    if (PROFILES[prev.profile].silent !== PROFILES[next.profile].silent) {
+      if (!this.heard) this.mute()
+      else this.resumeAudio()
+    }
     return next
   }
 
@@ -240,8 +246,9 @@ export class RevSound {
   // the car's GPS (or the simulator), so the gauges always work. Its sound
   // is separate (startSound()).
   get running() { return this.timer != null }
-  // Heard: the audio is up and Play while driving is on.
-  get audible() { return !!(this.ctx && this.settings.enabled) }
+  // Heard: the car picked makes a sound (not the Tesla), and the audio is up.
+  get heard() { return !this.engine.profile.silent }
+  get audible() { return !!(this.ctx && this.heard) }
 
   // Start the engine: no tap needed, and nothing heard yet.
   start() {
@@ -253,12 +260,12 @@ export class RevSound {
     document.addEventListener('visibilitychange', this.onVisibility)
     this.emit(this.last)
   }
-  // Its sound, when Play while driving is on. Call it from a tap the first
+  // Its sound, unless the Tesla is picked. Call it from a tap the first
   // time: browsers only let a page make sound after one. The loops come in
   // over the player's own glide; the engine is already running.
   async startSound() {
     this.start()
-    if (!this.settings.enabled) return
+    if (!this.heard) return
     try {
       await this.ensureAudio()
     } catch (e) {
@@ -312,6 +319,7 @@ export class RevSound {
     if (!this.node) return
     const car = this.settings.profile
     this.soundNote = null
+    if (!this.heard) { this.sound = 'none'; this.syncLive(); return }
     // Live engine-sim, when chosen, starts alongside: the recorded loops
     // play until it is running, and take over again if it cannot keep up.
     this.syncLive()
@@ -379,7 +387,7 @@ export class RevSound {
   }
 
   // ── Live engine-sim (static/rev-live.js) ──
-  // Started when chosen, the audio is up and Play while driving is on, for
+  // Started when chosen, the audio is up and an engine is picked, for
   // the car and quality chosen; stopped otherwise (it costs a lot of
   // processor, so not while silent). Loaded on demand: the recorded mix never fetches it.
   // It plays into the worklet's input, so it goes through the cabin.
@@ -459,11 +467,11 @@ export class RevSound {
     }
     const s = this.engine.step(t, dt)
     if (this.node) {
-      // gain: 1 while heard, 0 while Play while driving is off (the player
-      // glides between them). The Volume is applied after the cabin and the
+      // gain: 1 while heard, 0 for the Tesla (the player glides between
+      // them). The Volume is applied after the cabin and the
       // compressor (rev-loudness.js), so the slider turns everything down
       // evenly, live included.
-      const gain = this.settings.enabled ? 1 : 0
+      const gain = this.heard ? 1 : 0
       const live = this.livePlaying
       this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: live ? 0 : gain, volume: this.settings.volume, exhaust: this.settings.exhaust, cabin: this.settings.cabin,
         shifting: s.shifting, limiter: !!s.limiter, gear: s.gear } })
@@ -477,6 +485,7 @@ export class RevSound {
       simSpeed: this.sim.car.v, running: this.running, audible: this.audible, error: this.error,
       sound: this.livePlaying ? 'live' : this.sound, soundNote: this.liveNote || this.soundNote,
       live: this.live ? this.live.status() : null,
-      redline: this.engine.profile.redline, idle: this.engine.profile.idle, turbine: !!this.engine.profile.turbine })
+      redline: this.engine.profile.redline, idle: this.engine.profile.idle, turbine: !!this.engine.profile.turbine,
+      electric: !!this.engine.profile.electric })
   }
 }

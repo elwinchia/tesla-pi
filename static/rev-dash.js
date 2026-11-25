@@ -153,7 +153,9 @@ export class Dash {
       if (!style || style.touch || this.revving != null) return
       const p = style.toPicture(e)
       if (!p || !style.tachHit(p[0], p[1])) return
-      if (!this.rs.running || this.moving) return
+      // Nothing to rev on the move, nor in the Tesla (its hold opens the
+      // settings instead).
+      if (!this.rs.running || this.moving || this.rs.engine.profile.electric) return
       e.preventDefault()
       this.revving = e.pointerId
       try { g.setPointerCapture(e.pointerId) } catch {}

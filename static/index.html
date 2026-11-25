@@ -2223,7 +2223,7 @@
             </div>
             <!-- Engine sound (static/rev.html, docs/rev-sound.md). Client-only: the
                  sound is made and played by this browser, the Pi just serves
-                 the files. Off unless the owner turns it on. -->
+                 the files. Silent until the owner picks a car other than the Tesla. -->
             <div class="set-row is-inline" data-search="engine sound rev v8 exhaust noise fake engine tesrev">
               <div class="set-row-main">
                 <div class="set-row-label">
@@ -2237,17 +2237,11 @@
                   Plays a made-up engine through the car's speakers that revs and shifts
                   with your driving, read from the car's GPS speed. It is heard inside the
                   car only and does not reflect the car's real state. Keep it quiet enough
-                  to hear horns and sirens. It starts at your first tap on this page. Off, it
-                  is silent; the gauges under CarPlay follow the car either way (hold them
-                  for the engine sound's settings).
+                  to hear horns and sirens. Pick a car to hear it, from your first tap on this
+                  page; the Tesla (the default) is silent. The gauges under CarPlay follow the
+                  car either way (hold them for the engine sound's settings).
                 </p>
                 <p class="set-row-sub"><a href="/rev.html" id="rev-settings-link" style="color:inherit">Car, volume, exhaust and gauge style&hellip;</a></p>
-              </div>
-              <div class="set-row-control">
-                <button type="button" class="set-switch" id="rev-switch" role="switch"
-                        aria-checked="false" aria-label="Engine sound">
-                  <span class="knob"></span>
-                </button>
               </div>
             </div>
             <div class="set-row" data-search="fps frames per second bandwidth video smooth frame rate">
@@ -4405,16 +4399,12 @@
   // ---- Engine sound (client-only; static/rev-sound.js) -------------------
   // The engine always runs: it is loaded and started with the page and
   // follows the car's GPS speed, so the gauges under CarPlay always work.
-  // The switch ("Play while driving" on rev.html) is its sound only, off by
-  // default; on, the sound comes in at the first tap (browsers refuse sound
-  // before one). It never talks to the Pi. Settings are shared with rev.html
-  // through localStorage.
-  const revSwitchEl = document.getElementById('rev-switch');
+  // Its sound is the car picked (rev.html, or the sheet): the Tesla, the
+  // default, is silent; any other comes in at the first tap (browsers
+  // refuse sound before one). It never talks to the Pi. Settings are shared
+  // with rev.html through localStorage.
   let revSound = null;
   let revLoading = null;
-  function revEnabled() {
-    try { return !!(JSON.parse(lsGet('revSound') || 'null') || {}).enabled; } catch { return false; }
-  }
   function loadRevSound() {
     if (!revLoading) {
       revLoading = import('./rev-sound.js')
@@ -4435,35 +4425,15 @@
     disarmRevStart();
     revArm = () => {
       disarmRevStart();
-      if (!revEnabled()) return;
-      loadRevSound().then((rs) => { if (rs && revEnabled()) rs.startSound(); });
+      loadRevSound().then((rs) => { if (rs) rs.startSound(); });
     };
     document.addEventListener('pointerdown', revArm, true);
   }
-  function applyRev(on) {
-    revSwitchEl.setAttribute('aria-checked', on ? 'true' : 'false');
-  }
   function initRev() {
-    const on = revEnabled();
-    applyRev(on);
     loadRevSound().then((rs) => { if (rs) rs.start(); });
     startDock();
-    if (on) armRevStart();
+    armRevStart();
   }
-  revSwitchEl.addEventListener('click', async () => {
-    const next = !revEnabled();
-    applyRev(next);
-    const rs = await loadRevSound();
-    if (!rs) { applyRev(false); return; }
-    // Off: silent, the engine and the gauges run on.
-    rs.update({ enabled: next });
-    // Turning it on is the owner asking for the gauges again, even after
-    // CarPlay fell back to full screen.
-    if (next) lsSet(WIDE_BLOCK_KEY, '0');
-    // The tap on the switch is the gesture that lets the sound start.
-    if (next) rs.startSound();
-    reconcileAspect();
-  });
   // The engine sound's settings in a sheet over CarPlay (rev.html?embed=1):
   // leaving this page would drop CarPlay and cost a cold start.
   function openRevSheet() {
@@ -4485,16 +4455,19 @@
   }
   document.getElementById('rev-settings-link').addEventListener('click', (e) => { e.preventDefault(); openRevSheet(); });
   // Settings saved by the sheet (another document on this origin) arrive as
-  // a storage event: take them, and follow an engine sound switched on/off.
+  // a storage event: take them. A car picked there (a tap in the sheet,
+  // which counts for this page too) brings its sound in; the Tesla glides
+  // it out. Changing the engine's settings is also the owner asking for the
+  // gauges again after CarPlay fell back to full screen.
   window.addEventListener('storage', (e) => {
     if (e.key !== 'revSound') return;
-    const on = revEnabled();
-    applyRev(on);
     if (revSound) {
       const st = revSound.reload();
       if (revDash) revDash.setStyle(st.gauge).then(syncDockDark);
+      revSound.startSound();
     }
-    if (on) armRevStart();
+    armRevStart();
+    lsSet(WIDE_BLOCK_KEY, '0');
     reconcileAspect();
   });
 
@@ -4523,8 +4496,8 @@
   }
   // Wide was unstable on this dongle at one height (it dropped off USB and
   // CarPlay restarted in a loop: see index.js). If CarPlay keeps starting
-  // over in wide, go back to full and stop asking until the engine sound is
-  // switched on again.
+  // over in wide, go back to full and stop asking until the engine sound's
+  // settings are next changed.
   const wideStarts = [];
   function noteWidePhase(phase) {
     if (renderedAspect !== 'wide') return;

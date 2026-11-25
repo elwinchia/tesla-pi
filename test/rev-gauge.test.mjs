@@ -6,7 +6,7 @@ import {
   mix, litColor, LIT, barLit, follow, zone, ZoneLatch, valueAt, onArc, fingerRpm, HIT,
 } from '../static/rev-gauge.js'
 import { FreeRev } from '../static/rev-model.js'
-import { PROFILES } from '../static/rev-profiles.js'
+import { PROFILES, ENGINES } from '../static/rev-profiles.js'
 
 for (const [name, p] of Object.entries(PROFILES)) {
   test(`${name}: the arc covers the whole rev range and ends in red past the redline`, () => {
@@ -122,7 +122,7 @@ test('the tachometer turns amber near the redline and red at it', () => {
 })
 
 test('on the limiter the tachometer stays red, steadily, for every engine', () => {
-  for (const [name, p] of Object.entries(PROFILES)) {
+  for (const [name, p] of Object.entries(ENGINES)) {
     const s = tachScale(p.redline, p.idle)
     const fr = new FreeRev(p), latch = new ZoneLatch()
     const dt = 1 / 60
@@ -138,7 +138,7 @@ test('on the limiter the tachometer stays red, steadily, for every engine', () =
 })
 
 test('at the redline the run reaches into the red zone, even with the display easing behind', () => {
-  for (const [name, p] of Object.entries(PROFILES)) {
+  for (const [name, p] of Object.entries(ENGINES)) {
     const s = tachScale(p.redline, p.idle)
     const segs = segmentsFor(s)
     const firstRed = segs.findIndex((x) => x.red)

@@ -197,11 +197,29 @@ const jet = {
   pulseMs: 0.2, bright: [2500, 5000], intake: [3000, 0.4], pops: 0, drive: 1.1, lope: 0,
 }
 
+// No engine: the car as it is, and the picker's way to turn the engine
+// sound off. The gauges still follow the car: the rev meter shows the
+// motor, one fixed ratio like a Model 3's (about 7,100 rpm at 100 km/h,
+// 16,000 at 225), 0 at a standstill; the gear display shows D. Nothing to
+// rev while parked. silent: no sound at all (rev-sound.js); electric: the
+// motor's rpm (Gearbox.motor in rev-model.js).
+const tesla = {
+  name: 'Tesla', style: 'Electric',
+  blurb: 'Your Tesla as it is: no engine sound. The gauges still follow the car; the rev meter shows the motor.',
+  silent: true, electric: true,
+  idle: 0, redline: 16000, launch: 0, revRise: 1, revFall: 1, limiter: 0,
+  gears: kmh(225),
+}
+
 // Each idle is the rpm its engine-sim idle actually runs at (--fit-idle in
 // scripts/rev-samples.mjs), so the idle loop plays at its own pitch.
 
-// The cars, in the picker's order. Each one's sound is engine-sim loops
-// (static/rev-samples.js); these numbers drive its gearbox and rev range,
-// and synthesise it only if the loops cannot be loaded.
-export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12, f1, jet }
-export const DEFAULT_PROFILE = 'v8'
+// The cars, in the picker's order: the Tesla (silent), then the engines.
+// Each engine's sound is engine-sim loops (static/rev-samples.js), the
+// jet's our own; these numbers drive its gearbox and rev range, and
+// synthesise it only if the loops cannot be loaded.
+export const PROFILES = { tesla, v8, lfa, f136, gt3, i6, boxer, i4, v12, f1, jet }
+// The Tesla: the engine sound is off until a car is picked.
+export const DEFAULT_PROFILE = 'tesla'
+// The cars that make a sound.
+export const ENGINES = Object.fromEntries(Object.entries(PROFILES).filter(([, p]) => !p.silent))

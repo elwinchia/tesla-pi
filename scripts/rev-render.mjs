@@ -98,7 +98,8 @@ const demo = (t, p) => {
 const SCENES = { drive: [drive, 45], rev: [rev, 11], demo: [demo, 22] }
 if (!SCENES[sceneName]) { console.error('unknown scene'); process.exit(2) }
 
-let names = args.includes('--all') ? Object.keys(PROFILES) : [opt('profile', DEFAULTS.profile)]
+// The Tesla is silent: nothing to render, so the V8 is the default.
+let names = args.includes('--all') ? Object.keys(PROFILES).filter((k) => !PROFILES[k].silent) : [opt('profile', 'v8')]
 if (recorded) {
   const none = names.filter((n) => !hasRecording(n))
   if (none.length) console.log('no recording (synth only): ' + none.join(', '))

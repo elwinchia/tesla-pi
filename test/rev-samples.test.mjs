@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SAMPLE_SETS, CREDITS, ALLOWED_LICENCES, loopSeconds, creditsFor, creditLine, hasRecording, filesOf, loopsFor, extrasPlan, LONG_SECONDS, SHIFT } from '../static/rev-samples.js'
-import { PROFILES } from '../static/rev-profiles.js'
+import { PROFILES, ENGINES } from '../static/rev-profiles.js'
 
 const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'static', 'sounds')
 // Bytes, all cars together (the car loads only its own, and only the
@@ -124,7 +124,7 @@ test('CREDITS.md names every recording, its author, page and licence', () => {
 })
 
 test('a recorded car shows a credit line that names the work, author and licence', () => {
-  for (const car of Object.keys(PROFILES)) {
+  for (const car of Object.keys(ENGINES)) {
     const cs = creditsFor(car)
     assert.equal(cs.length > 0, hasRecording(car))
     for (const c of cs) {
@@ -183,7 +183,7 @@ test('an engine-sim car has an on-load and an overrun loop at every rev point, a
 })
 
 test('every car plays engine-sim loops (the jet: our own turbine render), with both an engine and an exhaust group', () => {
-  for (const car of Object.keys(PROFILES)) {
+  for (const car of Object.keys(ENGINES)) {
     const set = SAMPLE_SETS[car]
     assert.ok(set, `${car} has no loops`)
     assert.equal(set.kind, PROFILES[car].turbine ? 'turbine' : 'engine-sim', car)

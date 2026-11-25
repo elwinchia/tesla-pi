@@ -155,6 +155,7 @@ export class Gearbox {
   step(t, v, load, dt) {
     const p = this.p, m = this.mode
     if (p.turbine) return this.spool(v, load, dt)
+    if (p.electric) return this.motor(v, load, dt)
     const pos = Math.max(0, load)
     const upAt = p.redline * lerp(m.upLow, m.upHigh, pos)
     const downAt = p.redline * m.down
@@ -209,6 +210,16 @@ export class Gearbox {
     const gap = (target - this.rpm) / (p.redline - p.idle)
     const outLoad = gap < -0.05 ? clamp(gap * 3, -1, -0.1) : load < 0 ? load : clamp(Math.max(demand, gap * 3), 0, 1)
     return { rpm: this.rpm, gear: 1, load: outLoad, shifting: false }
+  }
+
+  // An electric motor (the Tesla): one fixed ratio, so the rpm is the
+  // road speed's, from 0 at a standstill to the redline at the top speed.
+  motor(v, load, dt) {
+    const p = this.p
+    const target = clamp(v * p.redline / p.gears[0], 0, p.redline)
+    this.rpm += (target - this.rpm) * (1 - Math.exp(-dt / 0.12))
+    this.gear = 1
+    return { rpm: this.rpm, gear: 1, load, shifting: false }
   }
 
   shift(t, dir) {

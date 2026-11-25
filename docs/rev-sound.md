@@ -7,7 +7,9 @@ browser, and the Pi only serves a few more static files.
 A synthesised engine that revs and shifts as you drive, through the car's own
 speakers. It is modelled on [TesRev](https://tesrev.com/). None of TesRev's
 code or sounds are used: its site publishes no source code and no licence
-for its sounds. There are ten cars (a muscle V8, an LFA-style V10, a
+for its sounds. The car list starts with the **Tesla**, the default: the
+car as it is, with no engine sound (its rev meter shows the motor). Then
+there are ten engines (a muscle V8, an LFA-style V10, a
 Ferrari-style flat-plane V8, a GT3-style flat-6, a 2JZ-style straight six,
 a rally boxer four, a VTEC-style four, a V12, a 1995 F1 V12 and a jet), and
 their sound is
@@ -104,7 +106,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | File | What |
 |---|---|
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
-| `static/rev-profiles.js` | The ten cars (the jet a turbine: no gears, a spool and a governor): idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
+| `static/rev-profiles.js` | The Tesla (silent; its rev meter the motor's speed on one fixed ratio) and the ten engines (the jet a turbine: no gears, a spool and a governor): idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
 | `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A low shelf at 110 Hz (the body's boom: +3 dB, +8 dB under full load), a high shelf from 650 Hz (−11 dB on overrun and at idle, −6 dB under full load) and a low-pass at 3.2 kHz; high in the revs the shelf and the low-pass open up (to −1.5 dB and 10 kHz at the redline under load) so the scream gets through. Run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
 | `scripts/rev-jet.mjs` | Our own turbojet, rendered into the files engine-sim would make (engine-sim is pistons only): blade-pass and turbine tones, buzz-saw, jet roar, rumble, crackle; its start and stop. |
@@ -124,14 +126,15 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for the dashboard, the Simulator, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
-| `static/index.html` | The main page loads the module and starts the engine with the page, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). Settings → CarPlay → **Engine sound** (Experimental, off) is its sound only: on, it plays under CarPlay from the first tap. |
+| `static/index.html` | The main page loads the module and starts the engine with the page, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). Its sound is the car picked: the Tesla (the default) is silent; any other plays under CarPlay from the first tap. Settings → CarPlay → **Engine sound** has the link to the settings sheet. |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin; `--dense --part --shots --long` turn on the recorded mix's options. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
 ### Safety rails
 
-- **Off by default.** The switch is in Settings → CarPlay, or "Play while
-  driving" on `rev.html`.
+- **Off by default.** The default car is the Tesla, which makes no sound;
+  picking another car (on `rev.html`, or in the sheet: hold the gauges under
+  CarPlay) turns it on.
 - **Inside the car only.** It plays only through the browser's normal audio
   output. Nothing here touches the Boombox / external speaker, and nothing
   should. Pedestrian-warning sound rules are about the exterior, and this
@@ -608,11 +611,15 @@ The band under CarPlay (and the dashboard on `rev.html`) is a dash: the
 chosen gauge style, as wide as the band allows. It has no buttons
 (2026-11-25: the owner asked for ENGINE START/STOP and the settings gear
 to go). **The engine is always running**: the page starts it on load, with
-no tap, and it follows the car's GPS, so the gauges always work. **Play
-while driving** (`enabled`; on the main page, Settings → CarPlay → Engine
-sound) is its sound only: on, the sound comes in at the first tap anywhere
-(browsers only let a page make sound after one); off, it glides out, the
-audio sleeps and live engine-sim is stopped, and the gauges carry on. The
+no tap, and it follows the car's GPS, so the gauges always work. **The car
+picked is its sound**: an engine comes in at the first tap anywhere
+(browsers only let a page make sound after one); the **Tesla** (the
+default; `silent`) glides it out, the audio sleeps and live engine-sim is
+stopped, and the gauges carry on, the rev meter showing the motor (0
+parked, about 7,100 rpm at 100 km/h, 16,000 at 225; nothing to rev) and
+the gear D. There is no on/off setting any more: "Play while driving" (and
+the main page's Engine sound switch) went on 2026-11-25, at the owner's
+asking, and settings saved with it off load as the Tesla. The
 engine's start and stop clips are no longer played (an always-running
 engine has no start); the files are still built and served.
 
@@ -716,9 +723,8 @@ node scripts/rev-samples.mjs --car v8            # rebuild static/sounds/ (needs
 python3 -m http.server 8000 -d static            # then open http://localhost:8000/rev.html
 ```
 
-On `rev.html` the engine is running as soon as the page opens; turn on
-**Play while driving** to hear it, then hold the rev meter, or tap a car
-card to hear a blip. For driving, hold **Accelerator** in the **Simulator**
+On `rev.html` the engine is running as soon as the page opens; tap a car
+card other than the Tesla to hear it (and a blip), then hold the rev meter. For driving, hold **Accelerator** in the **Simulator**
 under the dashboard (always full travel): the engine
 follows a pretend car while a pedal is held, and goes back to the car's GPS
 3 s after the pretend car stops. **Brake** slows it; "Speed readings" sets
@@ -726,10 +732,9 @@ the simulated GPS rate. The source is never saved, and the pretend car does
 not count towards the trip or odometer. `localhost` counts as a secure context, so the AudioWorklet loads
 just as it does on the car's HTTPS page.
 
-In the car (after deployment): the gauges under CarPlay always run; turn on
-**Play while driving** on `https://<device>/rev.html` (or hold the gauges
-for the settings sheet), or Settings → CarPlay → Engine sound on the main
-page, to hear it.
+In the car (after deployment): the gauges under CarPlay always run; to hear
+an engine, hold the gauges for the settings sheet (or open
+`https://<device>/rev.html`) and pick a car other than the Tesla.
 
 ## 6. Not yet known, and how to find out
 

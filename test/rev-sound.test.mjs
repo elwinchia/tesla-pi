@@ -12,14 +12,22 @@ function memStorage(init = {}) {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }
 }
 
-test('engine sound is off by default', () => {
-  assert.equal(DEFAULTS.enabled, false)
-  assert.equal(loadSettings(memStorage()).enabled, false)
+test('engine sound is off by default: the Tesla, which is silent', () => {
+  assert.equal(DEFAULTS.profile, 'tesla')
+  assert.ok(PROFILES.tesla.silent)
+  assert.equal(loadSettings(memStorage()).profile, 'tesla')
+  assert.ok(!('enabled' in DEFAULTS), 'no Play while driving setting')
+})
+
+test('settings saved with the old Play while driving: off is the Tesla, on keeps the car', () => {
+  assert.equal(loadSettings(memStorage({ revSound: JSON.stringify({ enabled: false, profile: 'lfa' }) })).profile, 'tesla')
+  assert.equal(loadSettings(memStorage({ revSound: JSON.stringify({ enabled: true, profile: 'lfa' }) })).profile, 'lfa')
+  assert.ok(!('enabled' in loadSettings(memStorage({ revSound: JSON.stringify({ enabled: true }) }))))
 })
 
 test('settings survive a round trip and garbage is replaced by defaults', () => {
   const st = memStorage()
-  const mine = { enabled: true, volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, cabin: false, gauge: 'twin',
+  const mine = { volume: 0.3, profile: 'v8', mode: 'sport', car: 'm3p', exhaust: 0.8, cabin: false, gauge: 'twin',
     engineSim: 'live', liveQuality: 0.5, denseRpm: true, partThrottle: true, oneShots: true, longLoops: true }
   saveSettings(mine, st)
   assert.deepEqual(loadSettings(st), mine)
@@ -31,8 +39,8 @@ test('settings survive a round trip and garbage is replaced by defaults', () => 
   assert.equal(DEFAULTS.cabin, true, 'heard from the driver\'s seat by default')
   assert.equal(DEFAULTS.engineSim, 'recorded', 'the recorded mix unless live is chosen')
   for (const k of ['denseRpm', 'partThrottle', 'oneShots', 'longLoops']) assert.equal(DEFAULTS[k], false, k + ' off by default: the mix as it was')
-  // A car that was removed (the owner had picked one) falls back to the V8.
-  assert.equal(sanitise({ profile: 'flat6' }).profile, 'v8')
+  // A car that was removed (the owner had picked one) falls back to the default.
+  assert.equal(sanitise({ profile: 'flat6' }).profile, DEFAULTS.profile)
   assert.deepEqual(loadSettings(memStorage({ revSound: '{not json' })), DEFAULTS)
 })
 
@@ -41,6 +49,9 @@ test('a browser that refuses storage still gets working defaults', () => {
   assert.deepEqual(loadSettings(broken), DEFAULTS)
   assert.equal(saveSettings({ volume: 0.2 }, broken).volume, 0.2)
 })
+
+// The engine tests drive a V8 (the default, the Tesla, has no engine).
+const V8 = { ...DEFAULTS, profile: 'v8' }
 
 // Drive the Engine the way RevSound does: 50 Hz ticks, speed fixes once a
 // second from a simulated car.
@@ -70,23 +81,23 @@ test('a launch revs up through the gears, and the rpm never jumps between ticks'
 })
 
 test('the engine follows the car within a couple of fixes', () => {
-  const run = simulate(new Engine(DEFAULTS), () => ({ pedal: 0.6 }), 10)
+  const run = simulate(new Engine(V8), () => ({ pedal: 0.6 }), 10)
   const end = run[run.length - 1]
   assert.ok(Math.abs(end.v - end.simV) < 2.5, `engine thinks ${end.v}, car is at ${end.simV}`)
 })
 
 test('lifting off after a pull reads as overrun', () => {
-  const run = simulate(new Engine(DEFAULTS), (t) => ({ pedal: t < 8000 ? 1 : 0 }), 12)
+  const run = simulate(new Engine(V8), (t) => ({ pedal: t < 8000 ? 1 : 0 }), 12)
   assert.ok(run.filter((s) => s.t > 9500).some((s) => s.load < -0.2))
 })
 
 test('Rev works only while stopped', () => {
   const p = PROFILES.v8
-  const parked = simulate(new Engine(DEFAULTS), () => ({ rev: 1 }), 2)
+  const parked = simulate(new Engine(V8), () => ({ rev: 1 }), 2)
   assert.ok(Math.max(...parked.map((s) => s.rpm)) > p.redline * 0.95, 'revs to the limiter parked')
 
   // Moving at a steady speed with Rev held: the engine must ignore it.
-  const e = new Engine(DEFAULTS)
+  const e = new Engine(V8)
   for (let t = 0; t <= 5000; t += 20) {
     if (t % 1000 === 0) e.fix(t, 15)
     e.setRev(1)
@@ -97,8 +108,8 @@ test('Rev works only while stopped', () => {
 })
 
 test('changing the gearbox mode on the fly takes effect', () => {
-  const e = new Engine(DEFAULTS)
-  e.configure({ ...DEFAULTS, mode: 'sport' })
+  const e = new Engine(V8)
+  e.configure({ ...V8, mode: 'sport' })
   assert.equal(e.settings.mode, 'sport')
   assert.equal(e.profile, PROFILES.v8)
   e.step(0, 0.02)
@@ -107,20 +118,20 @@ test('changing the gearbox mode on the fly takes effect', () => {
 
 // ── Simulation mode is for a stopped car only ───────────────────────────
 test('simulation mode turns on with no speed reading yet, or when stopped', () => {
-  const e = new Engine(DEFAULTS)
+  const e = new Engine(V8)
   assert.equal(e.setSim(true, 0), true)
   assert.ok(e.touch(4000))
   for (let t = 0; t <= 300; t += 20) e.step(t, 0.02)
   assert.ok(Math.abs(e.state.rpm - 4000) < 200, `rpm ${e.state.rpm}`)
   assert.ok(e.state.sim && e.state.touching && e.state.stopped)
 
-  const parked = new Engine(DEFAULTS)
+  const parked = new Engine(V8)
   parked.fix(0, 0); parked.fix(1000, null)
   assert.equal(parked.setSim(true, 1100), true)
 })
 
 test('simulation mode is refused while the car moves, or when its last reading was moving', () => {
-  const e = new Engine(DEFAULTS)
+  const e = new Engine(V8)
   e.fix(0, 12); e.fix(1000, 12)
   assert.equal(e.setSim(true, 1100), false)
   assert.equal(e.simEnded, 'moving')
@@ -131,7 +142,7 @@ test('simulation mode is refused while the car moves, or when its last reading w
 })
 
 test('simulation mode ends the moment the car moves, and the engine follows the car again', () => {
-  const e = new Engine(DEFAULTS)
+  const e = new Engine(V8)
   e.fix(0, 0)
   assert.ok(e.setSim(true, 0))
   e.touch(6000)
@@ -160,7 +171,7 @@ test('simulation mode ends the moment the car moves, and the engine follows the 
 })
 
 test('turning simulation mode off lets go of the finger', () => {
-  const e = new Engine(DEFAULTS)
+  const e = new Engine(V8)
   e.setSim(true, 0); e.touch(5000)
   e.setSim(false, 0)
   for (let t = 0; t <= 3000; t += 20) e.step(t, 0.02)
@@ -176,7 +187,7 @@ test('every car sound can be chosen and is remembered', () => {
   }
 })
 
-test('the engine always runs; Play while driving switches only its sound', async () => {
+test('the engine always runs; the car picked decides its sound (the Tesla: none)', async () => {
   const { RevSound } = await import('../static/rev-sound.js')
   // Enough of a browser: no location (the engine still runs), no audio
   // until a tap brings it up (ensureAudio, stubbed).
@@ -193,20 +204,23 @@ test('the engine always runs; Play while driving switches only its sound', async
     rs.start()
     assert.ok(rs.running, 'running with no tap')
     assert.ok(states.at(-1).running && !states.at(-1).audible)
-    // Off (the default): a tap brings up no sound.
+    // The Tesla (the default): a tap brings up no sound.
     await rs.startSound()
     assert.equal(rs.ctx, null)
     rs.tick()
-    assert.ok(states.at(-1).running && !states.at(-1).audible)
-    // On, and a tap: heard, and the loops are played at full share.
-    rs.update({ enabled: true })
+    assert.ok(states.at(-1).running && !states.at(-1).audible && states.at(-1).electric)
+    // An engine, and a tap: heard, the loops at full share.
+    rs.update({ profile: 'v8' })
     await rs.startSound()
     assert.ok(rs.audible)
     rs.tick()
     assert.equal(sent.at(-1).params.gain, 1)
-    // Off again: silent, and the engine and its state run on.
-    rs.update({ enabled: false })
+    // The Tesla again: silent, the worklet not handed its profile, and the
+    // engine and its state run on.
+    const before = sent.length
+    rs.update({ profile: 'tesla' })
     assert.ok(!rs.audible && rs.running)
+    assert.ok(!sent.slice(before).some((m) => m.profile), 'no profile for the worklet')
     rs.tick()
     assert.equal(sent.at(-1).params.gain, 0)
     assert.ok(states.at(-1).running && !states.at(-1).audible)
@@ -214,4 +228,25 @@ test('the engine always runs; Play while driving switches only its sound', async
     clearInterval(rs.timer)
     globalThis.document = saved
   }
+})
+
+test('the Tesla: the rev meter shows the motor, 0 parked, with nothing to rev', () => {
+  const e = new Engine({ ...DEFAULTS, profile: 'tesla' })
+  const p = PROFILES.tesla
+  // Parked, holding Rev: still 0; no blip, no simulation mode.
+  const parked = simulate(e, () => ({ rev: 1 }), 2)
+  assert.ok(parked.every((s) => s.rpm < 1))
+  assert.equal(e.blip(5000, 3000), false)
+  assert.equal(e.setSim(true, 3000), false)
+  // Driving: the rpm follows the speed on one ratio, never past the redline.
+  const run = simulate(new Engine({ ...DEFAULTS, profile: 'tesla' }), () => ({ pedal: 1 }), 20)
+  for (const s of run.slice(-50)) {
+    assert.ok(s.rpm <= p.redline + 1)
+    assert.equal(s.gear, 1)
+    const want = s.v * p.redline / p.gears[0]
+    assert.ok(Math.abs(s.rpm - Math.min(want, p.redline)) < 0.1 * p.redline, `${s.rpm.toFixed(0)} rpm at ${(s.v * 3.6).toFixed(0)} km/h`)
+  }
+  // About 7,100 rpm at 100 km/h.
+  const at100 = (100 / 3.6) * p.redline / p.gears[0]
+  assert.ok(at100 > 6800 && at100 < 7400, at100.toFixed(0))
 })
