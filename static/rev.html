@@ -81,7 +81,6 @@
     touch-action: manipulation;
   }
   select { min-width: 220px; }
-  button.go { background: #3b5bdb; border-color: #4c6ef5; color: #fff; }
   button.on { background: #2b8a3e; border-color: #40c057; color: #fff; }
   button:disabled { opacity: 0.45; }
   input[type=range] { width: 260px; accent-color: var(--accent); }
@@ -157,9 +156,6 @@
 
     <div class="card span2 noembed">
       <h2>Simulator</h2>
-      <div class="row">
-        <button id="start" type="button" class="go">Start</button>
-      </div>
       <div id="sim">
         <div class="row">
           <label for="fixms">Speed readings</label>
@@ -226,7 +222,7 @@
         <label for="enabled">Play while driving</label>
         <button id="enabled" type="button" aria-pressed="false">Off</button>
       </div>
-      <p class="hint">On, the engine also plays on the main page (under CarPlay) once you tap the screen. Off by default.</p>
+      <p class="hint">The engine's sound, here and on the main page under CarPlay; it starts at your first tap (browsers only let a page make sound after one). Off, it is silent and the gauges still follow the car. Hold the gauges (away from the rev meter) to open these settings. Off by default.</p>
       <div class="row">
         <label for="volume">Volume</label>
         <input id="volume" type="range" min="0" max="100" step="1">
@@ -276,9 +272,9 @@
   // 50 Hz, the screen draws at its own rate, and everything eases toward the
   // latest value so neither rate shows as steps.
   const theme = () => (document.documentElement.classList.contains('night') ? 'night' : 'day')
-  // The same dash as under CarPlay: ENGINE START/STOP and settings beside
-  // the gauge, on the passenger's side (CarPlay's drive side, as last told
-  // to the main page); hold the rev meter to rev.
+  // The same dash as under CarPlay: hold the rev meter to rev, hold
+  // anywhere else for the settings. The engine is always running (the
+  // gauges follow the car); Play while driving decides whether it is heard.
   let hand = 1
   try { hand = localStorage.getItem('carplayHand') === '0' ? 0 : 1 } catch {}
   const embedded = document.documentElement.classList.contains('embed')
@@ -289,8 +285,7 @@
     // The car's battery and range over Bluetooth; never from the sheet,
     // whose page underneath already reads them.
     car: embedded ? null : new CarReader(),
-    onSettings: () => $('cars').scrollIntoView({ behavior: 'smooth', block: 'start' }),
-    onEngine: () => syncSettings() })
+    onSettings: () => $('cars').scrollIntoView({ behavior: 'smooth', block: 'start' }) })
   if (!embedded) cluster.setStyle(rs.settings.gauge)
   let tachFor = null
   function fitTach() {
@@ -332,7 +327,7 @@
     // browser wants before it makes sound; blip() refuses if the car moves.
     // Not in the sheet: the page under it is already playing the engine.
     if (embedded) return
-    if (!rs.running) { await rs.start(); syncSettings() }
+    await rs.startSound()
     rs.blip(PROFILES[b.dataset.profile].redline * 0.7)
   }
   for (const [k, c] of Object.entries(CARS)) $('car').add(new Option(c.name, k))
@@ -411,17 +406,14 @@
     }
     $('car').value = s.car
     for (const b of $('mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === s.mode))
-    $('start').textContent = rs.running ? 'Stop' : 'Start'
-    $('start').className = rs.running ? 'on' : 'go'
   }
 
   $('enabled').onclick = () => {
     const on = !rs.settings.enabled
+    // Off: silent, the engine runs on. On: the tap is the gesture the
+    // browser wants before it lets a page make sound, so it comes in now.
     rs.update({ enabled: on })
-    // Turning it on is a tap, which is the gesture the browser wants before
-    // it lets a page make sound — so start right away.
-    if (on && !rs.running && !embedded) rs.start().then(syncSettings)
-    if (!on && rs.running && rs.source === 'gps') rs.stop()
+    if (on && !embedded) rs.startSound()
     syncSettings()
   }
   $('volume').oninput = (e) => rs.update({ volume: e.target.value / 100 })
@@ -433,10 +425,6 @@
   $('cabin').onclick = (e) => { const b = e.target.closest('[data-cabin]'); if (b) { rs.update({ cabin: b.dataset.cabin === '1' }); syncSettings() } }
   $('mode').onclick = (e) => { const m = e.target.closest('[data-mode]'); if (m) { rs.update({ mode: m.dataset.mode }); syncSettings() } }
   $('fixms').onchange = (e) => rs.setSimFixMs(Number(e.target.value))
-  $('start').onclick = async () => {
-    if (rs.running) rs.stop(); else await rs.start()
-    syncSettings()
-  }
 
   // Press-and-hold controls. Pointer capture keeps the hold when a finger
   // slides off the button; lostpointercapture catches every way it ends.
@@ -461,8 +449,7 @@
   const simBusy = () => { simLastBusy = performance.now() }
   hold($('pedal'), async () => {
     simHeld++; simBusy()
-    if (!rs.running) { await rs.start(); syncSettings() }
-    if (!rs.running) return
+    await rs.startSound()
     if (rs.source !== 'sim') { rs.setSource('sim'); rs.emit(performance.now()) }
     rs.setPedal(1)
   }, () => { simHeld = Math.max(0, simHeld - 1); simBusy(); rs.setPedal(0) })
@@ -479,7 +466,7 @@
     const l = s.live
     // engine-sim simulates piston engines only (rev-sound.js syncLive).
     if (PROFILES[rs.settings.profile].turbine) return 'Not for the ' + PROFILES[rs.settings.profile].name + ': engine-sim simulates piston engines only, so it plays its rendered loops.'
-    if (!l) return rs.settings.engineSim === 'live' && s.running ? 'Starting\u2026' : 'Starts with the engine.'
+    if (!l) return rs.settings.engineSim === 'live' && s.audible ? 'Starting\u2026' : 'Starts with the sound.'
     const speed = Number.isFinite(l.speed) ? l.speed.toFixed(2) + '\u00d7 real time' : ''
     if (l.state === 'loading') return 'Loading engine-sim\u2026'
     if (l.state === 'running') return 'Live: simulating at ' + speed + (l.underruns ? ', ' + l.underruns + ' dropouts' : ', no dropouts') + '.'
@@ -494,7 +481,7 @@
     cluster.state(s)
     $('g-rate').textContent = s.fixRate ? s.fixRate.toFixed(1) : '\u2014'
     simBack(s)
-    const cap = capText + (s.running ? ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? (PROFILES[rs.settings.profile].turbine ? 'our turbine render' : 'engine-sim') : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)') : '')
+    const cap = capText + (!s.running ? '' : !s.audible ? ' \u00b7 sound off' : ' \u00b7 ' + (s.sound === 'live' ? 'engine-sim, live' : s.sound === 'recorded' ? (PROFILES[rs.settings.profile].turbine ? 'our turbine render' : 'engine-sim') : s.sound === 'loading' ? 'loading sound\u2026' : 'synthesised (fallback)'))
     const ls = liveText(s)
     if ($('live-status').textContent !== ls) $('live-status').textContent = ls
     if ($('cluster-cap').textContent !== cap) $('cluster-cap').textContent = cap
@@ -502,7 +489,7 @@
     const msg = s.error || s.soundNote
     err.hidden = !msg
     if (msg) err.textContent = msg
-    $('state-line').textContent = !s.running ? 'Off.'
+    $('state-line').textContent = !s.running ? 'Starting\u2026'
       : s.sim ? (s.limiter ? 'Simulation: on the limiter.' : s.touching ? 'Simulation: following your finger.' : 'Simulation: idling.')
       : s.source === 'sim' && !s.limiter && !s.shifting && (s.simSpeed || 0) > 0.3 ? (s.load > 0.6 ? 'Simulator: pulling hard.' : s.load < -0.2 ? 'Simulator: braking.' : 'Simulator: rolling.')
       : s.source === 'gps' && s.stale ? 'Waiting for the car to report its speed\u2026'
@@ -516,6 +503,15 @@
 
   syncSettings()
   render({ v: 0, rpm: 0, gear: 0, stopped: true, fixRate: 0, load: 0, redline: 1, idle: 1, running: false, stale: true, source: rs.source, sim: false })
+  // The engine starts with the page: the gauges follow the car from the
+  // first GPS reading. Its sound waits for the first tap anywhere (and for
+  // Play while driving). Not in the sheet over CarPlay: the page under it
+  // runs the engine.
+  if (!embedded) {
+    rs.start()
+    const wake = () => { if (rs.settings.enabled) { document.removeEventListener('pointerdown', wake, true); rs.startSound() } }
+    document.addEventListener('pointerdown', wake, true)
+  }
 </script>
 </body>
 </html>

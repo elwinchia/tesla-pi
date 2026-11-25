@@ -114,7 +114,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/sounds/` | The loops (Ogg Opus, mono; the cars' own loops and clips at 64 kbit/s, 6.6 MB for all ten, 0.5–0.7 MB per car (the jet 1.0); the options' loops at 40/36 kbit/s, 25.3 MB, 2.2–2.9 MB per car; engine and exhaust) and `CREDITS.md`. |
 | `static/rev-gauge.css` | The dash's and the segment-arc style's CSS, day and night, shared by `rev.html` and the dock under CarPlay on `index.html`. |
 | `static/rev-car.js` | The car's real battery charge, range, odometer, outside and cabin temperatures and tyre pressures for the dash, read over Bluetooth through the Pi (`/telemetry/ble`): all once when the engine sound starts, then the charge and temperatures every five minutes while it runs and the tyres every fifteen. |
-| `static/rev-dash.js` | The dash: the chosen gauge style beside **ENGINE START/STOP** (with a settings button), on the passenger's side; holding the rev meter revs the engine ([The dash](#the-dash-buttons-and-gauge-styles)). Feeds the style the engine's state and the made-up side instruments. |
+| `static/rev-dash.js` | The dash: the chosen gauge style, filling the band; holding the rev meter revs the engine, holding anywhere else opens the settings ([The dash](#the-dash-buttons-and-gauge-styles)). Feeds the style the engine's state and the made-up side instruments. |
 | `static/gauges/kit.js` | What every gauge style shares: `GaugeStyle` (the base class, which eases every value and handles a finger on the tach), SVG and seven-segment helpers, and `Instruments`, the made-up water and oil temperatures, oil pressure, volts and fuel, with the real trip and odometer. |
 | `static/gauges/index.js`, `static/gauges/<style>.js` | The seven gauge styles, each loaded only when chosen: `segment`, `fivedial`, `backlit`, `twin`, `digital`, `tiles`, `crosshair`. |
 | `static/gauge-lab.html` | A development page: any style, or all of them, at a state set in the query string (`?style=all&rpm=6200&kmh=104`). Nothing links to it. |
@@ -124,7 +124,7 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-sound.js` | The controller: AudioContext, worklet, GPS watch, 50 Hz tick, settings (in `localStorage`), and pause when the tab is hidden. |
 | `static/rev.html` | The page for the dashboard, the Simulator, the car and gauge pickers and settings: `https://<device>/rev.html`. Follows the car's day/night theme. |
 | `static/rev-gauge.js` | The segment-arc style's geometry and colours (drawn by `static/gauges/segment.js`), and `clusterInput`, which turns the engine's state into what every style shows. Plain SVG, no library. Its layout follows a reference dashboard the owner chose. **Tachometer:** a wide arc of segments, scaled to the chosen engine, with numbers and dots underneath. Lit segments warm from deep orange to yellow at the current revs, with a soft bloom and a glow riding the tip. Unlit ones are dim brown fading to grey, and the redline segments are always red. At the limiter the red zone lights and glows like a shift light; the red latches for 0.3 s, so the bounce reads steady. **Speed:** an old-school seven-segment LCD in km/h (unlit segments faintly showing), the speed the engine follows, with an ODO and TRIP A LCD under it. Beside it are the gear and the speed source (GPS, or SIM in the simulator). **Side bars:** water temperature (C–H) and the battery (8–16 V, L–H), both made up. In simulation mode the arc is also the control: a band about twice as deep as the segments takes a finger (`onArc`, `valueAt`). Everything eases toward each new reading on its own animation frame. |
-| `static/index.html` | Settings → CarPlay → **Engine sound** (Experimental, off). When on, the main page loads the module and starts the engine at the first tap, so it plays under CarPlay, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). |
+| `static/index.html` | The main page loads the module and starts the engine with the page, and puts CarPlay in its wide format with the rev meter and speedometer in the band below ([Gauges under CarPlay](#gauges-under-carplay)). Settings → CarPlay → **Engine sound** (Experimental, off) is its sound only: on, it plays under CarPlay from the first tap. |
 | `scripts/rev-render.mjs` | Renders a scene to WAV through the same code: `drive` (45 s), `rev` (simulation mode, 11 s) or `demo` (both, 22 s); `--recorded` plays the engine-sim loops instead of the synthesiser; `--outside` leaves out the cabin; `--dense --part --shots --long` turn on the recorded mix's options. |
 | `test/rev-*.test.mjs` | 72 tests: the loops (every file present, Ogg Opus, credited MIT from the official engine-sim repo, listed in `CREDITS.md`, within the size budget; on-load and overrun loops at every rpm, overrun quieter, close enough steps; loops made seamless; the player's pitch, crossfade, layers, click-free sweep, pitch limit and silence); simulation mode (only when stopped, refused when the last reading was moving, ends when the car moves, the finger followed within ~0.1 s, the fall back to idle, blips, the limiter and its steady state); every car sound complete and distinct, turbo spool and blow-off, idle lope; the arc's touch mapping and hit band; cluster segments and red zone, arc geometry, lit counts and colours, bars, easing, and the red at the limiter; tracker, load, gearbox (including no gear hunting), free rev, sim car; the fallback synthesiser's firing rate, loudness under load, periodicity, pops only on overrun, lope and determinism; settings (a removed car falls back to the V8). |
 
@@ -585,13 +585,13 @@ for better sound.
 
 ### Gauges under CarPlay
 
-While the engine sound is on, the main page asks the Pi for CarPlay's
-**wide** format: the page sends `{type: 'aspect', value: 'wide'}`, and the
-server restarts CarPlay at 1920 × `CARPLAY_WIDE_HEIGHT`. CarPlay then fills
-a top band, and the band below (`#carplay-dock`) shows the same cluster as
-`rev.html`, fed by the engine that makes the sound. Switching the engine
-sound off asks for **full** again. The page rebuilds itself on every format
-change, as it already did.
+The main page always asks the Pi for CarPlay's **wide** format (since
+2026-11-25; before, only while the engine sound was on): the page sends
+`{type: 'aspect', value: 'wide'}`, and the server restarts CarPlay at
+1920 × `CARPLAY_WIDE_HEIGHT`. CarPlay then fills a top band, and the band
+below (`#carplay-dock`) shows the same cluster as `rev.html`, fed by the
+engine, which runs whether its sound is on or not. The page rebuilds
+itself on every format change, as it already did.
 
 - **The height.** Wide at the old default height, 840, made this dongle drop
   off USB in a loop (measured 2026-09-02, see `index.js`). The Pi now runs
@@ -599,42 +599,35 @@ change, as it already did.
   `scripts/set-wide-height.sh`.
 - **The fallback.** If CarPlay keeps starting over while wide (4 "starting"
   phases in 10 minutes without reaching "plugged"), the page goes back to
-  full and stops asking, until the engine sound is next switched on.
+  full and stops asking, until the engine sound is next switched on (the
+  owner asking for the gauges again).
 
 ### The dash: buttons and gauge styles
 
 The band under CarPlay (and the dashboard on `rev.html`) is a dash: the
-chosen gauge style, as wide as the band allows, beside one column of
-buttons.
+chosen gauge style, as wide as the band allows. It has no buttons
+(2026-11-25: the owner asked for ENGINE START/STOP and the settings gear
+to go). **The engine is always running**: the page starts it on load, with
+no tap, and it follows the car's GPS, so the gauges always work. **Play
+while driving** (`enabled`; on the main page, Settings → CarPlay → Engine
+sound) is its sound only: on, the sound comes in at the first tap anywhere
+(browsers only let a page make sound after one); off, it glides out, the
+audio sleeps and live engine-sim is stopped, and the gauges carry on. The
+engine's start and stop clips are no longer played (an always-running
+engine has no start); the files are still built and served.
 
 - **The rev meter is the accelerator**: press and hold it to rev the engine,
   lift to let it fall back to idle. Each style says where
   its rev meter is (`tachHit` in `gauges/kit.js`), the whole dial or panel,
-  so a finger need not be precise; the speedometer and the other gauges do
-  nothing. Parked only: while the car moves a press does nothing, and the
-  model ignores it anyway. With the engine off it nudges the start button
-  instead.
-- **ENGINE START/STOP**: starts the engine sound or stops it, each with
-  the engine's own sound. **Start:** the starter cranks, the engine
-  catches, flares and settles to idle (about 5.5 s, the rev meter following
-  it), and the loops take over as it settles. Holding the rev meter once
-  it has caught hands over at once. **Stop:** the ignition cuts and the
-  engine dies, the rev meter falls to 0 and
-  every side gauge rests, as with the ignition off. On the CarPlay page that
-  holds for the session (`sessionStorage`), through the reloads a format
-  change makes, so a later tap on CarPlay does not start it again. The
-  engine sound setting itself stays on, so the dash stays.
-- **Settings** (the gear above START/STOP): the engine sound's settings in a
-  sheet over CarPlay (`rev.html?embed=1`, settings only), so changing car or
-  gauge style never leaves the page and drops CarPlay. The sheet saves to
-  `localStorage`; the page under it takes the change from the `storage`
-  event at once.
-
-The buttons sit on the passenger's side of the gauge, away from the driver,
-which follows CarPlay's own **Drive side** setting (Settings → CarPlay): on
-the left for a right-hand-drive car, mirrored for left-hand drive. The CarPlay page remembers the last
-answer (`carplayHand`) so the first paint is right, and `rev.html` reads it
-from there.
+  so a finger need not be precise. Parked only: while the car moves a
+  press revs nothing (and the model ignores it anyway).
+- **Hold anywhere else for the settings**: a press held 600 ms
+  (`LONG_PRESS_MS`) without wandering more than 12 px, anywhere on the dash
+  but a rev (on the rev meter too while moving), opens the engine sound's
+  settings: in a sheet over CarPlay (`rev.html?embed=1`, settings only),
+  so changing car or gauge style never leaves the page and drops CarPlay,
+  and on `rev.html` it scrolls to them. The sheet saves to `localStorage`;
+  the page under it takes the change from the `storage` event at once.
 
 **Gauge styles.** Seven, chosen under **Gauge style** in the settings, each
 our own drawing in the style of one of the seven classic clusters in
@@ -723,18 +716,20 @@ node scripts/rev-samples.mjs --car v8            # rebuild static/sounds/ (needs
 python3 -m http.server 8000 -d static            # then open http://localhost:8000/rev.html
 ```
 
-On `rev.html`, press **ENGINE START** and hold the rev meter, or tap a car
+On `rev.html` the engine is running as soon as the page opens; turn on
+**Play while driving** to hear it, then hold the rev meter, or tap a car
 card to hear a blip. For driving, hold **Accelerator** in the **Simulator**
-under the dashboard (always full travel; it starts the engine): the engine
+under the dashboard (always full travel): the engine
 follows a pretend car while a pedal is held, and goes back to the car's GPS
 3 s after the pretend car stops. **Brake** slows it; "Speed readings" sets
 the simulated GPS rate. The source is never saved, and the pretend car does
 not count towards the trip or odometer. `localhost` counts as a secure context, so the AudioWorklet loads
 just as it does on the car's HTTPS page.
 
-In the car (after deployment): open `https://<device>/rev.html`, choose **Car
-GPS**, and turn on **Play while driving**. Or open Settings → CarPlay → Engine
-sound on the main page.
+In the car (after deployment): the gauges under CarPlay always run; turn on
+**Play while driving** on `https://<device>/rev.html` (or hold the gauges
+for the settings sheet), or Settings → CarPlay → Engine sound on the main
+page, to hear it.
 
 ## 6. Not yet known, and how to find out
 

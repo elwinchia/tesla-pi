@@ -1,11 +1,9 @@
-// The engine sound's dash: the chosen gauge style (static/gauges/) beside a
-// column with ENGINE START/STOP and a shortcut to the engine sound's
-// settings. Press and hold the rev meter to rev the engine (parked only).
+// The engine sound's dash: the chosen gauge style (static/gauges/), fed by
+// an engine that is always running (rev-sound.js). Press and hold the rev
+// meter to rev the engine (parked only); press and hold anywhere else (or
+// on the rev meter while moving) to open the engine sound's settings.
 //
-// The column sits on the passenger's side of the gauge, away from the
-// driver: CarPlay's own drive-side setting (Settings → CarPlay → Drive side)
-// puts it on the left in a right-hand-drive car. Used by the dock under
-// CarPlay on index.html and by rev.html.
+// Used by the dock under CarPlay on index.html and by rev.html.
 import { Instruments, tachScale, hhmm } from './gauges/kit.js'
 import { STYLES, loadStyle, styleKey } from './gauges/index.js'
 import { clusterInput } from './rev-gauge.js'
@@ -13,17 +11,20 @@ import { FRESH_MS } from './rev-car.js'
 // A heading older than this is not shown: GPS has gone quiet.
 const HEADING_FRESH_MS = 60 * 1000
 
+// How long a press is held to open the settings, and how far it may wander.
+export const LONG_PRESS_MS = 600
+const LONG_PRESS_SLOP = 12
+
 const SAVE_KEY = 'revInstruments'
 const SAVE_EVERY_MS = 5000
 
-const GEAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.5 7.5 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.5 7.5 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>'
 export class Dash {
-  // rs: a RevSound. hand(): 1 for a right-hand-drive car, 0 for left.
-  // onSettings(): open the engine sound's settings. onEngine(on): the
-  // start/stop button turned the engine on or off. car: a CarReader
-  // (rev-car.js) for the car's real battery, range and odometer, or null.
-  constructor(host, { rs, hand = () => 1, theme = () => 'night', onSettings = null, onEngine = () => {}, storage = globalThis.localStorage, car = null } = {}) {
-    this.rs = rs; this.hand = hand; this.theme = theme; this.onEngine = onEngine; this.storage = storage
+  // rs: a RevSound. hand(): 1 for a right-hand-drive car, 0 for left (set
+  // as data-hand on the dash's root). onSettings(): open the engine
+  // sound's settings, on a long press. car: a CarReader (rev-car.js) for
+  // the car's real battery, range and odometer, or null.
+  constructor(host, { rs, hand = () => 1, theme = () => 'night', onSettings = null, storage = globalThis.localStorage, car = null } = {}) {
+    this.rs = rs; this.hand = hand; this.theme = theme; this.onSettings = onSettings; this.storage = storage
     // The car's own readings, when there are any: see onCar().
     this.car = car; this.real = null
     if (car) car.onRead = (r) => this.onCar(r)
@@ -36,20 +37,11 @@ export class Dash {
 
     const root = this.root = document.createElement('div')
     root.className = 'rvd'
-    root.innerHTML =
-      '<div class="rvd-side rvd-ign">' +
-        (onSettings ? '<button type="button" class="rvd-btn rvd-set" aria-label="Engine sound settings">' + GEAR_ICON + '</button>' : '') +
-        '<button type="button" class="rvd-btn rvd-start" aria-pressed="false" aria-label="Engine start and stop">' +
-          '<span class="w1">ENGINE</span><span class="w2">START</span><span class="rule"></span><span class="w2">STOP</span></button>' +
-      '</div>' +
-      '<div class="rvd-gauge" title="Press and hold the rev meter to rev the engine"></div>'
+    root.innerHTML = '<div class="rvd-gauge" title="Hold the rev meter to rev the engine; hold anywhere else for the settings"></div>'
     host.appendChild(root)
     this.gaugeHost = root.querySelector('.rvd-gauge')
-    this.startBtn = root.querySelector('.rvd-start')
-    const set = root.querySelector('.rvd-set')
-    if (set) set.addEventListener('click', () => onSettings())
-    this.startBtn.addEventListener('click', () => this.toggleEngine())
     this.listenRev()
+    this.listenLongPress()
     this.setHand(hand())
     this.onHide = () => this.save(true)
     addEventListener('pagehide', this.onHide)
@@ -82,8 +74,8 @@ export class Dash {
   state(st) {
     this.st = st
     this.fitScale()
-    this.startBtn.setAttribute('aria-pressed', String(!!st.running))
-    // Read the car while the engine sound runs, and never while it is off.
+    // Read the car while the engine runs (always, once the page has started
+    // it), and never while it is stopped.
     if (this.car) {
       if (st.running && !this.car.active) this.car.start()
       else if (!st.running && this.car.active) this.car.stop()
@@ -148,29 +140,11 @@ export class Dash {
     if (r.odoKm != null) this.inst.odo = r.odoKm
   }
 
-  async toggleEngine() {
-    const rs = this.rs
-    if (rs.running) {
-      if (rs.engine.sim) rs.setSim(false)
-      if (this.revving != null) this.endRev()
-      rs.setRev(0)
-      rs.stop()
-      this.onEngine(false)
-    } else {
-      await rs.start()
-      if (!rs.running) return
-      // The engine's own start clip has its flare; without one (still
-      // loading, or a car with none), a quick rise past idle that settles.
-      if (!rs.cranking) rs.blip(rs.engine.profile.idle * 1.7)
-      this.onEngine(true)
-    }
-  }
-
   // Press and hold the rev meter to rev; lifting lets it fall back to idle.
   // Pointer capture keeps the hold when the finger slides off the dial, and
-  // lostpointercapture catches every way it ends. With the engine off a
-  // press nudges the start button instead. In simulation mode (rev.html)
-  // the style's own touch handling sets the rpm, so this stands aside.
+  // lostpointercapture catches every way it ends. In simulation mode
+  // (rev.html) the style's own touch handling sets the rpm, so this stands
+  // aside.
   listenRev() {
     const g = this.gaugeHost
     this.revving = null
@@ -179,12 +153,8 @@ export class Dash {
       if (!style || style.touch || this.revving != null) return
       const p = style.toPicture(e)
       if (!p || !style.tachHit(p[0], p[1])) return
+      if (!this.rs.running || this.moving) return
       e.preventDefault()
-      if (!this.rs.running) {
-        this.startBtn.classList.remove('nudge'); void this.startBtn.offsetWidth; this.startBtn.classList.add('nudge')
-        return
-      }
-      if (this.moving) return
       this.revving = e.pointerId
       try { g.setPointerCapture(e.pointerId) } catch {}
       this.root.classList.add('revving')
@@ -195,6 +165,33 @@ export class Dash {
     g.addEventListener('pointercancel', end)
     g.addEventListener('lostpointercapture', end)
     g.addEventListener('contextmenu', (e) => e.preventDefault())
+  }
+  // Press and hold anywhere on the dash, away from a rev, to open the
+  // settings: LONG_PRESS_MS without lifting or wandering. Not while revving
+  // (the rev meter's own hold) or while a simulation drag has the dial.
+  listenLongPress() {
+    const root = this.root
+    let timer = null, at = null
+    const cancel = () => { if (timer) clearTimeout(timer); timer = null; at = null }
+    root.addEventListener('pointerdown', (e) => {
+      cancel()
+      if (!this.onSettings || (e.button != null && e.button > 0)) return
+      at = [e.clientX, e.clientY]
+      timer = setTimeout(() => {
+        timer = null; at = null
+        if (this.revving != null) return
+        const style = this.style
+        // A simulation drag on the rev meter (rev.html) is not a long press.
+        if (style && style.touch && style.drag) return
+        this.onSettings()
+      }, LONG_PRESS_MS)
+    })
+    root.addEventListener('pointermove', (e) => {
+      if (at && Math.hypot(e.clientX - at[0], e.clientY - at[1]) > LONG_PRESS_SLOP) cancel()
+    })
+    root.addEventListener('pointerup', cancel)
+    root.addEventListener('pointercancel', cancel)
+    root.addEventListener('contextmenu', (e) => e.preventDefault())
   }
   endRev() {
     const id = this.revving

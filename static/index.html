@@ -2237,7 +2237,9 @@
                   Plays a made-up engine through the car's speakers that revs and shifts
                   with your driving, read from the car's GPS speed. It is heard inside the
                   car only and does not reflect the car's real state. Keep it quiet enough
-                  to hear horns and sirens. It starts at your first tap on this page.
+                  to hear horns and sirens. It starts at your first tap on this page. Off, it
+                  is silent; the gauges under CarPlay follow the car either way (hold them
+                  for the engine sound's settings).
                 </p>
                 <p class="set-row-sub"><a href="/rev.html" id="rev-settings-link" style="color:inherit">Car, volume, exhaust and gauge style&hellip;</a></p>
               </div>
@@ -4401,10 +4403,12 @@
   }
 
   // ---- Engine sound (client-only; static/rev-sound.js) -------------------
-  // Off by default. When on, the module is loaded and the engine starts at
-  // the first tap (browsers refuse sound before one), then follows the car's
-  // GPS speed. It never talks to the Pi. Settings are shared with rev.html
-  // through localStorage, which is also where rev.html turns it on.
+  // The engine always runs: it is loaded and started with the page and
+  // follows the car's GPS speed, so the gauges under CarPlay always work.
+  // The switch ("Play while driving" on rev.html) is its sound only, off by
+  // default; on, the sound comes in at the first tap (browsers refuse sound
+  // before one). It never talks to the Pi. Settings are shared with rev.html
+  // through localStorage.
   const revSwitchEl = document.getElementById('rev-switch');
   let revSound = null;
   let revLoading = null;
@@ -4422,10 +4426,6 @@
     }
     return revLoading;
   }
-  // The dash's START/STOP turned the engine off: it stays off for this
-  // session, through the reloads a CarPlay format change makes.
-  const REV_OFF_KEY = 'revEngineOff';
-  function revOff() { try { return sessionStorage.getItem(REV_OFF_KEY) === '1'; } catch { return false; } }
   let revArm = null;
   function disarmRevStart() {
     if (revArm) document.removeEventListener('pointerdown', revArm, true);
@@ -4433,12 +4433,10 @@
   }
   function armRevStart() {
     disarmRevStart();
-    revArm = (e) => {
-      // The dash's buttons and the settings sheet start and stop it themselves.
-      if (e.target && e.target.closest && e.target.closest('.rvd, #rev-sheet')) return;
+    revArm = () => {
       disarmRevStart();
-      if (!revEnabled() || revOff()) return;
-      loadRevSound().then((rs) => { if (rs && revEnabled()) rs.start(); });
+      if (!revEnabled()) return;
+      loadRevSound().then((rs) => { if (rs && revEnabled()) rs.startSound(); });
     };
     document.addEventListener('pointerdown', revArm, true);
   }
@@ -4448,19 +4446,22 @@
   function initRev() {
     const on = revEnabled();
     applyRev(on);
-    if (on) { loadRevSound(); armRevStart(); startDock(); }
+    loadRevSound().then((rs) => { if (rs) rs.start(); });
+    startDock();
+    if (on) armRevStart();
   }
   revSwitchEl.addEventListener('click', async () => {
     const next = !revEnabled();
     applyRev(next);
     const rs = await loadRevSound();
     if (!rs) { applyRev(false); return; }
+    // Off: silent, the engine and the gauges run on.
     rs.update({ enabled: next });
-    // Turning it on is the owner asking for wide again, even after a fallback.
+    // Turning it on is the owner asking for the gauges again, even after
+    // CarPlay fell back to full screen.
     if (next) lsSet(WIDE_BLOCK_KEY, '0');
     // The tap on the switch is the gesture that lets the sound start.
-    try { sessionStorage.removeItem(REV_OFF_KEY); } catch {}
-    if (next) rs.start(); else rs.stop();
+    if (next) rs.startSound();
     reconcileAspect();
   });
   // The engine sound's settings in a sheet over CarPlay (rev.html?embed=1):
@@ -4492,16 +4493,15 @@
     if (revSound) {
       const st = revSound.reload();
       if (revDash) revDash.setStyle(st.gauge).then(syncDockDark);
-      if (!on && revSound.running) revSound.stop();
     }
-    if (on) { loadRevSound(); armRevStart(); }
+    if (on) armRevStart();
     reconcileAspect();
   });
 
   // ---- Engine sound gauges under CarPlay -----------------------------------
-  // While the engine sound is on, CarPlay is a wide top band and the band
-  // below it shows the rev meter and speedometer, fed by the same engine
-  // the sound comes from. The server owns the format (applyAspect in
+  // CarPlay is a wide top band and the band below it shows the rev meter
+  // and speedometer, fed by the same engine the sound comes from, whether
+  // the sound is on or not. The server owns the format (applyAspect in
   // index.js restarts CarPlay at the new height); this page asks for it.
   let serverAspect = null;
   let revDash = null;
@@ -4511,9 +4511,9 @@
   let serverHand = lsGet('carplayHand') === '0' ? 0 : 1;
   const WIDE_BLOCK_KEY = 'carplayWideBlocked';
   function wantAspect() {
-    return revEnabled() && lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
+    return lsGet(WIDE_BLOCK_KEY) !== '1' ? 'wide' : 'full';
   }
-  // Ask the server for the format the engine sound wants. True if asked.
+  // Ask the server for the format the gauges want. True if asked.
   function reconcileAspect() {
     const want = wantAspect();
     if (serverAspect == null || serverAspect === want) return false;
@@ -4554,16 +4554,12 @@
       if (!rs || revDash) return;
       dock.classList.add('rv-dock', 'dash');
       revDash = new m.Dash(dock, {
+        // Hold the gauges (away from the rev meter) for the settings.
         rs, hand: () => serverHand, onSettings: openRevSheet,
         // The car's real battery charge, range and odometer over Bluetooth,
         // when Settings → Network → Experimental allows it (rev-car.js).
         car: new m.CarReader(),
         theme: () => (document.documentElement.classList.contains('night') ? 'night' : 'day'),
-        // START/STOP on the dash is the owner's word for this session.
-        onEngine: (on) => {
-          disarmRevStart();
-          try { sessionStorage.setItem(REV_OFF_KEY, on ? '0' : '1'); } catch {}
-        },
       });
       revDash.setStyle(rs.settings.gauge).then(syncDockDark);
       rs.emit(performance.now());

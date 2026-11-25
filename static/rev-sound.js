@@ -6,7 +6,6 @@
 
 import { PROFILES, DEFAULT_PROFILE } from './rev-profiles.js'
 import { SAMPLE_SETS, hasRecording, loopSlice, loopsFor } from './rev-samples.js'
-import { onLoadMix, IDLE_LOUDNESS } from './rev-sampler.js'
 import { DEFAULT_STYLE, styleKey } from './gauges/index.js'
 import {
   CARS, DEFAULT_CAR, MODES, DEFAULT_MODE,
@@ -17,7 +16,8 @@ export { PROFILES, CARS, MODES }
 
 const KEY = 'revSound'
 export const DEFAULTS = Object.freeze({
-  enabled: false,      // play while driving, on the main page as well as rev.html
+  enabled: false,      // "Play while driving": the engine's sound, here and on the main
+                       // page. Off, it is silent; the engine and the gauges run either way.
   volume: 0.7,         // 0..1, squared into gain after the loudness stage (rev-loudness.js)
   profile: DEFAULT_PROFILE,
   mode: DEFAULT_MODE,
@@ -42,21 +42,6 @@ export const RECORDED_OPTIONS = ['denseRpm', 'partThrottle', 'oneShots', 'longLo
 // revving engine, and the Rev control is allowed. ~4 km/h.
 export const STOPPED_MS = 1.0
 const TICK_MS = 20
-// The engine's start and stop (rev-samples.js `oneshots`). The start plays
-// with the loops silent under it, and hands over to them over its last
-// HANDOVER_MS, by which time it has settled to idle. It is waited for at
-// most START_WAIT_MS on the first start (the clip still loading); after
-// that the engine just starts. The stop plays only if already loaded:
-// stopping is never delayed.
-const HANDOVER_MS = 600
-const START_WAIT_MS = 1500
-// Revving once it has caught cuts the start short, handing over this fast.
-const QUICK_MS = 250
-// The clips are levelled to the idle loop's file, but the loops play both
-// idle layers at once (on and off, weighted sqrt(on) and sqrt(1 - on), the
-// same audio): at idle that sums to this, and the player turns its idle down
-// to IDLE_LOUDNESS (rpmLoudness in rev-sampler.js).
-const IDLE_SUM = (Math.sqrt(onLoadMix(0)) + Math.sqrt(1 - onLoadMix(0))) * IDLE_LOUDNESS
 
 // Settings live in the car browser's localStorage, shared by every page on
 // this origin. They are the browser's business only — the Pi neither needs
@@ -205,10 +190,6 @@ export class RevSound {
     this.sound = 'synth'
     this.soundNote = null
     this.sampleCache = new Map() // car -> Promise of its decoded loops
-    this.clipCache = new Map()   // 'car:start' | 'car:stop' -> Promise of its decoded clip
-    this.clipReady = new Map()   // the same, once decoded
-    this.clips = []              // the clip sources playing now
-    this.crank = null            // the start clip under way: { t0, end, ... }
     this.live = null             // engine-sim running live (rev-live.js), when chosen
     this.liveFor = null          // 'car@quality' it was started for
     this.liveNote = null         // why it is not playing, when it failed to start
@@ -228,7 +209,11 @@ export class RevSound {
     this.sim.car.setCar(CARS[next.car])
     if (next.profile !== prev.profile && this.node) this.node.port.postMessage({ profile: this.engine.profile })
     if (next.profile !== prev.profile || RECORDED_OPTIONS.some((k) => next[k] !== prev[k])) this.syncSound()
-    else if (next.engineSim !== prev.engineSim || next.liveQuality !== prev.liveQuality) this.syncLive()
+    else if (next.engineSim !== prev.engineSim || next.liveQuality !== prev.liveQuality || next.enabled !== prev.enabled) this.syncLive()
+    // Play while driving switched off: the sound glides out and the audio
+    // sleeps; the engine runs on. Switched on, startSound() (from the tap)
+    // brings it back.
+    if (prev.enabled && !next.enabled) this.mute()
     return next
   }
 
@@ -245,169 +230,47 @@ export class RevSound {
   setPedal(x) { this.sim.pedal = clamp(x, 0, 1) }
   setBrake(x) { this.sim.brake = clamp(x, 0, 1) }
   setSimFixMs(ms) { this.sim.fixMs = clamp(ms, 50, 5000) }
-  // Not while the engine is still starting; once it has caught, revving
-  // cuts the start short instead.
-  setRev(x) {
-    if (this.crank && !(x > 0 && this.finishStart())) return
-    this.engine.setRev(x)
-  }
+  setRev(x) { this.engine.setRev(x) }
   setSim(on) { const r = this.engine.setSim(on, performance.now()); this.emit(performance.now()); return r }
   touch(rpm) { return this.engine.touch(rpm) }
   untouch(blip) { this.engine.untouch(blip) }
-  blip(rpm) { return this.crank ? false : this.engine.blip(rpm, performance.now()) }
-  get cranking() { return !!this.crank }
+  blip(rpm) { return this.engine.blip(rpm, performance.now()) }
 
+  // The engine is always running once a page has called start(): it follows
+  // the car's GPS (or the simulator), so the gauges always work. Its sound
+  // is separate (startSound()).
   get running() { return this.timer != null }
+  // Heard: the audio is up and Play while driving is on.
+  get audible() { return !!(this.ctx && this.settings.enabled) }
 
-  // Must be called from a user gesture the first time: browsers only let a
-  // page start sound after a tap.
-  async start() {
-    if (this.timer) { this.resumeAudio(); return }
+  // Start the engine: no tap needed, and nothing heard yet.
+  start() {
+    if (this.timer) return
     this.error = null
+    if (this.source === 'gps') this.startGps()
+    this.last = performance.now()
+    this.timer = setInterval(() => this.tick(), TICK_MS)
+    document.addEventListener('visibilitychange', this.onVisibility)
+    this.emit(this.last)
+  }
+  // Its sound, when Play while driving is on. Call it from a tap the first
+  // time: browsers only let a page make sound after one. The loops come in
+  // over the player's own glide; the engine is already running.
+  async startSound() {
+    this.start()
+    if (!this.settings.enabled) return
     try {
       await this.ensureAudio()
     } catch (e) {
       this.error = 'Sound could not start: ' + (e && e.message ? e.message : e)
       this.emit(performance.now())
-      return
     }
-    // The engine's start, if it loads in time.
-    const clip = await Promise.race([this.clip('start'), new Promise((ok) => setTimeout(() => ok(null), START_WAIT_MS))])
-    if (this.timer) return // started meanwhile (a second tap)
-    if (this.source === 'gps') this.startGps()
-    this.last = performance.now()
-    this.stopClips()
-    if (clip) this.playStart(clip)
-    this.timer = setInterval(() => this.tick(), TICK_MS)
-    document.addEventListener('visibilitychange', this.onVisibility)
-    this.clip('stop') // ready for when it stops
   }
-
-  // ── Start and stop ──
-  // One car's clip, both groups, fetched and decoded once.
-  clip(kind, car = this.settings.profile) {
-    const os = SAMPLE_SETS[car] && SAMPLE_SETS[car].oneshots
-    if (!os || !this.ctx) return Promise.resolve(null)
-    const key = car + ':' + kind
-    if (!this.clipCache.has(key)) {
-      const get = (f) => fetch(new URL('./sounds/' + f, import.meta.url)).then((r) => {
-        if (!r.ok) throw new Error(f + ': HTTP ' + r.status)
-        return r.arrayBuffer()
-      }).then((ab) => this.ctx.decodeAudioData(ab))
-      this.clipCache.set(key, Promise.all([get(os[kind].engine), get(os[kind].exhaust)])
-        .then(([engine, exhaust]) => {
-          const c = { ...os[kind], crankRpm: os.crankRpm, engine, exhaust }
-          this.clipReady.set(key, c)
-          return c
-        })
-        // No clip is no reason to stop the engine: it just starts or stops
-        // without one, and the next start tries again.
-        .catch(() => { this.clipCache.delete(key); return null }))
-    }
-    return this.clipCache.get(key)
-  }
-  // Play a clip now, its two groups mixed by the Exhaust setting, as loud as
-  // the loops play the idle. Returns the sources and their gains.
-  playClip(c, at = this.ctx.currentTime) {
-    const ctx = this.ctx, m = this.settings.exhaust
-    return [[c.engine, Math.sqrt(1 - m)], [c.exhaust, Math.sqrt(m)]].map(([buf, g]) => {
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      const gain = ctx.createGain()
-      gain.gain.value = g * IDLE_SUM // the Volume comes after, in the worklet
-      // Through the worklet, so the cabin hears it as it hears the loops.
-      src.connect(gain).connect(this.node)
-      src.start(at)
-      return { src, gain, level: gain.gain.value }
-    })
-  }
-  stopClips(fade = 0.04) {
-    if (!this.ctx) return
-    const now = this.ctx.currentTime
-    for (const c of this.clips) {
-      try { c.gain.gain.cancelScheduledValues(now); c.gain.gain.setTargetAtTime(0, now, fade / 3); c.src.stop(now + fade * 2) } catch {}
-    }
-    this.clips = []
-  }
-  playStart(c) {
-    this.clips = this.playClip(c)
-    // The clip fades out over the handover as the loops fade in (equal
-    // power: the clip on a cosine, the loops on a sine, in tick()).
-    const h = this.ctx.currentTime + c.seconds - HANDOVER_MS / 1000
-    const curve = (g) => Float32Array.from({ length: 32 }, (_, i) => g * Math.cos((Math.PI / 2) * (i / 31)))
-    for (const k of this.clips) { try { k.gain.gain.setValueCurveAtTime(curve(k.level), h, HANDOVER_MS / 1000) } catch {} }
-    const t0 = performance.now()
-    this.crank = { t0, end: t0 + c.seconds * 1000, fade: HANDOVER_MS, c }
-  }
-  // Hand over to the loops now (over QUICK_MS), if the engine has caught
-  // and is past its flare. True if it did, or had already.
-  finishStart() {
-    const k = this.crank
-    if (!k) return true
-    const now = performance.now()
-    if ((now - k.t0) / 1000 < k.c.catch + 0.6) return false
-    if (now >= k.end - k.fade) return true // handing over already
-    const at = this.ctx.currentTime
-    for (const s of this.clips) {
-      try {
-        const g = s.gain.gain
-        g.cancelScheduledValues(at)
-        g.setValueCurveAtTime(Float32Array.from({ length: 16 }, (_, i) => g.value * Math.cos((Math.PI / 2) * (i / 15))), at, QUICK_MS / 1000)
-        s.src.stop(at + QUICK_MS / 1000 + 0.05)
-      } catch {}
-    }
-    k.end = now + QUICK_MS; k.fade = QUICK_MS
-    return true
-  }
-  // How much of the loops to play: 0 under the start clip, rising over its
-  // handover, then 1.
-  loopsIn(t) {
-    const k = this.crank
-    if (!k) return 1
-    const u = (t - (k.end - k.fade)) / k.fade
-    if (u >= 1) { this.crank = null; return 1 }
-    return u <= 0 ? 0 : Math.sin((Math.PI / 2) * u)
-  }
-  // What the rev meter shows while the start clip plays: nothing until the
-  // starter engages, the starter's speed, then the catch, the flare and the
-  // fall back to idle, as in the clip (rev-samples.js: catch, flare).
-  crankRpm(t) {
-    const { c, t0 } = this.crank
-    const u = (t - t0) / 1000, idle = this.engine.profile.idle
-    if (u < 0.15) return 0
-    // A turbine (start.spool): the starter spools it up, it lights off,
-    // and it accelerates to idle over `spool` s (scripts/rev-jet.mjs).
-    if (c.spool) {
-      if (u < c.catch) return c.crankRpm * (1 - Math.exp(-(u - 0.15) / 0.6))
-      const k = Math.min(1, (u - c.catch) / c.spool), sm = k * k * (3 - 2 * k)
-      const from = c.crankRpm * (1 - Math.exp(-(c.catch - 0.15) / 0.6))
-      return from + (idle - from) * sm
-    }
-    if (u < c.catch) return c.crankRpm
-    if (u < c.catch + 0.25) return c.crankRpm + (c.flare - c.crankRpm) * ((u - c.catch) / 0.25)
-    return idle + (c.flare - idle) * Math.exp(-(u - c.catch - 0.25) / 0.7)
-  }
-
-  stop() {
-    const wasRunning = this.timer != null, starting = !!this.crank
-    if (this.timer) clearInterval(this.timer)
-    this.timer = null
-    this.crank = null
-    this.stopGps()
-    document.removeEventListener('visibilitychange', this.onVisibility)
+  // Silent: the gain glides to zero, then the audio sleeps (no click).
+  mute() {
     if (this.node) this.node.port.postMessage({ params: { gain: 0 } })
-    if (this.live) this.live.set({ gain: 0 })
     const ctx = this.ctx
-    let tail = 250 // let the gain glide to zero before suspending: no click
-    if (ctx) {
-      this.stopClips()
-      // The engine's stop, if it is loaded (stopping is never delayed), and
-      // not when it is stopped while still starting.
-      const c = wasRunning && !starting ? this.clipReady.get(this.settings.profile + ':stop') : null
-      if (c) { this.clips = this.playClip(c); tail = c.seconds * 1000 + 200 }
-      setTimeout(() => { if (!this.timer) ctx.suspend().catch(() => {}) }, tail)
-    }
-    this.emit(performance.now())
+    if (ctx) setTimeout(() => { if (!this.audible) ctx.suspend().catch(() => {}) }, 250)
   }
 
   // Hidden tab: no GPS, no sound. The car shows one page at a time and a
@@ -424,7 +287,7 @@ export class RevSound {
     this.resumeAudio()
   }
   resumeAudio() {
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
+    if (this.audible && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {})
   }
 
   async ensureAudio() {
@@ -434,7 +297,7 @@ export class RevSound {
     const ctx = new AC({ latencyHint: 'interactive' })
     if (!ctx.audioWorklet) throw new Error('this browser has no AudioWorklet')
     await ctx.audioWorklet.addModule(new URL('./rev-worklet.js', import.meta.url).href)
-    // One input: the start and stop clips, mixed in before the cabin.
+    // One input: live engine-sim, mixed in before the cabin.
     const node = new AudioWorkletNode(ctx, 'rev-engine', { numberOfInputs: 1, outputChannelCount: [2] })
     node.connect(ctx.destination)
     node.port.postMessage({ profile: this.engine.profile, params: { gain: 0, volume: this.settings.volume, cabin: this.settings.cabin } })
@@ -448,8 +311,6 @@ export class RevSound {
   async syncSound() {
     if (!this.node) return
     const car = this.settings.profile
-    // Its start and stop, so they are ready when wanted.
-    this.clip('start', car); this.clip('stop', car)
     this.soundNote = null
     // Live engine-sim, when chosen, starts alongside: the recorded loops
     // play until it is running, and take over again if it cannot keep up.
@@ -518,12 +379,13 @@ export class RevSound {
   }
 
   // ── Live engine-sim (static/rev-live.js) ──
-  // Started when chosen and the audio is up, for the car and quality chosen;
-  // stopped otherwise. Loaded on demand: the recorded mix never fetches it.
+  // Started when chosen, the audio is up and Play while driving is on, for
+  // the car and quality chosen; stopped otherwise (it costs a lot of
+  // processor, so not while silent). Loaded on demand: the recorded mix never fetches it.
   // It plays into the worklet's input, so it goes through the cabin.
   syncLive() {
     const s = this.settings
-    const want = s.engineSim === 'live' && this.ctx ? s.profile + '@' + s.liveQuality : null
+    const want = s.engineSim === 'live' && this.audible ? s.profile + '@' + s.liveQuality : null
     if (want === this.liveFor) return
     this.liveFor = want
     this.liveNote = null
@@ -597,10 +459,11 @@ export class RevSound {
     }
     const s = this.engine.step(t, dt)
     if (this.node) {
-      // gain: the loops' share (the start clip's handover); the Volume is
-      // applied after the cabin and the compressor (rev-loudness.js), so the
-      // slider turns everything down evenly, the clips and live included.
-      const gain = this.loopsIn(t)
+      // gain: 1 while heard, 0 while Play while driving is off (the player
+      // glides between them). The Volume is applied after the cabin and the
+      // compressor (rev-loudness.js), so the slider turns everything down
+      // evenly, live included.
+      const gain = this.settings.enabled ? 1 : 0
       const live = this.livePlaying
       this.node.port.postMessage({ params: { rpm: s.rpm, load: s.load, gain: live ? 0 : gain, volume: this.settings.volume, exhaust: this.settings.exhaust, cabin: this.settings.cabin,
         shifting: s.shifting, limiter: !!s.limiter, gear: s.gear } })
@@ -610,9 +473,8 @@ export class RevSound {
   }
 
   emit(t) {
-    const st = this.crank ? { ...this.engine.state, rpm: this.crankRpm(t), cranking: true } : this.engine.state
-    this.onState({ ...st, source: this.source, fixRate: this.rate.get(t),
-      simSpeed: this.sim.car.v, running: this.running, error: this.error,
+    this.onState({ ...this.engine.state, source: this.source, fixRate: this.rate.get(t),
+      simSpeed: this.sim.car.v, running: this.running, audible: this.audible, error: this.error,
       sound: this.livePlaying ? 'live' : this.sound, soundNote: this.liveNote || this.soundNote,
       live: this.live ? this.live.status() : null,
       redline: this.engine.profile.redline, idle: this.engine.profile.idle, turbine: !!this.engine.profile.turbine })

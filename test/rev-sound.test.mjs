@@ -176,17 +176,42 @@ test('every car sound can be chosen and is remembered', () => {
   }
 })
 
-test('the jet\'s start: the rev meter follows the starter, the light-off and the spool-up to idle', async () => {
+test('the engine always runs; Play while driving switches only its sound', async () => {
   const { RevSound } = await import('../static/rev-sound.js')
-  const { SAMPLE_SETS } = await import('../static/rev-samples.js')
-  const p = PROFILES.jet, os = SAMPLE_SETS.jet.oneshots
-  const me = { crank: { t0: 0, c: { ...os.start, crankRpm: os.crankRpm } }, engine: { profile: p } }
-  const at = (s) => RevSound.prototype.crankRpm.call(me, s * 1000)
-  assert.equal(at(0.1), 0)
-  let prev = 0
-  for (let s = 0.2; s < os.start.seconds; s += 0.05) { const r = at(s); assert.ok(r >= prev - 1e-6, `falls at ${s.toFixed(2)} s`); prev = r }
-  assert.ok(at(os.start.catch - 0.01) < os.crankRpm && at(os.start.catch - 0.01) > 0.8 * os.crankRpm, 'on the starter at the light-off')
-  assert.ok(Math.abs(at(os.start.catch + os.start.spool) - p.idle) < 1, 'at idle once spooled')
-  // Not a piston engine's jump to a flare: still under halfway a second after the light-off.
-  assert.ok(at(os.start.catch + 0.25) < os.crankRpm + 0.5 * (p.idle - os.crankRpm))
+  // Enough of a browser: no location (the engine still runs), no audio
+  // until a tap brings it up (ensureAudio, stubbed).
+  const saved = globalThis.document
+  globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} }
+  const sent = []
+  const states = []
+  const rs = new RevSound({ storage: memStorage(), onState: (s) => states.push(s) })
+  rs.ensureAudio = async () => {
+    rs.ctx = { state: 'running', suspend: async () => {}, resume: async () => {} }
+    rs.node = { port: { postMessage: (m) => sent.push(m) } }
+  }
+  try {
+    rs.start()
+    assert.ok(rs.running, 'running with no tap')
+    assert.ok(states.at(-1).running && !states.at(-1).audible)
+    // Off (the default): a tap brings up no sound.
+    await rs.startSound()
+    assert.equal(rs.ctx, null)
+    rs.tick()
+    assert.ok(states.at(-1).running && !states.at(-1).audible)
+    // On, and a tap: heard, and the loops are played at full share.
+    rs.update({ enabled: true })
+    await rs.startSound()
+    assert.ok(rs.audible)
+    rs.tick()
+    assert.equal(sent.at(-1).params.gain, 1)
+    // Off again: silent, and the engine and its state run on.
+    rs.update({ enabled: false })
+    assert.ok(!rs.audible && rs.running)
+    rs.tick()
+    assert.equal(sent.at(-1).params.gain, 0)
+    assert.ok(states.at(-1).running && !states.at(-1).audible)
+  } finally {
+    clearInterval(rs.timer)
+    globalThis.document = saved
+  }
 })
