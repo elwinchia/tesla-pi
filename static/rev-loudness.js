@@ -9,9 +9,18 @@
 // where the tyres and the wind are.
 //
 //   in ──► compressor (brings a cruise and the idle up towards a hard pull,
-//          ratio RATIO above THRESHOLD) ──► make-up gain ──► volume (the
-//          page's slider, squared) ──► peak limiter (no sample over the
-//          ceiling) ──► out
+//          ratio RATIO above THRESHOLD) ──► make-up gain ──► build (the
+//          engine working: idle and a light cruise turned down, a pull
+//          left alone) ──► volume (the page's slider, squared) ──► peak
+//          limiter (no sample over the ceiling) ──► out
+//
+// The build: the compressor that makes an idle and a cruise loud enough
+// also flattens a rev, so a pull was only about 4 dB over the idle where a
+// real car's is 15-20. After the compressor, the build turns the sound
+// down by up to BUILD.depth dB when the engine is not working, by how far
+// it is from a hard pull (buildDb): all of it at idle, about half on a
+// light cruise, nothing at full throttle. A pull stays as loud as before;
+// the idle is what comes down, so a rev climbs about 9 dB over it.
 //
 // The volume comes after the compressor, so the slider turns the whole
 // sound down evenly instead of the compressor partly undoing it. The
@@ -36,6 +45,20 @@ export const LOUDNESS = {
   tauVolume: 0.05, // s, the slider's glide
 }
 
+// The build (above): depth, dB at idle; tau, s, how fast it follows.
+// load counts most, the revs some.
+export const BUILD = { depth: 5, rev: 0.3, tau: 0.2 }
+
+// How hard the engine is working (0..1) at a load (-1..1) and rev, the
+// share of the way from idle to the redline (0..1).
+export function drive(load, rev) {
+  return clamp(BUILD.rev * clamp(rev, 0, 1) + (1 - BUILD.rev) * Math.sqrt(clamp(load, 0, 1)), 0, 1)
+}
+// The build's gain, dB (-depth..0).
+export function buildDb(load, rev) {
+  return -BUILD.depth * (1 - drive(load, rev)) ** 2
+}
+
 // The compressor's gain, in dB, at a detector level in dBFS: a soft knee
 // around the threshold, then 1/ratio above it, plus the make-up.
 export function compGainDb(levelDb) {
@@ -58,15 +81,26 @@ export class Loudness {
     this.kLim = 1 - Math.exp(-1 / (LOUDNESS.limRelease * sampleRate))
     this.kVol = 1 - Math.exp(-1 / (LOUDNESS.tauVolume * sampleRate))
     this.limited = 0        // samples the limiter turned down (for the tests and the render)
+    // The build: off (0 dB) until the car's load or rpm arrive.
+    this.load = NaN; this.rpm = NaN; this.idle = 0; this.redline = 0
+    this.build = 1; this.buildTarget = 1
+    this.kBuild = 1 - Math.exp(-1 / (BUILD.tau * sampleRate))
   }
-  // params: { volume } (0..1, the page's slider; squared here).
-  set({ volume }) {
+  // params: { volume (0..1, the page's slider; squared here), load, rpm },
+  // and the car's { idle, redline } (its profile).
+  set({ volume, load, rpm, idle, redline }) {
     if (Number.isFinite(volume)) this.volTarget = clamp(volume, 0, 1) ** 2
+    if (Number.isFinite(idle) && Number.isFinite(redline)) { this.idle = idle; this.redline = redline }
+    if (Number.isFinite(load)) this.load = load
+    if (Number.isFinite(rpm)) this.rpm = rpm
+    if (Number.isFinite(this.load) && Number.isFinite(this.rpm) && this.redline > this.idle) {
+      this.buildTarget = dbToLin(buildDb(this.load, clamp((this.rpm - this.idle) / (this.redline - this.idle), 0, 1)))
+    }
   }
   // Processes outs (channel arrays, the same signal on each or not) in place.
   process(outs, n) {
     const C = outs.length, ceil = LOUDNESS.ceiling
-    let env = this.env, vol = this.vol, lim = this.lim
+    let env = this.env, vol = this.vol, lim = this.lim, build = this.build
     // The compressor's gain changes slowly: work it out once per 16 frames.
     let g = dbToLin(compGainDb(10 * Math.log10(env + 1e-12)))
     for (let i = 0; i < n; i++) {
@@ -76,7 +110,8 @@ export class Loudness {
       env += (p - env) * (p > env ? this.kAtt : this.kRel)
       if ((i & 15) === 0) g = dbToLin(compGainDb(10 * Math.log10(env + 1e-12)))
       vol += (this.volTarget - vol) * this.kVol
-      const k = g * vol
+      build += (this.buildTarget - build) * this.kBuild
+      const k = g * build * vol
       // The limiter: down at once to hold the peak at the ceiling, back up
       // over limRelease.
       let peak = 0
@@ -86,6 +121,6 @@ export class Loudness {
       const kk = k * lim
       for (let c = 0; c < C; c++) outs[c][i] = clamp(outs[c][i] * kk, -1, 1)
     }
-    this.env = env; this.vol = vol; this.lim = lim
+    this.env = env; this.vol = vol; this.lim = lim; this.build = build
   }
 }

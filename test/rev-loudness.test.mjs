@@ -2,15 +2,16 @@
 // Volume slider and the peak limiter.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Loudness, LOUDNESS, compGainDb } from '../static/rev-loudness.js'
+import { Loudness, LOUDNESS, BUILD, compGainDb, buildDb, drive } from '../static/rev-loudness.js'
 
 const SR = 48000
 
 // A sine at `amp` through a Loudness at `volume` for `secs`; the last
 // quarter's RMS in dBFS and its peak.
-function through(amp, volume, secs = 1, hz = 90) {
+function through(amp, volume, secs = 1, hz = 90, engine = null) {
   const ld = new Loudness(SR)
   ld.set({ volume }); ld.vol = ld.volTarget
+  if (engine) { ld.set({ idle: 1000, redline: 7000, ...engine }); ld.build = ld.buildTarget }
   const n = 128, L = new Float32Array(n), R = new Float32Array(n)
   let ph = 0, ss = 0, cnt = 0, peak = 0
   const blocks = Math.round((secs * SR) / n)
@@ -57,4 +58,21 @@ test('nothing goes over the ceiling, however hot the input', () => {
 test('silence stays silence', () => {
   const r = through(0, 1)
   assert.equal(r.peak, 0)
+})
+
+test('the build: a hard pull is left alone, the idle comes down, a cruise between', () => {
+  assert.equal(buildDb(1, 1), -0)
+  assert.equal(buildDb(0, 0), -BUILD.depth)
+  assert.equal(buildDb(-1, 0), -BUILD.depth, 'overrun at idle revs: all of it')
+  const cruise = buildDb(0.15, 0.2)
+  assert.ok(cruise < -1.5 && cruise > -4, `cruise ${cruise.toFixed(1)} dB`)
+  for (let l = 0; l < 1; l += 0.1) for (let r = 0; r < 1; r += 0.1) {
+    assert.ok(drive(l + 0.1, r) >= drive(l, r) && drive(l, r + 0.1) >= drive(l, r))
+  }
+  // Through the stage: the same input at idle and in a pull, BUILD.depth apart.
+  const idle = through(0.05, 1, 1, 90, { rpm: 1000, load: 0 })
+  const pull = through(0.05, 1, 1, 90, { rpm: 7000, load: 1 })
+  assert.ok(Math.abs(pull.db - idle.db - BUILD.depth) < 0.3, `${(pull.db - idle.db).toFixed(2)} dB`)
+  // Until the car's revs and load arrive it does nothing.
+  assert.ok(Math.abs(through(0.05, 1).db - pull.db) < 0.1)
 })

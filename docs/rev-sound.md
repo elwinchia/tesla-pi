@@ -106,9 +106,9 @@ car GPS ─► SpeedTracker ─► v, a ─► loadFromMotion ─► load ─┐
 | `static/rev-model.js` | Pure model: `SpeedTracker` (fixes timed on arrival, never `pos.timestamp`, which the car does not keep as epoch time), `loadFromMotion`, `Gearbox` (a virtual automatic with load-dependent shift points, a kickdown, a short torque cut on upshift, and clutch slip at launch), `FreeRev` (parked revving with each engine's own bouncing limiter; in simulation mode it chases a finger instead of a throttle), and `SimCar`. |
 | `static/rev-profiles.js` | The ten cars (the jet a turbine: no gears, a spool and a governor): idle, redline, gearing and limiter for the model, and the numbers the fallback synthesiser uses (firing pattern, pipe resonances, pulse width, induction, pop rate, lope). |
 | `static/rev-sampler.js` | The loop player, run inside the same AudioWorklet: keeps every loop playing, pitches each to the engine's rpm (rpm ÷ the rpm it was rendered at, at most 3.2×), crossfades the two either side with equal power, crossfades the on-load and overrun layers by load, and the engine and exhaust groups by the Exhaust setting. |
-| `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A high shelf from 650 Hz (−11 dB on overrun and at idle, opening to −6 dB under full load) and a low-pass at 3.2 kHz, run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
+| `static/rev-cabin.js` | The cabin: the engine as the driver hears it, through the car's body. A low shelf at 110 Hz (the body's boom: +3 dB, +8 dB under full load), a high shelf from 650 Hz (−11 dB on overrun and at idle, −6 dB under full load) and a low-pass at 3.2 kHz; high in the revs the shelf and the low-pass open up (to −1.5 dB and 10 kHz at the redline under load) so the scream gets through. Run in the worklet after the voice and over the start and stop clips. The "Heard from" setting turns it off ("Outside"). |
 | `scripts/rev-jet.mjs` | Our own turbojet, rendered into the files engine-sim would make (engine-sim is pistons only): blade-pass and turbine tones, buzz-saw, jet roar, rumble, crackle; its start and stop. |
-| `static/rev-loudness.js` | The last stage: a compressor, +16 dB make-up, the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
+| `static/rev-loudness.js` | The last stage: a compressor, +16 dB make-up, the build (up to −5 dB when the engine is not working, so a pull climbs over the idle), the Volume slider (squared) and a peak limiter at −1 dBFS, run in the worklet after the cabin. Makes a cruise about as loud as music at 100 %. |
 | `static/rev-live.js`, `rev-live-worker.js`, `rev-live-worklet.js`, `static/live/` | Live engine-sim (the "Engine: Live engine-sim" setting): engine-sim compiled to WebAssembly, run in a Web Worker, its dry output played through the loops' own impulse responses, EQ and sub layer with native nodes. Built by `scripts/engine-sim/wasm/build-wasm.sh`. |
 | `static/rev-samples.js` | Where every loop came from: engine-sim's credit, and for each loop its render, rpm, layer and level, plus the set's impulse response, EQ and sub layer. The page credits from it, the builder rebuilds from it, and the tests check it. |
 | `static/sounds/` | The loops (Ogg Opus, mono; the cars' own loops and clips at 64 kbit/s, 6.6 MB for all ten, 0.5–0.7 MB per car (the jet 1.0); the options' loops at 40/36 kbit/s, 25.3 MB, 2.2–2.9 MB per car; engine and exhaust) and `CREDITS.md`. |
@@ -311,8 +311,9 @@ the bulkhead and more of the top gets in; on overrun the cabin hears little
 but the burble. The player models that with a high shelf from 650 Hz, at
 −11 dB on overrun and idle and −6 dB at full load (it follows the load
 over 150 ms), then a low-pass at 3.2 kHz. Make-up gain of +1 dB keeps the
-loudness where it was. It adds no echo or cabin boom: the speakers play
-inside the real cabin, which supplies both. The start and stop clips go
+loudness where it was. It adds no echo: the speakers play inside the real
+cabin, which supplies it. (It added no boom either at first; see below.)
+The start and stop clips go
 through it too (the worklet now has one input, which they feed).
 The "Heard from" setting on `rev.html` picks "The driver's seat" (the
 default) or "Outside", and crossfades between them over 50 ms.
@@ -364,6 +365,63 @@ The spread from idle to a hard pull shrinks from 11–17 dB to 5–7 dB: the
 quiet parts are what the road hides. The limiter touches 0.001 % of samples
 on the drive, and holds every option (the limiter loop included) and the
 live engine (within 1 dB of the loops in the browser) under −1 dBFS.
+
+**Bass, the scream, and a rev that builds** (2026-11-25). In the car the
+owner found the sound short of bass, and the high note of a hard rev
+missing. Measured (V8, demo and drive scenes), three causes:
+
+- The cabin took the scream. The harmonics that make a high-revving engine
+  scream are at 1–5 kHz, and the cabin cut 2.5 kHz by 8–13 dB and 4 kHz by
+  12–17 dB at every rpm; at 17,000 rpm the F1's firing note itself is
+  1.7 kHz. On the redline drag 2–8 kHz was 12–17 dB under "Outside". A
+  quiet saloon is like that; a sporty car lets the intake and exhaust in,
+  or plays them on its speakers.
+- No boom. Under load a car's body booms at 40–100 Hz and the seat shakes;
+  the speakers cannot shake the body, and the road's own noise sits in the
+  same band. And as the revs rise the firing note leaves the bass (a V8's
+  is rpm ÷ 15: 46 Hz at idle, 400 Hz at 6,000).
+- The compressor flattened the rev: a full-throttle launch was only 4–6 dB
+  over the idle, where a real car's is 15–20.
+
+So, in `static/rev-cabin.js`, the high shelf and the low-pass now open with
+the revs, from a quarter of the way from idle to the redline (smoothstep),
+all the way at the redline under load and half of it on overrun: the shelf
+to −1.5 dB, the low-pass to 10 kHz (geometric). A low shelf at 110 Hz adds
+the boom: +3 dB with the throttle shut, +8 dB at full load. Both follow the
+load and the revs over 150 ms; the worklet gets each car's idle and redline
+with its profile. In `static/rev-loudness.js`, after the compressor, the
+build turns the sound down by up to 5 dB when the engine is not working:
+`5 × (1 − drive)²` dB, where drive is 0.3 × the revs' share plus
+0.7 × √load. All of it at idle and on overrun low in the revs, about
+2–3 dB on a light cruise, nothing at full throttle; it follows over 200 ms.
+A pull stays as loud as before.
+
+Measured on the drive scene at 100 % (LUFS, before → after):
+
+| Car | idle | cruise | full-throttle launch | idle → launch |
+|---|---|---|---|---|
+| V8 | −14.3 → −18.4 | −10.9 → −13.4 | −9.8 → −9.9 | 4.5 → 8.5 dB |
+| V10 | −15.3 → −19.5 | −11.6 → −14.4 | −9.0 → −9.3 | 6.3 → 10.2 dB |
+| F136 | −15.7 → −19.6 | −13.6 → −16.6 | −9.6 → −10.1 | 6.1 → 9.5 dB |
+| Flat-6 | −14.7 → −18.8 | −12.9 → −15.5 | −10.4 → −9.7 | 4.3 → 9.1 dB |
+| Inline-6 | −14.1 → −18.3 | −13.4 → −15.4 | −9.8 → −10.1 | 4.3 → 8.2 dB |
+| Flat-4 | −17.6 → −21.8 | −11.6 → −14.0 | −9.3 → −9.1 | 8.3 → 12.7 dB |
+| Inline-4 | −21.8 → −25.3 | −13.8 → −16.3 | −10.5 → −10.6 | 11.3 → 14.7 dB |
+| V12 | −15.0 → −19.1 | −14.2 → −16.6 | −10.5 → −10.8 | 4.5 → 8.3 dB |
+| F1 | −13.7 → −18.0 | −12.2 → −14.8 | −9.6 → −9.8 | 4.1 → 8.2 dB |
+| Jet | −17.0 → −21.3 | −13.6 → −15.6 | −11.0 → −9.6 | 6.0 → 11.7 dB |
+
+Over the whole drive that is 1–1.5 dB quieter (V8 −11.6 → −13.0 LUFS).
+Each band's share of the total, before → after (cabin on):
+
+| | 20–60 Hz | 2–4 kHz | 4–8 kHz |
+|---|---|---|---|
+| V8, launch | −12 → −8 | −29 → −26 | −33 → −26 |
+| V8, redline drag (outside: −13, −17, −15) | −13 → −8 | −29 → −23 | −32 → −23 |
+| F1, redline drag (outside: −14, −29, −27) | −12 → −10 | −39 → −34 | −44 → −34 |
+
+The limiter takes more than 1 dB off 1.7 % of the drive's samples (it was
+1.3 %).
 
 ### Two ways to make the sound, and four extras (2026-11-25)
 
@@ -680,7 +738,8 @@ sound on the main page.
    right behaviour, but it means no engine unless the browser is on screen.
 4. **The bass in the cabin.** The low end was raised to within a few dB of
    real V8 recordings (measured, see [The sound](#the-sound-nine-engine-sim-cars-and-a-jet)),
-   but the car's speakers and EQ decide what is heard.
+   and the cabin now adds a boom under load, but the car's speakers and EQ
+   decide what is heard.
 5. **Dragging on the car's screen.** Pointer events in the desktop browser
    follow the finger within about 0.1 s. Whether the car's touchscreen
    delivers moves as smoothly is unmeasured.

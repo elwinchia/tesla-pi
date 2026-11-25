@@ -249,7 +249,13 @@ if (typeof AudioWorkletProcessor !== 'undefined' && typeof registerProcessor ===
       this.loud = new Loudness(sampleRate)
       this.port.onmessage = (e) => {
         const m = e.data || {}
-        if (m.profile) this.voice.setProfile(m.profile)
+        if (m.profile) {
+          this.voice.setProfile(m.profile)
+          // The cabin opens up and the build climbs with the revs: from
+          // this car's idle to its redline.
+          const span = { idle: m.profile.idle, redline: m.profile.redline }
+          this.cabin.set(span); this.loud.set(span)
+        }
         if ('samples' in m) this.sampler.setSet(m.samples)
         if (m.params) { this.voice.set(m.params); this.sampler.set(m.params); this.cabin.set(m.params); this.loud.set(m.params) }
       }

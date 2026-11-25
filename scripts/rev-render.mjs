@@ -143,12 +143,12 @@ if (recorded) {
 }
 voice.set({ gain: 1, exhaust: Number(opt('exhaust', DEFAULTS.exhaust)) })
 const cabin = new Cabin(SR)
-cabin.set({ cabin: settings.cabin })
+cabin.set({ cabin: settings.cabin, idle: p.idle, redline: p.redline })
 cabin.mix = settings.cabin ? 1 : 0
 // Then the loudness stage and the page's Volume slider (--volume 0..1,
 // settings' default unless given), as the worklet does.
 const loud = new Loudness(SR)
-loud.set({ volume: Number(opt('volume', settings.volume)) })
+loud.set({ volume: Number(opt('volume', settings.volume)), idle: p.idle, redline: p.redline })
 loud.vol = loud.volTarget
 
 const frames = Math.round(seconds / TICK) * BLOCK
@@ -167,7 +167,8 @@ for (let i = 0; i < seconds / TICK; i++) {
   const s = engine.step(ms, TICK)
   maxKmh = Math.max(maxKmh, v * 3.6); maxGear = Math.max(maxGear, s.gear)
   voice.set({ rpm: s.rpm, load: s.load, shifting: s.shifting, limiter: !!s.limiter, gear: s.gear })
-  cabin.set({ load: s.load })
+  cabin.set({ load: s.load, rpm: s.rpm })
+  loud.set({ load: s.load, rpm: s.rpm })
   // The browser renders in 128-frame quanta; do the same so filter updates
   // happen at the same rate.
   for (let o = 0; o < BLOCK; o += 128) {
