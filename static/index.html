@@ -3181,6 +3181,11 @@
   const overlay = document.getElementById('status-overlay');
   const wsState = { control: 'connecting', video: 'connecting' };
   let carplayState = 'starting';
+  // The phone is still in the session but has dropped off the adapter's own
+  // Wi-Fi. It normally rejoins within a minute; the card says so, so the driver
+  // waits instead of closing the page (2026-11-12 08:32: CarPlay was back 40 s
+  // later, but the page had been closed and stayed closed for 40 minutes).
+  let phoneWifiDown = false;
   let pollTimer = null;
 
   function showOverlay(reason) {
@@ -3296,6 +3301,11 @@
       h.classList.add('warn');
       t.textContent = 'Waiting for your phone';
       s.textContent = 'Connect your phone to start CarPlay.';
+      setSteps(2, 'phone', 'attention');
+    } else if (carplayState === 'plugged' && phoneWifiDown) {
+      h.classList.add('warn');
+      t.textContent = 'Reconnecting to your iPhone…';
+      s.textContent = 'Your phone dropped the adapter\u2019s Wi-Fi. It usually comes back by itself within a minute \u2014 no need to close this page.';
       setSteps(2, 'phone', 'attention');
     } else if (carplayState === 'plugged') {
       h.classList.add('ok');
@@ -3567,6 +3577,7 @@
       ]);
       const [h, l] = await Promise.all([hRes.json(), lRes.json()]);
       carplayState = h.carplay;
+      phoneWifiDown = !!h.phone_wifi_down;
       pushGraphSample(h);
       const tail = (l.entries || []).slice(-50);
       const sig = JSON.stringify([h, tail.length, tail[tail.length - 1]?.ts]);
@@ -6333,6 +6344,12 @@
             case 'starting':  carplayState = msg.data; phoneKind = null; renderAaTile(); showOverlay(msg.data); break;
             default: console.log('Unknown statusReq data: ' + msg.data);
           }
+          break;
+        case 'phoneWifi':
+          phoneWifiDown = !!msg.down;
+          console.log('phone wifi ' + (phoneWifiDown ? 'lost' : 'back'));
+          if (phoneWifiDown && carplayState === 'plugged') showOverlay('phone-wifi');
+          setHeadline();
           break;
         case 'goRoute':
           goRoute(msg.route);

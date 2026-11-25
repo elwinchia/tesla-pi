@@ -29,6 +29,13 @@ const STATIC_DIR = path.join(__dirname, 'static')
 const PORT = 8080
 const CARLINKIT_VID = 0x1314
 const CARPLAY_CMD_DASHBOARD = 3 // iOS "exit CarPlay → host UI" signal (car-icon tap)
+// The dongle's view of the phone on its own Wi-Fi AP. 1010 is not the end of a
+// session: the phone has dropped off the AP and usually rejoins by itself
+// (2026-11-12 08:32: 1010, then 1009 20 s later, picture back 20 s after that).
+// The dongle also repeats 1010 every ~12 s while no phone is attached, so it
+// only means something while a phone is plugged.
+const CARPLAY_CMD_WIFI_UP = 1009
+const CARPLAY_CMD_WIFI_DOWN = 1010
 // Raw dongle command ids that node-carplay 4.1.0's CommandMapping omits. All
 // three were added upstream after our pinned version and never released, so we
 // send them through sendCommand() rather than sendKey().
@@ -217,6 +224,19 @@ const PHONE_CAR_CHECK_GAP_MS = Number(process.env.PHONE_CAR_CHECK_GAP_MS ?? 3000
 // Within one unbroken spell of answers, re-ask this soon, up to this many times.
 const PHONE_CAR_RECHECK_MS = Number(process.env.PHONE_CAR_RECHECK_MS ?? 40000)
 const PHONE_CAR_CHECKS_PER_SPELL = Number(process.env.PHONE_CAR_CHECKS_PER_SPELL ?? 3)
+// Sometimes the phone does not answer at all although it is in the seat: three
+// of four browser-started sessions on 2026-11-13/14 came after 1-3 minutes of
+// silent probes, and the adapter then reached the same phone within ~10 s. The
+// weak-answer checks above never fire for a silent phone, so also ask the car
+// while the phone is silent: often just after power-up (the car usually woke
+// because someone is getting in), slower after that so a car that stays awake
+// for hours is not read every minute. A "yes" here may be another driver with
+// no phone; that costs an adapter opened for nothing, closed again by the
+// usual idle stop once the car empties.
+const PHONE_CAR_SILENT = (process.env.PHONE_CAR_SILENT ?? 'on') !== 'off'
+const PHONE_CAR_SILENT_FAST_MS = Number(process.env.PHONE_CAR_SILENT_FAST_MS ?? 30000)
+const PHONE_CAR_SILENT_FAST_WINDOW_MS = Number(process.env.PHONE_CAR_SILENT_FAST_WINDOW_MS ?? 600000)
+const PHONE_CAR_SILENT_SLOW_MS = Number(process.env.PHONE_CAR_SILENT_SLOW_MS ?? 120000)
 // timesyncd creates this the first time it gets an NTP answer in a boot, and
 // /run is tmpfs so a power cut clears it. While it exists the box is on
 // internet time, which beats anything a page can report.
@@ -738,6 +758,10 @@ carplay.start = () => {
 }
 
 let plugged = false
+// Set when the plugged phone drops off the dongle's Wi-Fi (1010), cleared when
+// it is back (1009) or the session ends. Drives the page's "Reconnecting to
+// your iPhone" card, which tells the driver to wait instead of closing it.
+let phoneWifiDownAt = 0
 let carplayStarted = false
 let restartInFlight = false
 // A restart asked for while one is already running. This used to be dropped on
@@ -1349,6 +1373,7 @@ async function releaseDongle(reason) {
     const wasStarted = carplayStarted
     carplayStarted = false
     plugged = false
+    setPhoneWifiDown(false, 'release')
     phoneType = null
     // Only if there was a session to unwind. Closing a device we never opened
     // is a no-op that still costs a 250 ms settle on every idle timeout.
@@ -1358,6 +1383,18 @@ async function releaseDongle(reason) {
   } finally {
     releasing = false
   }
+}
+
+function setPhoneWifiDown(down, why) {
+  if (!!phoneWifiDownAt === down) return
+  if (down) {
+    phoneWifiDownAt = Date.now()
+    log('info', 'phone_wifi_lost', { why })
+  } else {
+    log('info', 'phone_wifi_back', { why, down_ms: Date.now() - phoneWifiDownAt })
+    phoneWifiDownAt = 0
+  }
+  broadcast(socketControl, JSON.stringify({ type: 'phoneWifi', down }), { compress: false })
 }
 
 // One place that answers "what is CarPlay doing", for /healthz and statusReq
@@ -1757,6 +1794,7 @@ const httpServer = http.createServer(async (req, res) => {
       const usedMb = Math.round((os.totalmem() - os.freemem()) / 1048576)
       sendJson(res, 200, {
         carplay: carplayPhase(),
+        phone_wifi_down: !!phoneWifiDownAt,
         carplay_on_demand: onDemand,
         carplay_demand: demandActive(),
         phone_near: phoneNearState(),
@@ -2426,6 +2464,7 @@ socketControl.on('connection', (ws) => {
       syncDemand(msg.value ? 'client_visible' : 'client_hidden')
     } else if (msg.type === 'statusReq') {
       ws.send(JSON.stringify({ type: 'statusReq', data: carplayPhase(), phone: phoneLabel() }))
+      if (phoneWifiDownAt) ws.send(JSON.stringify({ type: 'phoneWifi', down: true }))
     } else if (msg.type === 'nightMode') {
       applyNightMode(msg.value, 'client')
     } else if (msg.type === 'frameRate') {
@@ -3144,6 +3183,7 @@ carplay.onmessage = (ev) => {
       break
     case 'plugged':
       plugged = true
+      setPhoneWifiDown(false, 'plugged')
       pluggedAt = Date.now()
       framesAtPlug = videoFramesTotal
       broadcast(socketControl, JSON.stringify({ type: 'statusReq', data: 'plugged', phone: phoneLabel() }), { compress: false })
@@ -3168,6 +3208,7 @@ carplay.onmessage = (ev) => {
       break
     case 'unplugged': {
       plugged = false
+      setPhoneWifiDown(false, 'unplugged')
       // Name the failure that cost two hours to find by hand.
       //
       // Wireless CarPlay is two links: Bluetooth for control, then the phone has
@@ -3214,6 +3255,8 @@ carplay.onmessage = (ev) => {
         broadcast(socketControl, JSON.stringify({ type: 'goRoute', route: 'launcher' }), { compress: false })
       } else {
         log('debug', 'carplay_command', { value })
+        if (value === CARPLAY_CMD_WIFI_DOWN && plugged) setPhoneWifiDown(true, 'dongle')
+        else if (value === CARPLAY_CMD_WIFI_UP) setPhoneWifiDown(false, 'dongle')
       }
       break
     }
@@ -3371,6 +3414,16 @@ function carCheckDue() {
   return phone.spellChecks < PHONE_CAR_CHECKS_PER_SPELL && since >= PHONE_CAR_RECHECK_MS
 }
 
+// For a phone that did not answer at all. Independent of the weak-answer spell
+// logic above: it shares only the car check's timestamp, so the two never ask
+// the car back to back.
+function silentCarCheckDue() {
+  if (!PHONE_CAR_SILENT || !phoneCarCheckAvailable()) return false
+  if (plugged || phoneLeaseUntil > Date.now()) return false
+  const every = os.uptime() * 1000 < PHONE_CAR_SILENT_FAST_WINDOW_MS ? PHONE_CAR_SILENT_FAST_MS : PHONE_CAR_SILENT_SLOW_MS
+  return phone.carCheckAt == null || performance.now() - phone.carCheckAt >= every
+}
+
 function phoneNearState() {
   const now = Date.now()
   return {
@@ -3469,6 +3522,7 @@ async function phoneTick() {
     phone.weakStreak = r.present && !near ? phone.weakStreak + 1 : 0
     if (phone.weakStreak === 0) phone.spellChecks = 0
     if (carCheckDue() && await askCarUserPresent()) { near = true; via = 'car' }
+    else if (!r.present && silentCarCheckDue() && await askCarUserPresent()) { near = true; via = 'car_silent' }
     if (near) {
       phone.weakStreak = 0
       phone.sightings++
@@ -3510,7 +3564,7 @@ if (onDemand) {
 // session.
 restartCarplay('boot')
 if (phoneNear) {
-  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, boot_rssi_min: PHONE_BOOT_RSSI_MIN, boot_window_ms: PHONE_BOOT_WINDOW_MS, car_check: phoneCarCheckAvailable(), car_check_streak: PHONE_CAR_CHECK_STREAK, car_check_gap_ms: PHONE_CAR_CHECK_GAP_MS, car_recheck_ms: PHONE_CAR_RECHECK_MS, car_checks_per_spell: PHONE_CAR_CHECKS_PER_SPELL, phone_known: !!phoneBtMac })
+  log('info', 'phone_near_on', { poll_idle_ms: PHONE_POLL_IDLE_MS, poll_active_ms: PHONE_POLL_ACTIVE_MS, lease_ms: PHONE_LEASE_MS, rssi_min: PHONE_RSSI_MIN, boot_rssi_min: PHONE_BOOT_RSSI_MIN, boot_window_ms: PHONE_BOOT_WINDOW_MS, car_check: phoneCarCheckAvailable(), car_check_streak: PHONE_CAR_CHECK_STREAK, car_check_gap_ms: PHONE_CAR_CHECK_GAP_MS, car_recheck_ms: PHONE_CAR_RECHECK_MS, car_checks_per_spell: PHONE_CAR_CHECKS_PER_SPELL, car_silent: PHONE_CAR_SILENT, car_silent_fast_ms: PHONE_CAR_SILENT_FAST_MS, car_silent_fast_window_ms: PHONE_CAR_SILENT_FAST_WINDOW_MS, car_silent_slow_ms: PHONE_CAR_SILENT_SLOW_MS, phone_known: !!phoneBtMac })
   schedulePhoneProbe(5000)
 }
 
