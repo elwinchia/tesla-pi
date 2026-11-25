@@ -613,7 +613,7 @@ export default class TilesStyle extends GaugeStyle {
     const g = this.tachG
     while (g.firstChild) g.removeChild(g.firstChild)
     // Numerals in hundreds, every thousand: 0 … 70 for a 7,000 rpm scale.
-    this.bigTicks(g, TACH.cx, scale.max, 500, 1000, (v) => String(Math.round(v / 100)), scale.redFrom)
+    this.bigTicks(g, TACH.cx, scale.max, scale.label > 1000 ? 1000 : 500, scale.label || 1000, (v) => String(Math.round(v / 100)), scale.redFrom)
     this.tachA = null; this.tachBandA = null
   }
 

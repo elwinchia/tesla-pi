@@ -302,7 +302,7 @@ export default class TwinStyle extends GaugeStyle {
     for (let v = 0; v <= scale.max; v += 500) {
       const a = ang(v), major = v % 1000 === 0
       if (v < scale.redFrom) this.tick(g, cx, CY, a, r - 8, major ? r - 24 : r - 15, major ? 4.5 : 2.2)
-      if (!major) continue
+      if (!major || v % (scale.label || 1000)) continue
       const [x, y] = polar(cx, CY, r - 62, a)
       // Thinner and greyer than the needle and gear, so they lead the eye.
       this.glyphs(g, String(v / 1000), x, y, 25, 2.8, '#a6a6ac', 'tw-num')

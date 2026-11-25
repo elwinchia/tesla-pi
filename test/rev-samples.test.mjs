@@ -13,9 +13,9 @@ const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'stati
 // Bytes, all cars together (the car loads only its own, and only the
 // options' files when they are on): the set's own loops and clips, and the
 // options' loops (rev-samples.js loopsFor).
-// Eight cars since 2026-11-25: ~0.65 MB of own loops and ~2.5 MB of
+// Nine cars since 2026-11-25: ~0.65 MB of own loops and ~2.5 MB of
 // options' loops each.
-const BUDGET = 5.5 * 1024 * 1024, OPTIONS_BUDGET = 20.5 * 1024 * 1024
+const BUDGET = 6 * 1024 * 1024, OPTIONS_BUDGET = 23 * 1024 * 1024
 
 test('every recorded car is a real car sound with loops at two or more rpm points', () => {
   for (const [car, set] of Object.entries(SAMPLE_SETS)) {

@@ -109,7 +109,7 @@ test('every car sound is complete and has its own name', () => {
   for (const [k, p] of Object.entries(PROFILES)) {
     for (const f of ['name', 'style', 'blurb']) assert.ok(typeof p[f] === 'string' && p[f].length > 1, `${k}.${f}`)
     names.add(p.name + ' ' + p.style)
-    assert.ok(p.idle > 400 && p.idle < p.launch && p.launch < p.redline && p.redline <= 10000, k)
+    assert.ok(p.idle > 400 && p.idle < p.launch && p.launch < p.redline && p.redline <= 18000, k) // the F1 revs to 17,000
     assert.ok(p.limiter >= 30 && p.limiter <= 200, `${k} limiter`)
     for (let g = 1; g < p.gears.length; g++) assert.ok(p.gears[g] > p.gears[g - 1], `${k} gear ${g + 1}`)
     const ats = p.cylinders.map((c) => c.at)

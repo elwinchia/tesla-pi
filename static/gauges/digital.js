@@ -444,7 +444,7 @@ export default class DigitalStyle extends GaugeStyle {
       const major = v % 1000 === 0
       this.tick(sg, TACH_CX, v / scale.max, (major ? 'dg-tick' : 'dg-tick minor') + (v >= scale.redFrom ? ' red' : ''))
     }
-    for (let v = 0; v <= scale.max + 1e-6; v += 1000) this.label(sg, TACH_CX, v / scale.max, String(v / 100), 'dg-num')
+    for (let v = 0; v <= scale.max + 1e-6; v += scale.label || 1000) this.label(sg, TACH_CX, v / scale.max, String(v / 100), 'dg-num')
     this.tachLit = -1
   }
 

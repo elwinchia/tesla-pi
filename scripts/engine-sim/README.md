@@ -35,8 +35,8 @@ node scripts/rev-samples.mjs --car v8                # cut, loop, EQ, mix the su
 # ES_IDLE_THROTTLE=0.02 (es-render ... idle 10 4).
 ```
 
-The four cars added on 2026-11-25 (`i6` 2JZ, `boxer` EJ25 unequal headers,
-`i4` Honda VTEC, `v12` our `v12_412.mr`) are rendered from their sets in
+The cars added on 2026-11-25 (`i6` 2JZ, `boxer` EJ25 unequal headers,
+`i4` Honda VTEC, `v12` our `v12_412.mr`, `f1` the 412 T2 as it is) are rendered from their sets in
 `static/rev-samples.js`, every run with `ES_SYNC` (so the same command gives
 the same files), one es-render per core:
 
@@ -279,8 +279,10 @@ engine-sim bundles these engine scripts (`assets/engines/`):
 - **V12:** Ferrari 412 T2 (F1), Rolls-Royce Merlin (aircraft)
 - **Other:** Audi I5, Honda VTEC I4, and more
 
-Used: the LS V8, F136, LFA, 2JZ, EJ25 (unequal headers), VTEC I4, and the
-412 T2 with a road car's idle (`v12_412.mr`).
+Used: the LS V8, F136, LFA, 2JZ, EJ25 (unequal headers), VTEC I4, the 412
+T2 as it is for the F1 (`f1_412.mr`, a wrapper: 3,770 idle, 17,000 redline;
+its 5,000 Hz simulation rate gives the same spectrum as 20,000 at 16,800
+rpm, so it is kept), and the 412 T2 with a road car's idle (`v12_412.mr`).
 
 It has no flat-6, so `flat6_gt3.mr` is ours: a 4.0 L, 9,000 rpm boxer six
 written on the pattern of the Subaru EJ25 script, with its crank and firing

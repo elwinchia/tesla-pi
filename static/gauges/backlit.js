@@ -262,7 +262,7 @@ export default class BacklitStyle extends GaugeStyle {
     for (let v = 0; v <= max; v += step) {
       const a = dialAngle(v, 0, max, A0, A1)
       this.tick(g, TACH, a, v % 1000 !== 0, v >= scale.redFrom)
-      if (v % 1000 === 0) {
+      if (v % (scale.label || 1000) === 0) {
         const [x, y] = polar(TACH.cx, TACH.cy, R.num, a)
         ctext(g, x, y, 'bl-num', String(v / 100), 0.72)
       }

@@ -291,7 +291,7 @@ export class EngineRunner {
     this.catchThrottle = Math.max(this.idleThrottle, CATCH_THROTTLE[car] || 0)
     const vols = Array.from({ length: M._es_exhaust_count() }, (_, i) => M._es_ir_volume(i))
     // One impulse response for the summed exhausts is exact only if they
-    // all have the same volume (true of all eight scripts).
+    // all have the same volume (true of all nine scripts).
     if (new Set(vols).size !== 1) throw new Error('exhausts have different impulse-response volumes: ' + vols.join(', '))
     this.irVolume = vols[0]
     this.slow = 1

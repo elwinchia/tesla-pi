@@ -99,7 +99,9 @@ test('the helpers the styles share behave', () => {
   assert.equal(follow(NaN, 3, 0.1), 3)
   assert.equal(follow(0, 1, 0.1, 0), 1)
   assert.ok(follow(0, 1, 0.01, 0.1) < 0.2)
-  assert.deepEqual(tachScale(9000, 900), { max: 10000, redFrom: 9000, warnFrom: 8300 })
+  assert.deepEqual(tachScale(9000, 900), { max: 10000, redFrom: 9000, warnFrom: 8300, label: 1000 })
+  // The F1's 18,000 scale is numbered every 2,000, so the numbers do not run together.
+  assert.deepEqual(tachScale(17000, 3770), { max: 18000, redFrom: 17000, warnFrom: 16300, label: 2000 })
   assert.equal(zone(8800, tachScale(9000, 900)), 'red')
   assert.equal(hhmm(new Date(2026, 0, 1, 7, 5)), '07:05')
 })

@@ -149,9 +149,12 @@ export class Instruments {
 
 // Tachometer scale for an engine: whole thousands, with at least 500 rpm of
 // red past the redline, so the limiter never pins against the end.
+// label: how often the dials number their scale. Every 1,000 rpm up to a
+// 10,000 scale; every 2,000 past it (the F1's 18,000), where a number at
+// every thousand would crowd the dials into one another.
 export function tachScale(redline, idle = 0) {
   const max = Math.ceil((redline + 500) / 1000) * 1000
-  return { max, redFrom: redline, warnFrom: Math.max(idle, redline - 700) }
+  return { max, redFrom: redline, warnFrom: Math.max(idle, redline - 700), label: max > 10000 ? 2000 : 1000 }
 }
 
 // Which band a value sits in. The limiter bounces the engine a few percent

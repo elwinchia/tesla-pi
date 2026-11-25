@@ -158,11 +158,27 @@ const v12 = {
   pulseMs: 0.9, bright: [2000, 4600], intake: [3200, 0.14], pops: 0.03, drive: 1.3, lope: 0.1,
 }
 
+// A 1995 Formula 1 V12, 3.0 L, revving to 17,000: the same 65-degree V12 as
+// v12 above, unmodified, with its own race idle (~3,800 rpm) and seven
+// close gears. Its sound: engine-sim's bundled 412 T2 script as it is.
+const f1 = {
+  name: 'F1', style: '1995 V12 F1-style',
+  blurb: 'engine-sim\'s 412 T2 F1 V12 as built: a race idle and a scream to 17,000 rpm.',
+  idle: 3770, redline: 17000, launch: 9000, revRise: 30000, revFall: 14000, limiter: 40,
+  gears: kmh(85, 118, 152, 186, 222, 260, 300),
+  cylinders: [1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9].map((c, i) => ({ at: i / 12, bank: c <= 6 ? 0 : 1 })),
+  banks: [
+    [[420, 3.0, 0.7], [980, 4.0, 0.6], [2300, 5.0, 0.45], [4800, 6.0, 0.25]],
+    [[440, 3.0, 0.7], [1020, 4.0, 0.6], [2400, 5.0, 0.45], [5000, 6.0, 0.25]],
+  ],
+  pulseMs: 0.5, bright: [3000, 6000], intake: [4200, 0.16], pops: 0.02, drive: 1.3, lope: 0.05,
+}
+
 // Each idle is the rpm its engine-sim idle actually runs at (--fit-idle in
 // scripts/rev-samples.mjs), so the idle loop plays at its own pitch.
 
 // The cars, in the picker's order. Each one's sound is engine-sim loops
 // (static/rev-samples.js); these numbers drive its gearbox and rev range,
 // and synthesise it only if the loops cannot be loaded.
-export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12 }
+export const PROFILES = { v8, lfa, f136, gt3, i6, boxer, i4, v12, f1 }
 export const DEFAULT_PROFILE = 'v8'

@@ -424,7 +424,7 @@ ${DAY}
       const a = ang(v), major = v % 1000 === 0 && v > 0, past = v > scale.redFrom
       const cls = past ? 'fd-tick dim' : major ? 'fd-tick' : 'fd-tick min'
       this.tick(g, cx, a, rT, rT - R * (major ? RING.major : RING.minor), major ? 1.7 : 1.3, cls)
-      if (major) this.wide(g, ...polar(cx, CY, R * RING.num, a), past ? 'fd-num red' : 'fd-num', String(v / 1000))
+      if (major && v % (scale.label || 1000) === 0) this.wide(g, ...polar(cx, CY, R * RING.num, a), past ? 'fd-num red' : 'fd-num', String(v / 1000))
     }
     this.tick(g, cx, ang(scale.redFrom), rT + 1, rT - R * RING.major, 3.2, 'fd-tick red')
     this.last = {}
